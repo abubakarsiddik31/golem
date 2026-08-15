@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -85,7 +86,7 @@ func TestExecuteReturnsFinalResponseWithoutToolCalls(t *testing.T) {
 		textResponse("42", model.Usage{InputTokens: 10, OutputTokens: 2}),
 	}}
 	outcome, err := runner.Execute(context.Background(), m, nil, deps{},
-		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1, noRetries)
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1, noRetries, 0)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -114,7 +115,7 @@ func TestExecutePerformsOneToolRoundTrip(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5, noRetries)
+		}, 5, noRetries, 0)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -165,7 +166,7 @@ func TestExecuteRunsMultipleToolRoundsUntilFinalResponse(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "twice"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5, noRetries)
+		}, 5, noRetries, 0)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -188,7 +189,7 @@ func TestExecuteAbortsWhenTurnLimitIsExceeded(t *testing.T) {
 	echo := echoTool(t)
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 2, noRetries)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 2, noRetries, 0)
 	if !errors.Is(err, runner.ErrLoopLimit) {
 		t.Fatalf("Execute() error = %v, want ErrLoopLimit", err)
 	}
@@ -214,7 +215,7 @@ func TestExecuteClassifiesToolFailures(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{failing}, deps{},
-		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries)
+		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 0)
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) {
 		t.Fatalf("Execute() error = %v, want ToolError", err)
@@ -236,10 +237,201 @@ func TestExecuteRejectsModelRequestsForUndeclaredTools(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 3, noRetries)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 3, noRetries, 0)
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) || toolErr.ToolName != "unknown_tool" {
 		t.Fatalf("Execute() error = %v, want ToolError for unknown_tool", err)
+	}
+}
+
+// validatingTool rejects non-positive n as correctable model content and
+// accepts everything else.
+func validatingTool(t *testing.T) tool.Tool[deps] {
+	t.Helper()
+	return tool.MustNew(tool.Tool[deps]{
+		Name:        "roll",
+		Description: "Roll a die; n must be positive.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+		Exec: func(_ context.Context, _ deps, args json.RawMessage) (string, error) {
+			var input struct {
+				N int `json:"n"`
+			}
+			if err := json.Unmarshal(args, &input); err != nil {
+				return "", err
+			}
+			if input.N <= 0 {
+				return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+			}
+			return fmt.Sprintf("rolled %d", input.N), nil
+		},
+	})
+}
+
+// rejectingTool always returns the same ModelRetry and counts executions.
+func rejectingTool(t *testing.T, reason error) (tool.Tool[deps], *int) {
+	t.Helper()
+	executions := 0
+	rejecting := tool.MustNew(tool.Tool[deps]{
+		Name:        "roll",
+		Description: "Always rejects.",
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+			executions++
+			return "", &model.ModelRetry{Err: reason}
+		},
+	})
+	return rejecting, &executions
+}
+
+func TestExecuteFeedsToolRejectionsBackToTheModel(t *testing.T) {
+	t.Parallel()
+
+	m := &scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "call-1", Name: "roll", Args: json.RawMessage(`{"n":0}`)}),
+		toolResponse(model.ToolCall{ID: "call-2", Name: "roll", Args: json.RawMessage(`{"n":4}`)}),
+		textResponse("settled", model.Usage{InputTokens: 7, OutputTokens: 2}),
+	}}
+	roll := validatingTool(t)
+
+	outcome, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{roll}, deps{},
+		model.Request{ToolSpecs: specsFor(t, roll)}, 5, noRetries, 1)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if outcome.Response.Message.Content != "settled" {
+		t.Fatalf("final content = %q", outcome.Response.Message.Content)
+	}
+	if outcome.Usage != (model.Usage{InputTokens: 7, OutputTokens: 2}) {
+		t.Fatalf("usage = %#v, want summed across turns", outcome.Usage)
+	}
+
+	// The second model turn must end with the rejection delivered as the
+	// rejected call's tool result.
+	if len(m.requests) != 3 {
+		t.Fatalf("model turns = %d, want 3", len(m.requests))
+	}
+	second := m.requests[1].Messages
+	rejection := second[len(second)-1]
+	if rejection.Role != model.RoleTool || rejection.ToolCallID != "call-1" || rejection.ToolName != "roll" {
+		t.Fatalf("rejection message = %#v", rejection)
+	}
+	if !strings.Contains(rejection.Content, "Your tool call was rejected") ||
+		!strings.Contains(rejection.Content, "n must be positive, got 0") {
+		t.Fatalf("rejection content = %q", rejection.Content)
+	}
+
+	// Evidence keeps the rejected call and both results, in order:
+	// assistant-call, tool(rejection), assistant-call, tool(result),
+	// assistant-final.
+	wantRoles := []model.Role{model.RoleAssistant, model.RoleTool, model.RoleAssistant, model.RoleTool, model.RoleAssistant}
+	if len(outcome.Messages) != len(wantRoles) {
+		t.Fatalf("evidence = %#v", outcome.Messages)
+	}
+	for i, role := range wantRoles {
+		if outcome.Messages[i].Role != role {
+			t.Fatalf("evidence[%d].Role = %q, want %q", i, outcome.Messages[i].Role, role)
+		}
+	}
+}
+
+func TestExecuteWrapsCauseAfterExhaustedToolRetries(t *testing.T) {
+	t.Parallel()
+
+	reason := errors.New("n must be positive")
+	rejecting, executions := rejectingTool(t, reason)
+	m := &scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "c1", Name: "roll", Args: json.RawMessage(`{}`)}),
+		toolResponse(model.ToolCall{ID: "c2", Name: "roll", Args: json.RawMessage(`{}`)}),
+		toolResponse(model.ToolCall{ID: "c3", Name: "roll", Args: json.RawMessage(`{}`)}),
+	}}
+
+	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{rejecting}, deps{},
+		model.Request{ToolSpecs: specsFor(t, rejecting)}, 5, noRetries, 2)
+	var toolErr *runner.ToolError
+	if !errors.As(err, &toolErr) || toolErr.ToolName != "roll" {
+		t.Fatalf("Execute() error = %v, want ToolError for roll", err)
+	}
+	if !errors.Is(err, reason) {
+		t.Fatalf("Execute() error = %v, want reason %v", err, reason)
+	}
+	var rejection *model.ModelRetry
+	if !errors.As(err, &rejection) {
+		t.Fatalf("Execute() error = %v, want ModelRetry in the chain", err)
+	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("Execute() error = %q, want attempt count in message", err.Error())
+	}
+	if *executions != 3 || len(m.requests) != 3 {
+		t.Fatalf("tool executions = %d, model turns = %d, want 3 and 3", *executions, len(m.requests))
+	}
+}
+
+func TestExecuteAbortsOnToolRejectionWithoutBudget(t *testing.T) {
+	t.Parallel()
+
+	reason := errors.New("n must be positive")
+	rejecting, executions := rejectingTool(t, reason)
+	m := &scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "c1", Name: "roll", Args: json.RawMessage(`{}`)}),
+	}}
+
+	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{rejecting}, deps{},
+		model.Request{ToolSpecs: specsFor(t, rejecting)}, 3, noRetries, 0)
+	var toolErr *runner.ToolError
+	if !errors.As(err, &toolErr) || toolErr.ToolName != "roll" {
+		t.Fatalf("Execute() error = %v, want ToolError for roll", err)
+	}
+	if !errors.Is(err, reason) {
+		t.Fatalf("Execute() error = %v, want reason %v", err, reason)
+	}
+	var rejection *model.ModelRetry
+	if !errors.As(err, &rejection) {
+		t.Fatalf("Execute() error = %v, want ModelRetry in the chain", err)
+	}
+	if strings.Contains(err.Error(), "after") {
+		t.Fatalf("Execute() error = %q, default rejection must not carry an attempt count", err.Error())
+	}
+	if *executions != 1 || len(m.requests) != 1 {
+		t.Fatalf("tool executions = %d, model turns = %d, want 1 and 1", *executions, len(m.requests))
+	}
+}
+
+func TestExecuteStillAbortsPlainToolErrorsWithBudget(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("database unavailable")
+	failing := tool.MustNew(tool.Tool[deps]{
+		Name:        "failing",
+		Description: "Fails for real.",
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+			return "", cause
+		},
+	})
+	m := &scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "c1", Name: "failing", Args: json.RawMessage(`{}`)}),
+	}}
+
+	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{failing}, deps{},
+		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 3)
+	var toolErr *runner.ToolError
+	if !errors.As(err, &toolErr) {
+		t.Fatalf("Execute() error = %v, want ToolError", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("Execute() error = %v, want cause %v", err, cause)
+	}
+	if len(m.requests) != 1 {
+		t.Fatalf("model turns = %d, want 1", len(m.requests))
+	}
+}
+
+func TestExecuteRejectsNegativeToolRetries(t *testing.T) {
+	t.Parallel()
+
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 1,
+		runner.RetryConfig{MaxAttempts: 1}, -1); err == nil {
+		t.Fatal("Execute() error = nil, want negative toolRetries rejection")
 	}
 }
 
@@ -250,7 +442,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		m := &scriptedModel{responses: []model.Response{textResponse("late", model.Usage{})}}
-		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1, noRetries)
+		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1, noRetries, 0)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -288,7 +480,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		}}
 
 		_, err := runner.Execute(ctx, m, []tool.Tool[deps]{first, second}, deps{},
-			model.Request{ToolSpecs: specsFor(t, first, second)}, 3, noRetries)
+			model.Request{ToolSpecs: specsFor(t, first, second)}, 3, noRetries, 0)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -301,12 +493,12 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 func TestExecuteRejectsInvalidLimitsAndUnadvertisedTools(t *testing.T) {
 	t.Parallel()
 
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0, noRetries); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0, noRetries, 0); err == nil {
 		t.Fatal("Execute() error = nil, want maxIterations rejection")
 	}
 
 	echo := echoTool(t)
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1, noRetries); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1, noRetries, 0); err == nil {
 		t.Fatal("Execute() error = nil, want tools-without-specs rejection")
 	}
 }
@@ -365,7 +557,7 @@ func TestExecuteRetriesRetryableModelFailures(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 3, runner.RetryConfig{MaxAttempts: 2, Backoff: zeroBackoff})
+		}, 3, runner.RetryConfig{MaxAttempts: 2, Backoff: zeroBackoff}, 0)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -394,7 +586,7 @@ func TestExecuteWrapsTerminalCauseAfterExhaustedRetries(t *testing.T) {
 		runner.RetryConfig{
 			MaxAttempts: 3,
 			Backoff:     func(attempt int) time.Duration { backoffAttempts = append(backoffAttempts, attempt); return 0 },
-		})
+		}, 0)
 	if !errors.Is(err, transient) {
 		t.Fatalf("Execute() error = %v, want terminal cause %v", err, transient)
 	}
@@ -417,7 +609,7 @@ func TestExecuteReturnsNonRetryableFailuresUnchanged(t *testing.T) {
 
 	_, err := runner.Execute(context.Background(), m, nil, deps{},
 		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 3,
-		runner.RetryConfig{MaxAttempts: 3, Backoff: zeroBackoff})
+		runner.RetryConfig{MaxAttempts: 3, Backoff: zeroBackoff}, 0)
 	if err != permanent {
 		t.Fatalf("Execute() error = %v, want the model error unchanged", err)
 	}
@@ -437,7 +629,7 @@ func TestExecuteStopsRetryingWhenContextIsCanceled(t *testing.T) {
 		// The wait never elapses: the fake cancels ctx during Generate, so
 		// the context-aware wait aborts immediately.
 		Backoff: func(int) time.Duration { return time.Hour },
-	})
+	}, 0)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Execute() error = %v, want context.Canceled", err)
 	}
@@ -450,7 +642,7 @@ func TestExecuteRejectsInvalidRetryConfiguration(t *testing.T) {
 	t.Parallel()
 
 	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 1,
-		runner.RetryConfig{}); err == nil {
+		runner.RetryConfig{}, 0); err == nil {
 		t.Fatal("Execute() error = nil, want MaxAttempts rejection")
 	}
 }

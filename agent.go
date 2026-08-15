@@ -225,7 +225,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 
 	for attempt := 0; ; attempt++ {
 		outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
-			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry)
+			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry, 0)
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)
 		}

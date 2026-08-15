@@ -20,7 +20,9 @@ var ErrLoopLimit = errors.New("runner: model turn limit exceeded")
 
 // ToolError reports a tool execution failure or a model request for a tool
 // that was not declared. The core maps it to StageTool and callers can
-// reach the cause with errors.Is and errors.As.
+// reach the cause with errors.Is and errors.As. A tool rejection whose
+// correction budget was exhausted lands here too, the *model.ModelRetry
+// preserved in the chain (ADR 0007).
 type ToolError struct {
 	ToolName string
 	CallID   string
@@ -45,7 +47,8 @@ type Outcome struct {
 }
 
 // RetryConfig bounds and paces retries of failed model calls (ADR 0004).
-// Tool executions and output decoding are never retried.
+// Tool executions and output decoding are never retried; tool rejections
+// are fed back to the model under their own budget instead (ADR 0007).
 type RetryConfig struct {
 	// MaxAttempts bounds model calls per turn, including the first. It must
 	// be at least 1; 1 disables retries.
@@ -61,6 +64,9 @@ type RetryConfig struct {
 // ends the run. The caller's context is checked before every model call
 // and tool execution. maxIterations bounds model turns and must be at
 // least 1; retry bounds retried model calls per turn per ADR 0004.
+// toolRetries bounds how many tool rejections — errors carrying
+// *model.ModelRetry — are fed back to the model for correction per run;
+// it must not be negative (ADR 0007).
 func Execute[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -69,12 +75,16 @@ func Execute[Deps any](
 	req model.Request,
 	maxIterations int,
 	retry RetryConfig,
+	toolRetries int,
 ) (Outcome, error) {
 	if maxIterations < 1 {
 		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
 	}
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
+	}
+	if toolRetries < 0 {
+		return Outcome{}, fmt.Errorf("runner: toolRetries must not be negative, got %d", toolRetries)
 	}
 	if len(req.ToolSpecs) == 0 && len(tools) > 0 {
 		return Outcome{}, fmt.Errorf("runner: tools registered without matching tool specs")
@@ -83,6 +93,7 @@ func Execute[Deps any](
 	messages := make([]model.Message, len(req.Messages))
 	copy(messages, req.Messages)
 	var usage model.Usage
+	feedbacks := 0
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -118,7 +129,22 @@ func Execute[Deps any](
 			}
 			result, err := declared.Exec(ctx, deps, call.Args)
 			if err != nil {
-				return Outcome{}, &ToolError{ToolName: call.Name, CallID: call.ID, Err: err}
+				var rejection *model.ModelRetry
+				if toolRetries > 0 && errors.As(err, &rejection) {
+					// Correction feedback (ADR 0007): deliver the rejection
+					// as the call's tool result and let the model try again.
+					toolRetries--
+					feedbacks++
+					messages = append(messages, model.Message{
+						Role:       model.RoleTool,
+						ToolCallID: call.ID,
+						ToolName:   call.Name,
+						Content: fmt.Sprintf("Your tool call was rejected: %v. "+
+							"Correct the arguments and call the tool again.", rejection.Err),
+					})
+					continue
+				}
+				return Outcome{}, &ToolError{ToolName: call.Name, CallID: call.ID, Err: terminalToolError(feedbacks, err)}
 			}
 			messages = append(messages, model.Message{
 				Role:       model.RoleTool,
@@ -171,6 +197,16 @@ func generate(ctx context.Context, m model.Model, request model.Request, retry R
 func terminalModelError(attempts int, err error) error {
 	if attempts > 1 {
 		return fmt.Errorf("runner: model failed after %d attempts: %w", attempts, err)
+	}
+	return err
+}
+
+// terminalToolError reports the final tool failure. The attempt count is
+// attached only when a correction feedback actually happened, so runs
+// without feedback return the tool error unchanged.
+func terminalToolError(feedbacks int, err error) error {
+	if feedbacks > 0 {
+		return fmt.Errorf("tool failed after %d attempts: %w", feedbacks+1, err)
 	}
 	return err
 }
