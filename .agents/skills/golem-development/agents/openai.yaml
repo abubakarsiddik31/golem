@@ -1,0 +1,4 @@
+interface:
+  display_name: "Golem Development"
+  short_description: "Build typed, testable Golem agent features"
+  default_prompt: "Use $golem-development to implement this Golem feature."
