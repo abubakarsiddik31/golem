@@ -646,3 +646,133 @@ func TestExecuteRejectsInvalidRetryConfiguration(t *testing.T) {
 		t.Fatal("Execute() error = nil, want MaxAttempts rejection")
 	}
 }
+
+// streamScriptedModel streams scriptedModel's queue: it replays the same
+// responses, emitting one delta per response — the tool-call fragment for
+// a tool turn, the content for a text turn.
+type streamScriptedModel struct{ scriptedModel }
+
+func (m *streamScriptedModel) GenerateStream(ctx context.Context, request model.Request, onDelta func(model.Delta) error) (model.Response, error) {
+	response, err := m.Generate(ctx, request)
+	if err != nil {
+		return model.Response{}, err
+	}
+	if onDelta == nil {
+		return response, nil
+	}
+	if response.Message.Content != "" {
+		if err := onDelta(model.Delta{Content: response.Message.Content}); err != nil {
+			return model.Response{}, err
+		}
+	}
+	for _, call := range response.Message.ToolCalls {
+		delta := model.Delta{ToolCalls: []model.ToolCallDelta{{Index: 0, ID: call.ID, Name: call.Name}}}
+		if err := onDelta(delta); err != nil {
+			return model.Response{}, err
+		}
+	}
+	return response, nil
+}
+
+func TestExecuteStreamRunsTheLoopOverStreamedTurns(t *testing.T) {
+	t.Parallel()
+
+	m := &streamScriptedModel{scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "call-1", Name: "echo", Args: json.RawMessage(`{}`)}),
+		textResponse("done", model.Usage{InputTokens: 20, OutputTokens: 3}),
+	}}}
+	echo := echoTool(t)
+
+	var deltas []model.Delta
+	outcome, err := runner.ExecuteStream(context.Background(), m, []tool.Tool[deps]{echo}, deps{Tenant: "acme"},
+		model.Request{
+			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
+			ToolSpecs: specsFor(t, echo),
+		}, 5, 0, func(d model.Delta) error {
+			deltas = append(deltas, d)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("ExecuteStream() error = %v", err)
+	}
+	if outcome.Response.Message.Content != "done" {
+		t.Fatalf("final content = %q", outcome.Response.Message.Content)
+	}
+	if outcome.Usage != (model.Usage{InputTokens: 20, OutputTokens: 3}) {
+		t.Fatalf("usage = %#v", outcome.Usage)
+	}
+	if len(m.requests) != 2 {
+		t.Fatalf("model turns = %d, want 2", len(m.requests))
+	}
+
+	// Fragments arrive in turn order: the tool-call fragment of the first
+	// turn, then the streamed answer after the tool executed.
+	if len(deltas) != 2 {
+		t.Fatalf("deltas = %#v, want 2", deltas)
+	}
+	if fragment := deltas[0].ToolCalls[0]; fragment.ID != "call-1" || fragment.Name != "echo" {
+		t.Fatalf("first delta = %#v, want the tool-call fragment", deltas[0])
+	}
+	if deltas[1].Content != "done" {
+		t.Fatalf("second delta = %#v, want the streamed answer", deltas[1])
+	}
+
+	// The outcome is the assembled run, identical to Execute's.
+	wantRoles := []model.Role{model.RoleUser, model.RoleAssistant, model.RoleTool, model.RoleAssistant}
+	if len(outcome.Messages) != len(wantRoles) {
+		t.Fatalf("evidence = %#v", outcome.Messages)
+	}
+	for i, role := range wantRoles {
+		if outcome.Messages[i].Role != role {
+			t.Fatalf("evidence[%d].Role = %q, want %q", i, outcome.Messages[i].Role, role)
+		}
+	}
+}
+
+func TestExecuteStreamRequiresStreamingModel(t *testing.T) {
+	t.Parallel()
+
+	_, err := runner.ExecuteStream(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{},
+		1, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not support streaming") {
+		t.Fatalf("ExecuteStream() error = %v, want streaming capability error", err)
+	}
+}
+
+func TestExecuteStreamDoesNotRetryStreamedTurns(t *testing.T) {
+	t.Parallel()
+
+	transient := &retryableFailure{message: "429 rate limited"}
+	m := &streamScriptedModel{scriptedModel{errs: []error{transient}}}
+
+	_, err := runner.ExecuteStream(context.Background(), m, nil, deps{},
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}},
+		3, 0, func(model.Delta) error { return nil })
+	if !errors.Is(err, transient) {
+		t.Fatalf("ExecuteStream() error = %v, want the stream failure as-is", err)
+	}
+	// Streamed turns are single-attempt (ADR 0009): the retryable failure
+	// is not re-attempted.
+	if len(m.requests) != 1 {
+		t.Fatalf("stream attempts = %d, want 1", len(m.requests))
+	}
+}
+
+func TestExecuteStreamReturnsCallerStopError(t *testing.T) {
+	t.Parallel()
+
+	stop := errors.New("stop listening")
+	m := &streamScriptedModel{scriptedModel{responses: []model.Response{
+		textResponse("word", model.Usage{}),
+	}}}
+
+	_, err := runner.ExecuteStream(context.Background(), m, nil, deps{},
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}},
+		3, 0, func(model.Delta) error { return stop })
+	if !errors.Is(err, stop) || err != stop {
+		t.Fatalf("ExecuteStream() error = %v, want the caller's stop error as-is", err)
+	}
+	if len(m.requests) != 1 {
+		t.Fatalf("model turns = %d, want 1", len(m.requests))
+	}
+}

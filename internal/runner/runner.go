@@ -77,11 +77,61 @@ func Execute[Deps any](
 	retry RetryConfig,
 	toolRetries int,
 ) (Outcome, error) {
-	if maxIterations < 1 {
-		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
-	}
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
+	}
+	return execute(ctx, tools, deps, req, maxIterations, toolRetries,
+		func(ctx context.Context, request model.Request) (model.Response, error) {
+			return generate(ctx, m, request, retry)
+		})
+}
+
+// ExecuteStream runs the same loop as Execute over streamed model calls
+// (ADR 0009): every fragment is forwarded to onDelta in arrival order,
+// across tool turns and correction feedbacks, and the outcome is the
+// assembled run, identical in shape to Execute's. The model must
+// implement model.StreamingModel. There is deliberately no retry
+// parameter: streamed turns are single-attempt, because retrying a
+// stream would replay fragments the caller has already seen; retryable
+// failures fail the run classified. A non-nil error from onDelta stops
+// the run and is returned as-is.
+func ExecuteStream[Deps any](
+	ctx context.Context,
+	m model.Model,
+	tools []tool.Tool[Deps],
+	deps Deps,
+	req model.Request,
+	maxIterations int,
+	toolRetries int,
+	onDelta func(model.Delta) error,
+) (Outcome, error) {
+	streamer, ok := m.(model.StreamingModel)
+	if !ok {
+		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
+	}
+	return execute(ctx, tools, deps, req, maxIterations, toolRetries,
+		func(ctx context.Context, request model.Request) (model.Response, error) {
+			return streamer.GenerateStream(ctx, request, onDelta)
+		})
+}
+
+// turnCall produces one model response for a turn. Injecting it lets the
+// loop run over plain or streamed model calls without duplicating policy.
+type turnCall func(ctx context.Context, request model.Request) (model.Response, error)
+
+// execute is the shared loop of Execute and ExecuteStream: identical
+// turn limits, tool execution, rejection feedback, and evidence order.
+func execute[Deps any](
+	ctx context.Context,
+	tools []tool.Tool[Deps],
+	deps Deps,
+	req model.Request,
+	maxIterations int,
+	toolRetries int,
+	call turnCall,
+) (Outcome, error) {
+	if maxIterations < 1 {
+		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
 	}
 	if toolRetries < 0 {
 		return Outcome{}, fmt.Errorf("runner: toolRetries must not be negative, got %d", toolRetries)
@@ -103,7 +153,7 @@ func Execute[Deps any](
 			return Outcome{}, fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
-		response, err := generate(ctx, m, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs}, retry)
+		response, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs})
 		if err != nil {
 			return Outcome{}, err
 		}
