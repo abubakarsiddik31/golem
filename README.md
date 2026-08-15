@@ -111,6 +111,19 @@ agent, err := golem.New[MyDeps, string](client, decoder,
 
 Rejected calls and their rejection results stay in the evidence. The budget is off by default: without `WithToolRetries` — or for tool errors that are not `ModelRetry` — the run still aborts at the `tool` stage with the cause preserved (ADR 0007).
 
+## Streaming
+
+Models that can stream advertise it through the optional `model.StreamingModel` capability — `Model` itself is unchanged, so test fakes and simple adapters are unaffected. The OpenAI-compatible adapter implements it over SSE:
+
+```go
+response, err := client.GenerateStream(ctx, request, func(d model.Delta) error {
+    fmt.Print(d.Content)
+    return nil // a non-nil return stops the stream and comes back as-is
+})
+```
+
+`GenerateStream` returns the fully assembled `model.Response` — the same shape and normalization as `Generate` — so evidence, tools, and decoding keep operating on the canonical response. Streamed usage depends on provider support (`stream_options.include_usage`); providers that omit it report zeroes. Agent-level streaming runs build on this port next (ADR 0008).
+
 ## Connecting a provider
 
 Golem's core is provider-neutral: applications choose any implementation of `model.Model`. The first adapter targets the OpenAI-compatible chat-completions wire format with explicit configuration — a configurable `BaseURL` serves OpenAI, Groq, OpenRouter, DeepSeek, Together, Ollama, and vLLM. The adapter uses only the standard library.

@@ -9,11 +9,20 @@ import (
 )
 
 // chatRequest is the chat-completions wire request. Field names follow the
-// provider API; omitempty keeps absent tools and calls off the wire.
+// provider API; omitempty keeps absent tools, calls, and streaming options
+// off the wire.
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Tools    []chatTool    `json:"tools,omitempty"`
+	// Stream selects streaming mode (ADR 0008); when set, StreamOptions
+	// asks the provider to report usage in the final chunk.
+	Stream        bool               `json:"stream,omitempty"`
+	StreamOptions *chatStreamOptions `json:"stream_options,omitempty"`
+}
+
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type chatMessage struct {
@@ -58,6 +67,35 @@ type chatChoice struct {
 type chatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+}
+
+// chatChunk is one streamed SSE chunk (ADR 0008): a delta for the first
+// choice, or usage only in the final chunk where Choices is empty.
+type chatChunk struct {
+	Choices []chatChunkChoice `json:"choices"`
+	Usage   *chatUsage        `json:"usage"`
+}
+
+type chatChunkChoice struct {
+	Delta chatDeltaMessage `json:"delta"`
+}
+
+type chatDeltaMessage struct {
+	Role      string              `json:"role,omitempty"`
+	Content   string              `json:"content,omitempty"`
+	ToolCalls []chatToolCallDelta `json:"tool_calls,omitempty"`
+}
+
+type chatToolCallDelta struct {
+	// Index correlates fragments of one call across chunks.
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Function chatFunctionDelta `json:"function"`
+}
+
+type chatFunctionDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type chatErrorEnvelope struct {
@@ -131,6 +169,16 @@ func toWireTools(specs []model.ToolSpec) []chatTool {
 	return wire
 }
 
+// normalizeArguments converts stringified wire arguments to raw JSON,
+// mapping an empty string to an empty object (ADR 0003).
+func normalizeArguments(arguments string) json.RawMessage {
+	args := strings.TrimSpace(arguments)
+	if args == "" {
+		args = "{}"
+	}
+	return json.RawMessage(args)
+}
+
 // fromWireResponse normalizes a chat-completions body. The first choice
 // wins per ADR 0003; stringified arguments become raw JSON, with an empty
 // string mapped to an empty object.
@@ -149,14 +197,10 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 	choice := wire.Choices[0].Message
 	calls := make([]model.ToolCall, 0, len(choice.ToolCalls))
 	for _, call := range choice.ToolCalls {
-		args := strings.TrimSpace(call.Function.Arguments)
-		if args == "" {
-			args = "{}"
-		}
 		calls = append(calls, model.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
-			Args: json.RawMessage(args),
+			Args: normalizeArguments(call.Function.Arguments),
 		})
 	}
 

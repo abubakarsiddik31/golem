@@ -72,23 +72,10 @@ func New(cfg Config) (*Client, error) {
 // network-level failures return *TransportError, and unexpected response
 // shapes return *DecodeError.
 func (c *Client) Generate(ctx context.Context, request model.Request) (model.Response, error) {
-	body, err := json.Marshal(chatRequest{
-		Model:    c.cfg.Model,
-		Messages: toWireMessages(request.Messages),
-		Tools:    toWireTools(request.ToolSpecs),
-	})
+	httpRequest, err := c.newChatHTTPRequest(ctx, request, false)
 	if err != nil {
-		return model.Response{}, &DecodeError{Stage: "encode request", Err: err}
+		return model.Response{}, err
 	}
-
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimSuffix(c.cfg.BaseURL, "/")+"/chat/completions",
-		bytes.NewReader(body))
-	if err != nil {
-		return model.Response{}, fmt.Errorf("openai: build request: %w", err)
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {
@@ -109,4 +96,34 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 		return model.Response{}, err
 	}
 	return response, nil
+}
+
+// newChatHTTPRequest builds the POST request for the chat-completions
+// endpoint. stream selects streaming mode, which also requests usage in
+// the final chunk (ADR 0008).
+func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
+	var streamOptions *chatStreamOptions
+	if stream {
+		streamOptions = &chatStreamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(chatRequest{
+		Model:         c.cfg.Model,
+		Messages:      toWireMessages(request.Messages),
+		Tools:         toWireTools(request.ToolSpecs),
+		Stream:        stream,
+		StreamOptions: streamOptions,
+	})
+	if err != nil {
+		return nil, &DecodeError{Stage: "encode request", Err: err}
+	}
+
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimSuffix(c.cfg.BaseURL, "/")+"/chat/completions",
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("openai: build request: %w", err)
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	return httpRequest, nil
 }
