@@ -81,6 +81,36 @@ agent, err := golem.New[struct{}, int](client,
 
 Rejected responses and rejection prompts stay in the evidence, and usage sums across rounds. The budget is off by default: without `WithOutputRetries` — or for decode errors that are not `ModelRetry` — the run fails at the `decode` stage exactly as before (ADR 0006).
 
+## Self-correcting tools
+
+Tools know their own validation rules. A tool rejects a call the model can fix by returning an error wrapping `model.ModelRetry`; with a budget configured, the run delivers the rejection as that call's tool result so the model can correct its arguments and call again.
+
+```go
+roll := tool.MustNew(tool.Tool[MyDeps]{
+    Name:        "roll",
+    Description: "Roll a die; n must be positive.",
+    Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+    Exec: func(ctx context.Context, deps MyDeps, args json.RawMessage) (string, error) {
+        var input struct {
+            N int `json:"n"`
+        }
+        if err := json.Unmarshal(args, &input); err != nil {
+            return "", err
+        }
+        if input.N <= 0 {
+            return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+        }
+        return fmt.Sprintf("rolled %d", input.N), nil
+    },
+})
+agent, err := golem.New[MyDeps, string](client, decoder,
+    golem.WithTools[MyDeps, string](roll),
+    golem.WithToolRetries[MyDeps, string](2),
+)
+```
+
+Rejected calls and their rejection results stay in the evidence. The budget is off by default: without `WithToolRetries` — or for tool errors that are not `ModelRetry` — the run still aborts at the `tool` stage with the cause preserved (ADR 0007).
+
 ## Connecting a provider
 
 Golem's core is provider-neutral: applications choose any implementation of `model.Model`. The first adapter targets the OpenAI-compatible chat-completions wire format with explicit configuration — a configurable `BaseURL` serves OpenAI, Groq, OpenRouter, DeepSeek, Together, Ollama, and vLLM. The adapter uses only the standard library.

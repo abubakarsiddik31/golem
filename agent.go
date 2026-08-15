@@ -51,6 +51,7 @@ type Agent[Deps any, Output any] struct {
 	maxAttempts   int
 	retryBackoff  func(attempt int) time.Duration
 	outputRetries int
+	toolRetries   int
 }
 
 // Option configures an Agent during construction.
@@ -110,6 +111,19 @@ func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 	}
 }
 
+// WithToolRetries sets how many tool rejections a run feeds back to the
+// model: a tool signals correctable arguments by returning an error
+// wrapping *model.ModelRetry, and the run delivers the rejection as the
+// call's tool result so the model can try again (ADR 0007). The default
+// is 0 — self-correction is opt-in — and negative values fail New. The
+// budget counts total rejections per run and is additionally bounded by
+// the model turn limit.
+func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolRetries = retries
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -143,6 +157,9 @@ func New[Deps any, Output any](
 	}
 	if agent.outputRetries < 0 {
 		return nil, fmt.Errorf("golem: output retries must not be negative, got %d", agent.outputRetries)
+	}
+	if agent.toolRetries < 0 {
+		return nil, fmt.Errorf("golem: tool retries must not be negative, got %d", agent.toolRetries)
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -187,7 +204,8 @@ type Result[Output any] struct {
 // Model calls are attempted up to the configured attempt limit; exhausted
 // retries fail with the model stage, preserving the provider cause. Output
 // the decoder rejects with *model.ModelRetry is fed back for correction up
-// to the configured output retry budget.
+// to the configured output retry budget, and tool calls a tool rejects
+// with *model.ModelRetry are fed back up to the tool retry budget.
 //
 // Errors are wrapped in RunError with the failing stage. Cancellation and
 // deadline errors are returned unwrapped so callers can match them
@@ -225,7 +243,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 
 	for attempt := 0; ; attempt++ {
 		outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
-			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry, 0)
+			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry, a.toolRetries)
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)
 		}

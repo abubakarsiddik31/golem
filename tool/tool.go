@@ -23,7 +23,9 @@ type Tool[Deps any] struct {
 	Schema json.RawMessage
 	// Exec runs the tool and returns the text handed back to the model. It
 	// must honor ctx cancellation and return a classified error rather than
-	// logging it.
+	// logging it. Returning an error that wraps *model.ModelRetry rejects
+	// this call as correctable: with a tool retry budget configured, the
+	// run feeds the rejection back to the model (ADR 0007).
 	Exec func(ctx context.Context, deps Deps, args json.RawMessage) (string, error)
 }
 

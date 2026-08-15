@@ -124,6 +124,72 @@ func ExampleWithOutputRetries() {
 	// 4 messages in the corrected conversation
 }
 
+// learningModel requests the roll tool with an invalid argument first,
+// then corrects the call once it sees the rejection come back.
+type learningModel struct{ calls int }
+
+func (m *learningModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	last := request.Messages[len(request.Messages)-1]
+	if last.Role == model.RoleTool && !strings.Contains(last.Content, "rejected") {
+		return model.Response{
+			Message: model.Message{Role: model.RoleAssistant, Content: fmt.Sprintf("the die %s", last.Content)},
+		}, nil
+	}
+	m.calls++
+	n := 0
+	if m.calls > 1 {
+		n = 4
+	}
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+		{ID: fmt.Sprintf("call-%d", m.calls), Name: "roll", Args: json.RawMessage(fmt.Sprintf(`{"n":%d}`, n))},
+	}}}, nil
+}
+
+// ExampleWithToolRetries shows a tool rejecting correctable arguments:
+// the run delivers the rejection as the call's tool result, and the model
+// calls again with fixed arguments within the configured budget.
+func ExampleWithToolRetries() {
+	roll := tool.MustNew(tool.Tool[struct{}]{
+		Name:        "roll",
+		Description: "Roll a die; n must be positive.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+			var input struct {
+				N int `json:"n"`
+			}
+			if err := json.Unmarshal(args, &input); err != nil {
+				return "", err
+			}
+			if input.N <= 0 {
+				return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+			}
+			return fmt.Sprintf("rolled %d", input.N), nil
+		},
+	})
+
+	agent, err := golem.New[struct{}, string](&learningModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithTools[struct{}, string](roll),
+		golem.WithToolRetries[struct{}, string](2),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "roll a 4")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(result.Output)
+	fmt.Println(len(result.Messages), "messages in the corrected run")
+	// Output:
+	// the die rolled 4
+	// 6 messages in the corrected run
+}
+
 // ExampleAgent demonstrates an agent that executes a typed tool with an
 // explicit dependency value and returns the full run evidence.
 func ExampleAgent() {
