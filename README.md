@@ -11,11 +11,33 @@ The project is at the foundation stage. The public API is intentionally small wh
 ## Direction
 
 - Make a useful agent the shortest path: configure a model, declare tools, run with dependencies, get a typed result.
-- Make important behavior explicit: model calls, tool execution, retries, usage, and validation are visible in the run result.
+- Make important behavior explicit: model calls, tool execution, iteration limits, usage, and validation are visible in the run result.
 - Keep infrastructure replaceable: applications choose models, tracing, storage, and transport through narrow interfaces.
 - Prefer Go-native composition over ports of Python metaprogramming.
 
 Read [the foundation brief](docs/foundation.md) before proposing a new public abstraction. Contributor and coding-agent rules live in [AGENTS.md](AGENTS.md).
+
+## Declaring and running tools
+
+Tools are typed values: inspectable metadata plus an execution function that receives the caller's context, the run's dependency value, and raw model-produced arguments. A model's tool request is executed sequentially and every exchange is preserved in the result.
+
+```go
+getPlayerName := tool.MustNew(tool.Tool[string]{
+    Name:        "get_player_name",
+    Description: "Get the player's name.",
+    Schema:      json.RawMessage(`{"type":"object"}`),
+    Exec: func(ctx context.Context, playerName string, args json.RawMessage) (string, error) {
+        return playerName, nil
+    },
+})
+
+agent, err := golem.New[string, string](modelClient, decoder,
+    golem.WithTools[string, string](getPlayerName),
+)
+result, err := agent.Run(ctx, golem.RunContext[string]{Deps: "Anne"}, "My guess is 4")
+```
+
+Errors are classified by stage (`model`, `tool`, `decode`, `loop`) in `RunError` while preserving the cause for `errors.Is` and `errors.As`. A run makes at most `DefaultMaxIterations` model turns unless `WithMaxIterations` overrides the limit.
 
 ## Planned package shape
 
@@ -24,6 +46,7 @@ golem/        Agent configuration and typed run API
 model/        Provider-neutral model request/response contract
 tool/         Tool declarations and execution contracts
 internal/     Execution loop and non-public mechanics
+docs/adr/     Decisions that shape the public contracts
 ```
 
 ## Development

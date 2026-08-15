@@ -3,10 +3,17 @@ package golem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/tool"
 )
+
+// DefaultMaxIterations bounds model turns per run when no explicit limit is
+// configured (ADR 0002).
+const DefaultMaxIterations = 10
 
 // OutputDecoder validates and converts a provider response to the agent's
 // declared result type. It is the boundary at which model-produced data becomes
@@ -23,13 +30,14 @@ func (f DecodeFunc[Output]) Decode(ctx context.Context, response model.Response)
 	return f(ctx, response)
 }
 
-// Agent combines a model, instructions, and a typed output boundary. Deps is
-// declared now so the future tool API can receive application dependencies
-// without untyped maps or ambient globals.
+// Agent combines a model, instructions, tools, and a typed output boundary.
+// Deps is the dependency value tools receive on every run.
 type Agent[Deps any, Output any] struct {
-	model        model.Model
-	decoder      OutputDecoder[Output]
-	instructions string
+	model         model.Model
+	decoder       OutputDecoder[Output]
+	instructions  string
+	tools         []tool.Tool[Deps]
+	maxIterations int
 }
 
 // Option configures an Agent during construction.
@@ -39,6 +47,22 @@ type Option[Deps any, Output any] func(*Agent[Deps, Output])
 func WithInstructions[Deps any, Output any](instructions string) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.instructions = instructions
+	}
+}
+
+// WithTools registers tools the model may request. Tools should be built
+// with tool.New; New rejects invalid or duplicate declarations.
+func WithTools[Deps any, Output any](tools ...tool.Tool[Deps]) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.tools = append(agent.tools, tools...)
+	}
+}
+
+// WithMaxIterations bounds model turns per run. It must be at least 1;
+// otherwise New fails.
+func WithMaxIterations[Deps any, Output any](iterations int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.maxIterations = iterations
 	}
 }
 
@@ -57,37 +81,63 @@ func New[Deps any, Output any](
 	}
 
 	agent := &Agent[Deps, Output]{
-		model:   modelClient,
-		decoder: decoder,
+		model:         modelClient,
+		decoder:       decoder,
+		maxIterations: DefaultMaxIterations,
 	}
 	for _, option := range options {
 		if option != nil {
 			option(agent)
 		}
 	}
+	if agent.maxIterations < 1 {
+		return nil, fmt.Errorf("golem: max iterations must be at least 1, got %d", agent.maxIterations)
+	}
+	if err := validateTools(agent.tools); err != nil {
+		return nil, err
+	}
 	return agent, nil
 }
 
-// RunContext carries explicit application dependencies for a run. The first
-// version does not consume Deps itself; retaining it here makes the dependency
-// contract stable as tool execution is introduced.
+func validateTools[Deps any](tools []tool.Tool[Deps]) error {
+	seen := make(map[string]struct{}, len(tools))
+	for _, t := range tools {
+		if t.Name == "" {
+			return fmt.Errorf("golem: tool name is required")
+		}
+		if t.Exec == nil {
+			return fmt.Errorf("golem: tool %q: exec function is required", t.Name)
+		}
+		if _, duplicate := seen[t.Name]; duplicate {
+			return fmt.Errorf("golem: tool %q: duplicate name", t.Name)
+		}
+		seen[t.Name] = struct{}{}
+	}
+	return nil
+}
+
+// RunContext carries explicit application dependencies for a run. Its Deps
+// value flows to every tool executed during the run.
 type RunContext[Deps any] struct {
 	Deps Deps
 }
 
 // Result preserves the typed output and the normalized model evidence that
-// produced it. This makes testing and observability possible without a tracing
-// backend.
+// produced it, including every tool-call exchange in execution order. This
+// makes testing and observability possible without a tracing backend.
 type Result[Output any] struct {
 	Output   Output
 	Messages []model.Message
 	Usage    model.Usage
 }
 
-// Run asks the configured model to answer prompt and decodes its response.
+// Run executes the agent: it asks the configured model to answer prompt,
+// executing requested tools along the way, and decodes the final response.
+//
+// Errors are wrapped in RunError with the failing stage. Cancellation and
+// deadline errors are returned unwrapped so callers can match them
+// directly with errors.Is.
 func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string) (Result[Output], error) {
-	_ = runCtx // Tools will consume explicit dependencies in a subsequent iteration.
-
 	request := model.Request{Messages: make([]model.Message, 0, 2)}
 	if a.instructions != "" {
 		request.Messages = append(request.Messages, model.Message{
@@ -99,20 +149,43 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 		Role:    model.RoleUser,
 		Content: prompt,
 	})
-
-	response, err := a.model.Generate(ctx, request)
-	if err != nil {
-		return Result[Output]{}, &RunError{Stage: StageModel, Err: err}
+	for _, t := range a.tools {
+		request.ToolSpecs = append(request.ToolSpecs, model.ToolSpec{
+			Name:        t.Name,
+			Description: t.Description,
+			Schema:      t.Schema,
+		})
 	}
 
-	output, err := a.decoder.Decode(ctx, response)
+	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations)
+	if err != nil {
+		return Result[Output]{}, classifyRunError(err)
+	}
+
+	output, err := a.decoder.Decode(ctx, outcome.Response)
 	if err != nil {
 		return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
 	}
 
 	return Result[Output]{
 		Output:   output,
-		Messages: append(request.Messages, response.Message),
-		Usage:    response.Usage,
+		Messages: outcome.Messages,
+		Usage:    outcome.Usage,
 	}, nil
+}
+
+// classifyRunError maps runner outcomes to public stages. Cancellation and
+// deadline errors stay unwrapped so callers can match them with errors.Is.
+func classifyRunError(err error) error {
+	var toolErr *runner.ToolError
+	switch {
+	case errors.As(err, &toolErr):
+		return &RunError{Stage: StageTool, Err: err}
+	case errors.Is(err, runner.ErrLoopLimit):
+		return &RunError{Stage: StageLoop, Err: err}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	default:
+		return &RunError{Stage: StageModel, Err: err}
+	}
 }
