@@ -37,7 +37,7 @@ agent, err := golem.New[string, string](modelClient, decoder,
 result, err := agent.Run(ctx, golem.RunContext[string]{Deps: "Anne"}, "My guess is 4")
 ```
 
-Errors are classified by stage (`model`, `tool`, `decode`, `loop`) in `RunError` while preserving the cause for `errors.Is` and `errors.As`. A run makes at most `DefaultMaxIterations` model turns unless `WithMaxIterations` overrides the limit.
+Errors are classified by stage (`model`, `tool`, `decode`, `loop`) in `RunError` while preserving the cause for `errors.Is` and `errors.As`. A run makes at most `DefaultMaxIterations` model turns unless `WithMaxIterations` overrides the limit. Messages serialize to stable, additive-only JSON, so applications can persist conversations with `encoding/json`.
 
 ## Retrying transient model failures
 

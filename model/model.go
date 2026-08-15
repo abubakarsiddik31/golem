@@ -26,24 +26,26 @@ const (
 // validates it explicitly. Providers that omit call IDs require adapters to
 // generate stable ones.
 type ToolCall struct {
-	ID   string
-	Name string
-	Args json.RawMessage
+	ID   string          `json:"id"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 // Message is a normalized conversational message. Provider adapters are
-// responsible for translating it to their native request format.
+// responsible for translating it to their native request format. Its JSON
+// encoding is a durable, additive-only contract for persisted
+// conversations (ADR 0005).
 type Message struct {
-	Role    Role
-	Content string
+	Role    Role   `json:"role"`
+	Content string `json:"content,omitempty"`
 	// ToolCalls holds executions requested by an assistant message. When a
 	// message carries both content and tool calls, the tool calls decide the
 	// turn. Ignored on other roles.
-	ToolCalls []ToolCall
+	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
 	// ToolCallID and ToolName correlate a RoleTool message with its requested
 	// call. Meaningless on other roles.
-	ToolCallID string
-	ToolName   string
+	ToolCallID string `json:"toolCallId,omitempty"`
+	ToolName   string `json:"toolName,omitempty"`
 }
 
 // ToolSpec advertises one tool to the model. Schema is a JSON Schema
