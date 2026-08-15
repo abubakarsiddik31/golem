@@ -51,7 +51,7 @@ client, err := openai.New(openai.Config{
 agent, err := golem.New[struct{}, string](client, decoder)
 ```
 
-Provider failures return a typed `openai.APIError` with a `Retryable` classification (408, 429, 5xx) that retry policies can consume; the adapter never retries on its own. Environment variables are read by the application, never implicitly by Golem.
+Provider failures return a typed `openai.APIError` and network-level failures a `TransportError`. Both expose their retryability through `model.RetryableError` (408, 429, 5xx, transport faults — never context cancellation) for the runner's retry policy; the adapter never retries on its own. Environment variables are read by the application, never implicitly by Golem.
 
 ## Planned package shape
 

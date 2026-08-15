@@ -68,8 +68,9 @@ func New(cfg Config) (*Client, error) {
 }
 
 // Generate translates request to the chat-completions wire format, calls
-// the API, and normalizes the response. Provider failures return *APIError;
-// unexpected response shapes return *DecodeError.
+// the API, and normalizes the response. Provider failures return *APIError,
+// network-level failures return *TransportError, and unexpected response
+// shapes return *DecodeError.
 func (c *Client) Generate(ctx context.Context, request model.Request) (model.Response, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:    c.cfg.Model,
@@ -91,13 +92,13 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {
-		return model.Response{}, fmt.Errorf("openai: request failed: %w", err)
+		return model.Response{}, &TransportError{Err: err}
 	}
 	defer httpResponse.Body.Close()
 
 	payload, err := io.ReadAll(httpResponse.Body)
 	if err != nil {
-		return model.Response{}, fmt.Errorf("openai: read response: %w", err)
+		return model.Response{}, &TransportError{Err: err}
 	}
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
 		return model.Response{}, newAPIError(httpResponse.StatusCode, payload)

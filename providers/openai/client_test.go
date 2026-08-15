@@ -283,8 +283,8 @@ func TestGenerateClassifiesProviderErrors(t *testing.T) {
 			if apiError.StatusCode != test.status {
 				t.Fatalf("status = %d, want %d", apiError.StatusCode, test.status)
 			}
-			if apiError.Retryable != test.retryable {
-				t.Fatalf("retryable = %v, want %v", apiError.Retryable, test.retryable)
+			if apiError.Retryable() != test.retryable {
+				t.Fatalf("retryable = %v, want %v", apiError.Retryable(), test.retryable)
 			}
 			if apiError.Code != test.wantCode {
 				t.Fatalf("code = %q, want %q", apiError.Code, test.wantCode)
@@ -324,6 +324,29 @@ func TestGenerateRejectsMalformedAndEmptyResponses(t *testing.T) {
 	})
 }
 
+func TestGenerateClassifiesTransportFailures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("connection refused is retryable", func(t *testing.T) {
+		t.Parallel()
+		recorder := newRecordedServer(http.StatusOK, `{}`)
+		baseURL := recorder.server.URL
+		recorder.server.Close()
+
+		_, err := newClient(t, baseURL).Generate(context.Background(), userPrompt())
+		var transportError *openai.TransportError
+		if !errors.As(err, &transportError) {
+			t.Fatalf("Generate() error = %v, want TransportError", err)
+		}
+		if !transportError.Retryable() {
+			t.Fatal("TransportError.Retryable() = false, want true")
+		}
+		if !model.IsRetryable(err) {
+			t.Fatal("model.IsRetryable(err) = false, want true")
+		}
+	})
+}
+
 func TestGeneratePropagatesCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -335,5 +358,15 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 	_, err := newClient(t, recorder.server.URL).Generate(ctx, userPrompt())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Generate() error = %v, want context.Canceled", err)
+	}
+	var transportError *openai.TransportError
+	if !errors.As(err, &transportError) {
+		t.Fatalf("Generate() error = %v, want TransportError", err)
+	}
+	if transportError.Retryable() {
+		t.Fatal("TransportError.Retryable() = true, want false for cancellation")
+	}
+	if model.IsRetryable(err) {
+		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
 	}
 }
