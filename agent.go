@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
@@ -14,6 +15,13 @@ import (
 // DefaultMaxIterations bounds model turns per run when no explicit limit is
 // configured (ADR 0002).
 const DefaultMaxIterations = 10
+
+// Retry pacing used when attempts are enabled without an explicit backoff
+// (ADR 0004): 500 ms doubling per failed attempt, capped at 30 s.
+const (
+	retryBaseBackoff = 500 * time.Millisecond
+	retryMaxBackoff  = 30 * time.Second
+)
 
 // OutputDecoder validates and converts a provider response to the agent's
 // declared result type. It is the boundary at which model-produced data becomes
@@ -38,6 +46,8 @@ type Agent[Deps any, Output any] struct {
 	instructions  string
 	tools         []tool.Tool[Deps]
 	maxIterations int
+	maxAttempts   int
+	retryBackoff  func(attempt int) time.Duration
 }
 
 // Option configures an Agent during construction.
@@ -66,6 +76,27 @@ func WithMaxIterations[Deps any, Output any](iterations int) Option[Deps, Output
 	}
 }
 
+// WithMaxAttempts bounds how many times each model call may be attempted,
+// including the first, when the model reports a retryable failure (408,
+// 429, 5xx, transport faults). Tool and decode failures are never retried.
+// The default is 1 — retries are opt-in (ADR 0004) — and values below 1
+// fail New.
+func WithMaxAttempts[Deps any, Output any](attempts int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.maxAttempts = attempts
+	}
+}
+
+// WithRetryBackoff overrides the wait between retried model calls. backoff
+// receives the 1-based number of the attempt that just failed. When
+// attempts are enabled without an explicit backoff, runs wait with
+// exponential backoff: 500 ms doubling, capped at 30 s.
+func WithRetryBackoff[Deps any, Output any](backoff func(attempt int) time.Duration) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.retryBackoff = backoff
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -84,6 +115,7 @@ func New[Deps any, Output any](
 		model:         modelClient,
 		decoder:       decoder,
 		maxIterations: DefaultMaxIterations,
+		maxAttempts:   1,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -92,6 +124,9 @@ func New[Deps any, Output any](
 	}
 	if agent.maxIterations < 1 {
 		return nil, fmt.Errorf("golem: max iterations must be at least 1, got %d", agent.maxIterations)
+	}
+	if agent.maxAttempts < 1 {
+		return nil, fmt.Errorf("golem: max attempts must be at least 1, got %d", agent.maxAttempts)
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -133,6 +168,8 @@ type Result[Output any] struct {
 
 // Run executes the agent: it asks the configured model to answer prompt,
 // executing requested tools along the way, and decodes the final response.
+// Model calls are attempted up to the configured attempt limit; exhausted
+// retries fail with the model stage, preserving the provider cause.
 //
 // Errors are wrapped in RunError with the failing stage. Cancellation and
 // deadline errors are returned unwrapped so callers can match them
@@ -157,8 +194,11 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 		})
 	}
 
-	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations,
-		runner.RetryConfig{MaxAttempts: 1})
+	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
+	if retry.Backoff == nil && a.maxAttempts > 1 {
+		retry.Backoff = exponentialBackoff
+	}
+	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations, retry)
 	if err != nil {
 		return Result[Output]{}, classifyRunError(err)
 	}
@@ -173,6 +213,19 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 		Messages: outcome.Messages,
 		Usage:    outcome.Usage,
 	}, nil
+}
+
+// exponentialBackoff paces enabled retries: 500 ms after the first failed
+// attempt, doubling per attempt, capped at 30 s (ADR 0004).
+func exponentialBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		return retryBaseBackoff
+	}
+	delay := retryBaseBackoff << (attempt - 1)
+	if delay <= 0 || delay > retryMaxBackoff {
+		return retryMaxBackoff
+	}
+	return delay
 }
 
 // classifyRunError maps runner outcomes to public stages. Cancellation and

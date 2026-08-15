@@ -39,6 +39,18 @@ result, err := agent.Run(ctx, golem.RunContext[string]{Deps: "Anne"}, "My guess 
 
 Errors are classified by stage (`model`, `tool`, `decode`, `loop`) in `RunError` while preserving the cause for `errors.Is` and `errors.As`. A run makes at most `DefaultMaxIterations` model turns unless `WithMaxIterations` overrides the limit.
 
+## Retrying transient model failures
+
+Retries are opt-in and bounded: `WithMaxAttempts` sets how many times each model call may be attempted, including the first. Only retryable model failures — adapters classify 408, 429, 5xx, and transport faults through `model.RetryableError` — are retried. Tool and decode failures are never retried, and cancellation always wins over any retry.
+
+```go
+agent, err := golem.New[struct{}, string](client, decoder,
+    golem.WithMaxAttempts[struct{}, string](3),
+)
+```
+
+Retried attempts wait with exponential backoff (500 ms doubling, capped at 30 s); pass a function to `WithRetryBackoff` to control pacing yourself, including jitter. Exhausted retries fail with the `model` stage, preserving the provider cause for `errors.Is` and `errors.As` and reporting the attempt count in the message.
+
 ## Connecting a provider
 
 Golem's core is provider-neutral: applications choose any implementation of `model.Model`. The first adapter targets the OpenAI-compatible chat-completions wire format with explicit configuration — a configurable `BaseURL` serves OpenAI, Groq, OpenRouter, DeepSeek, Together, Ollama, and vLLM. The adapter uses only the standard library.
