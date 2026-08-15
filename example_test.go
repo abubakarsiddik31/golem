@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/abubakarsiddik31/golem"
 	"github.com/abubakarsiddik31/golem/model"
@@ -78,6 +80,48 @@ func ExampleAgent_RunWithHistory() {
 	// heard: hello
 	// heard: goodbye
 	// 4 messages in the chained conversation
+}
+
+// pickyModel answers with a word first, then with the digit once corrected.
+type pickyModel struct{ calls int }
+
+func (m *pickyModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	m.calls++
+	content := "seven"
+	if m.calls > 1 {
+		content = "7"
+	}
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, Content: content}}, nil
+}
+
+// ExampleWithOutputRetries shows a decoder rejecting a correctable
+// response: the run feeds the rejection back to the model, which answers
+// again within the configured budget.
+func ExampleWithOutputRetries() {
+	agent, err := golem.New[struct{}, int](&pickyModel{},
+		golem.DecodeFunc[int](func(ctx context.Context, response model.Response) (int, error) {
+			value, err := strconv.Atoi(strings.TrimSpace(response.Message.Content))
+			if err != nil {
+				return 0, &model.ModelRetry{Err: fmt.Errorf("answer must be an integer, got %q", response.Message.Content)}
+			}
+			return value, nil
+		}),
+		golem.WithOutputRetries[struct{}, int](2),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "pick a number")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(result.Output)
+	fmt.Println(len(result.Messages), "messages in the corrected conversation")
+	// Output:
+	// 7
+	// 4 messages in the corrected conversation
 }
 
 // ExampleAgent demonstrates an agent that executes a typed tool with an

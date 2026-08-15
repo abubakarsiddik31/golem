@@ -62,6 +62,25 @@ next, err := agent.RunWithHistory(ctx, golem.RunContext[MyDeps]{Deps: deps}, res
 
 Conversations persist anywhere with `encoding/json`: `json.Marshal(result.Messages)` produces the stable, additive-only shape pinned in ADR 0005. Storage stays the application's job — there is no session object.
 
+## Self-correcting output
+
+When a typed decoder rejects a response the model can fix, return `model.ModelRetry` from the decoder and enable a correction budget: the run appends the rejection reason to the conversation and asks the model again.
+
+```go
+agent, err := golem.New[struct{}, int](client,
+    golem.DecodeFunc[int](func(ctx context.Context, r model.Response) (int, error) {
+        value, err := strconv.Atoi(strings.TrimSpace(r.Message.Content))
+        if err != nil {
+            return 0, &model.ModelRetry{Err: fmt.Errorf("answer must be an integer, got %q", r.Message.Content)}
+        }
+        return value, nil
+    }),
+    golem.WithOutputRetries[struct{}, int](2),
+)
+```
+
+Rejected responses and rejection prompts stay in the evidence, and usage sums across rounds. The budget is off by default: without `WithOutputRetries` — or for decode errors that are not `ModelRetry` — the run fails at the `decode` stage exactly as before (ADR 0006).
+
 ## Connecting a provider
 
 Golem's core is provider-neutral: applications choose any implementation of `model.Model`. The first adapter targets the OpenAI-compatible chat-completions wire format with explicit configuration — a configurable `BaseURL` serves OpenAI, Groq, OpenRouter, DeepSeek, Together, Ollama, and vLLM. The adapter uses only the standard library.

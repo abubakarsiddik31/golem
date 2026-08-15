@@ -25,7 +25,9 @@ const (
 
 // OutputDecoder validates and converts a provider response to the agent's
 // declared result type. It is the boundary at which model-produced data becomes
-// application data.
+// application data. Returning *model.ModelRetry rejects a response the model
+// can correct; with an output retry budget configured, the run feeds the
+// rejection back to the model (ADR 0006).
 type OutputDecoder[Output any] interface {
 	Decode(ctx context.Context, response model.Response) (Output, error)
 }
@@ -48,6 +50,7 @@ type Agent[Deps any, Output any] struct {
 	maxIterations int
 	maxAttempts   int
 	retryBackoff  func(attempt int) time.Duration
+	outputRetries int
 }
 
 // Option configures an Agent during construction.
@@ -97,6 +100,16 @@ func WithRetryBackoff[Deps any, Output any](backoff func(attempt int) time.Durat
 	}
 }
 
+// WithOutputRetries sets how many correction rounds a decoder may request
+// by returning *model.ModelRetry: each round appends the rejection reason
+// to the conversation and asks the model again (ADR 0006). The default is
+// 0 — self-correction is opt-in — and negative values fail New.
+func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.outputRetries = retries
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -127,6 +140,9 @@ func New[Deps any, Output any](
 	}
 	if agent.maxAttempts < 1 {
 		return nil, fmt.Errorf("golem: max attempts must be at least 1, got %d", agent.maxAttempts)
+	}
+	if agent.outputRetries < 0 {
+		return nil, fmt.Errorf("golem: output retries must not be negative, got %d", agent.outputRetries)
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -169,7 +185,9 @@ type Result[Output any] struct {
 // Run executes the agent: it asks the configured model to answer prompt,
 // executing requested tools along the way, and decodes the final response.
 // Model calls are attempted up to the configured attempt limit; exhausted
-// retries fail with the model stage, preserving the provider cause.
+// retries fail with the model stage, preserving the provider cause. Output
+// the decoder rejects with *model.ModelRetry is fed back for correction up
+// to the configured output retry budget.
 //
 // Errors are wrapped in RunError with the failing stage. Cancellation and
 // deadline errors are returned unwrapped so callers can match them
@@ -189,34 +207,49 @@ func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunCont
 }
 
 func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
-	request := model.Request{Messages: a.requestMessages(history, prompt)}
+	var specs []model.ToolSpec
 	for _, t := range a.tools {
-		request.ToolSpecs = append(request.ToolSpecs, model.ToolSpec{
+		specs = append(specs, model.ToolSpec{
 			Name:        t.Name,
 			Description: t.Description,
 			Schema:      t.Schema,
 		})
 	}
-
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
 	if retry.Backoff == nil && a.maxAttempts > 1 {
 		retry.Backoff = exponentialBackoff
 	}
-	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations, retry)
-	if err != nil {
-		return Result[Output]{}, classifyRunError(err)
-	}
 
-	output, err := a.decoder.Decode(ctx, outcome.Response)
-	if err != nil {
-		return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
-	}
+	messages := a.requestMessages(history, prompt)
+	var usage model.Usage
 
-	return Result[Output]{
-		Output:   output,
-		Messages: outcome.Messages,
-		Usage:    outcome.Usage,
-	}, nil
+	for attempt := 0; ; attempt++ {
+		outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
+			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry)
+		if err != nil {
+			return Result[Output]{}, classifyRunError(err)
+		}
+		usage.InputTokens += outcome.Usage.InputTokens
+		usage.OutputTokens += outcome.Usage.OutputTokens
+
+		output, err := a.decoder.Decode(ctx, outcome.Response)
+		if err == nil {
+			return Result[Output]{Output: output, Messages: outcome.Messages, Usage: usage}, nil
+		}
+		var rejection *model.ModelRetry
+		if !errors.As(err, &rejection) || attempt >= a.outputRetries {
+			if attempt > 0 {
+				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
+			}
+			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
+		}
+		// Correction round (ADR 0006): keep the rejected response as
+		// evidence, tell the model why it was rejected, and run again.
+		messages = append(outcome.Messages, model.Message{
+			Role:    model.RoleUser,
+			Content: fmt.Sprintf("Your previous response was rejected: %v. Correct it and respond again.", rejection.Err),
+		})
+	}
 }
 
 // requestMessages builds the ordered request conversation: the agent's
