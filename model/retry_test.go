@@ -61,3 +61,30 @@ func TestIsRetryableOfNilError(t *testing.T) {
 		t.Fatal("IsRetryable(nil) = true, want false")
 	}
 }
+
+func TestModelRetrySignalsCorrection(t *testing.T) {
+	t.Parallel()
+
+	reason := errors.New("guess must be between 1 and 6")
+	rejection := &model.ModelRetry{Err: reason}
+
+	if !errors.Is(rejection, reason) {
+		t.Fatal("ModelRetry must expose its reason through errors.Is")
+	}
+	wrapped := fmt.Errorf("decode: %w", rejection)
+	var retry *model.ModelRetry
+	if !errors.As(wrapped, &retry) {
+		t.Fatal("ModelRetry must be reachable through errors.As in a wrapped chain")
+	}
+	if !errors.Is(wrapped, reason) {
+		t.Fatal("wrapped ModelRetry must expose its reason")
+	}
+}
+
+func TestModelRetryIsNotTransportRetryable(t *testing.T) {
+	t.Parallel()
+
+	if model.IsRetryable(&model.ModelRetry{Err: errors.New("invalid output")}) {
+		t.Fatal("ModelRetry must not classify as transport-retryable")
+	}
+}
