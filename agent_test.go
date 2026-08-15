@@ -65,7 +65,9 @@ func TestAgentRunBuildsRequestAndPreservesEvidence(t *testing.T) {
 	if got, want := client.request.Messages, []model.Message{
 		{Role: model.RoleSystem, Content: "Be concise."},
 		{Role: model.RoleUser, Content: "What is the answer?"},
-	}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	}; len(got) != len(want) ||
+		got[0].Role != want[0].Role || got[0].Content != want[0].Content ||
+		got[1].Role != want[1].Role || got[1].Content != want[1].Content {
 		t.Fatalf("request messages = %#v, want %#v", got, want)
 	}
 }
