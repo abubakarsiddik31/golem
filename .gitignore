@@ -8,3 +8,6 @@ coverage.txt
 .DS_Store
 .idea/
 .vscode/
+
+# Local upstream reference cache; refresh from its canonical remote when needed.
+reference/pydantic-ai/

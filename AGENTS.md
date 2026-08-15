@@ -5,6 +5,10 @@ Read `docs/foundation.md` and `.agents/skills/golem-development/SKILL.md` before
 - `.agents/skills/golem-api-design/SKILL.md` for exported APIs and package boundaries.
 - `.agents/skills/golem-contract-tests/SKILL.md` for behavior changes and tests.
 
+## Upstream reference cache
+
+The official Pydantic AI docs are available locally at `reference/pydantic-ai/docs/` when the cache has been fetched. It is intentionally Git-ignored; use it for scoped design research, not as a source to copy wholesale. See `docs/upstream-references.md` to refresh it and verify the upstream revision before relying on a behavior.
+
 ## Operating rules
 
 - Preserve the package boundaries documented in `docs/foundation.md`.
