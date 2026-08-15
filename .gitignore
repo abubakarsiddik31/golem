@@ -9,5 +9,8 @@ coverage.txt
 .idea/
 .vscode/
 
+# Local secrets for opt-in live tests; never commit.
+.env
+
 # Local upstream reference cache; refresh from its canonical remote when needed.
 reference/pydantic-ai/
