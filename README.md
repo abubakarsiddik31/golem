@@ -122,7 +122,20 @@ response, err := client.GenerateStream(ctx, request, func(d model.Delta) error {
 })
 ```
 
-`GenerateStream` returns the fully assembled `model.Response` — the same shape and normalization as `Generate` — so evidence, tools, and decoding keep operating on the canonical response. Streamed usage depends on provider support (`stream_options.include_usage`); providers that omit it report zeroes. Agent-level streaming runs build on this port next (ADR 0008).
+`GenerateStream` returns the fully assembled `model.Response` — the same shape and normalization as `Generate` — so evidence, tools, and decoding keep operating on the canonical response. Streamed usage depends on provider support (`stream_options.include_usage`); providers that omit it report zeroes (ADR 0008).
+
+Agents stream whole runs: `RunStream` (and `RunStreamWithHistory`) forward every fragment across tool turns and correction rounds while producing the identical `Result`.
+
+```go
+result, err := agent.RunStream(ctx, golem.RunContext[MyDeps]{Deps: deps}, "summarize the match",
+    func(d model.Delta) error {
+        fmt.Print(d.Content)
+        return nil
+    },
+)
+```
+
+The model must implement `model.StreamingModel` — otherwise the call fails up front rather than silently degrading. Streamed turns are single-attempt: a retryable failure ends the run at the model stage instead of replaying fragments the caller already saw; use non-streaming runs when retry resilience matters more than progress (ADR 0009).
 
 ## Connecting a provider
 

@@ -190,6 +190,50 @@ func ExampleWithToolRetries() {
 	// 6 messages in the corrected run
 }
 
+// morningModel streams its answer as two fragments.
+type morningModel struct{}
+
+func (m *morningModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "good morning"}}, nil
+}
+
+func (m *morningModel) GenerateStream(ctx context.Context, request model.Request, onDelta func(model.Delta) error) (model.Response, error) {
+	for _, fragment := range []string{"good ", "morning"} {
+		if err := onDelta(model.Delta{Content: fragment}); err != nil {
+			return model.Response{}, err
+		}
+	}
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "good morning"}}, nil
+}
+
+// ExampleAgent_RunStream shows a run that streams every fragment to the
+// callback while producing the same typed result as Run.
+func ExampleAgent_RunStream() {
+	agent, err := golem.New[struct{}, string](&morningModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var fragments []string
+	result, err := agent.RunStream(context.Background(), golem.RunContext[struct{}]{}, "greet me",
+		func(d model.Delta) error {
+			fragments = append(fragments, d.Content)
+			return nil
+		})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(strings.Join(fragments, "|"))
+	fmt.Println(result.Output)
+	// Output:
+	// good |morning
+	// good morning
+}
+
 // ExampleAgent demonstrates an agent that executes a typed tool with an
 // explicit dependency value and returns the full run evidence.
 func ExampleAgent() {

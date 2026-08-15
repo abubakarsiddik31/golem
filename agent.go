@@ -211,7 +211,7 @@ type Result[Output any] struct {
 // deadline errors are returned unwrapped so callers can match them
 // directly with errors.Is.
 func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string) (Result[Output], error) {
-	return a.execute(ctx, runCtx, nil, prompt)
+	return a.execute(ctx, runCtx, nil, prompt, nil)
 }
 
 // RunWithHistory continues a conversation. history — typically the
@@ -221,10 +221,41 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 // system messages in history are replaced by them, so guidance is
 // re-evaluated per run and never duplicated.
 func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
-	return a.execute(ctx, runCtx, history, prompt)
+	return a.execute(ctx, runCtx, history, prompt, nil)
 }
 
-func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
+// RunStream executes the agent like Run while streaming progress: every
+// model fragment — text, tool-call arguments, and re-streamed correction
+// rounds — is forwarded to onDelta in arrival order, across tool turns
+// (ADR 0009). The returned Result is identical in shape to Run's; deltas
+// are advisory progress on top of the canonical run.
+//
+// The model must implement model.StreamingModel; otherwise RunStream
+// fails up front with a plain error, before any stage runs — there is no
+// silent fallback to non-streaming generation. Streamed model turns are
+// single-attempt: retryable failures fail the run at the model stage
+// instead of being retried, because a retried stream would replay
+// fragments the caller already saw. An error returned from onDelta stops
+// the run and surfaces at the model stage with the original error
+// reachable via errors.Is. A nil onDelta is allowed and discards
+// fragments.
+func (a *Agent[Deps, Output]) RunStream(ctx context.Context, runCtx RunContext[Deps], prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
+	if _, ok := a.model.(model.StreamingModel); !ok {
+		return Result[Output]{}, fmt.Errorf("golem: model %T does not support streaming", a.model)
+	}
+	return a.execute(ctx, runCtx, nil, prompt, onDelta)
+}
+
+// RunStreamWithHistory continues a conversation like RunWithHistory while
+// streaming progress; see RunStream for the streaming contract.
+func (a *Agent[Deps, Output]) RunStreamWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
+	if _, ok := a.model.(model.StreamingModel); !ok {
+		return Result[Output]{}, fmt.Errorf("golem: model %T does not support streaming", a.model)
+	}
+	return a.execute(ctx, runCtx, history, prompt, onDelta)
+}
+
+func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
 		specs = append(specs, model.ToolSpec{
@@ -242,8 +273,16 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 	var usage model.Usage
 
 	for attempt := 0; ; attempt++ {
-		outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
-			model.Request{Messages: messages, ToolSpecs: specs}, a.maxIterations, retry, a.toolRetries)
+		request := model.Request{Messages: messages, ToolSpecs: specs}
+		var outcome runner.Outcome
+		var err error
+		if onDelta != nil {
+			outcome, err = runner.ExecuteStream(ctx, a.model, a.tools, runCtx.Deps,
+				request, a.maxIterations, a.toolRetries, onDelta)
+		} else {
+			outcome, err = runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
+				request, a.maxIterations, retry, a.toolRetries)
+		}
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)
 		}
