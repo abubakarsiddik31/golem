@@ -1,6 +1,9 @@
 # Golem coding-agent guide
 
-Read `docs/foundation.md` and `.agents/skills/golem-development/SKILL.md` before changing code.
+Read `docs/foundation.md` and `.agents/skills/golem-development/SKILL.md` before changing code. Also use the focused local skill that matches the change:
+
+- `.agents/skills/golem-api-design/SKILL.md` for exported APIs and package boundaries.
+- `.agents/skills/golem-contract-tests/SKILL.md` for behavior changes and tests.
 
 ## Operating rules
 

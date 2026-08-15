@@ -1,0 +1,4 @@
+interface:
+  display_name: "Golem Contract Tests"
+  short_description: "Test Golem behavior with deterministic fakes"
+  default_prompt: "Use $golem-contract-tests to add tests for this Golem behavior."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Golem API Design"
+  short_description: "Design small, Go-native Golem APIs"
+  default_prompt: "Use $golem-api-design to design this public Golem API."
