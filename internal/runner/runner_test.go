@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
@@ -13,17 +16,27 @@ import (
 
 type deps struct{ Tenant string }
 
-// scriptedModel returns queued responses in order and records every request.
+// noRetries preserves the pre-retry behavior for tests that do not
+// exercise ADR 0004.
+var noRetries = runner.RetryConfig{MaxAttempts: 1}
+
+// zeroBackoff keeps retry tests free of real waits.
+func zeroBackoff(int) time.Duration { return 0 }
+
+// scriptedModel returns queued errors first, in order, then queued
+// responses, and records every request.
 type scriptedModel struct {
 	requests  []model.Request
+	errs      []error
 	responses []model.Response
-	err       error
 }
 
 func (m *scriptedModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
 	m.requests = append(m.requests, request)
-	if m.err != nil {
-		return model.Response{}, m.err
+	if len(m.errs) > 0 {
+		err := m.errs[0]
+		m.errs = m.errs[1:]
+		return model.Response{}, err
 	}
 	if len(m.responses) == 0 {
 		return model.Response{}, errors.New("scriptedModel: no queued response")
@@ -72,7 +85,7 @@ func TestExecuteReturnsFinalResponseWithoutToolCalls(t *testing.T) {
 		textResponse("42", model.Usage{InputTokens: 10, OutputTokens: 2}),
 	}}
 	outcome, err := runner.Execute(context.Background(), m, nil, deps{},
-		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1)
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1, noRetries)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -101,7 +114,7 @@ func TestExecutePerformsOneToolRoundTrip(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5)
+		}, 5, noRetries)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -152,7 +165,7 @@ func TestExecuteRunsMultipleToolRoundsUntilFinalResponse(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "twice"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5)
+		}, 5, noRetries)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -175,7 +188,7 @@ func TestExecuteAbortsWhenTurnLimitIsExceeded(t *testing.T) {
 	echo := echoTool(t)
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 2)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 2, noRetries)
 	if !errors.Is(err, runner.ErrLoopLimit) {
 		t.Fatalf("Execute() error = %v, want ErrLoopLimit", err)
 	}
@@ -201,7 +214,7 @@ func TestExecuteClassifiesToolFailures(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{failing}, deps{},
-		model.Request{ToolSpecs: specsFor(t, failing)}, 3)
+		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries)
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) {
 		t.Fatalf("Execute() error = %v, want ToolError", err)
@@ -223,7 +236,7 @@ func TestExecuteRejectsModelRequestsForUndeclaredTools(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 3)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 3, noRetries)
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) || toolErr.ToolName != "unknown_tool" {
 		t.Fatalf("Execute() error = %v, want ToolError for unknown_tool", err)
@@ -237,7 +250,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		m := &scriptedModel{responses: []model.Response{textResponse("late", model.Usage{})}}
-		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1)
+		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1, noRetries)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -275,7 +288,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		}}
 
 		_, err := runner.Execute(ctx, m, []tool.Tool[deps]{first, second}, deps{},
-			model.Request{ToolSpecs: specsFor(t, first, second)}, 3)
+			model.Request{ToolSpecs: specsFor(t, first, second)}, 3, noRetries)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -288,12 +301,156 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 func TestExecuteRejectsInvalidLimitsAndUnadvertisedTools(t *testing.T) {
 	t.Parallel()
 
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0, noRetries); err == nil {
 		t.Fatal("Execute() error = nil, want maxIterations rejection")
 	}
 
 	echo := echoTool(t)
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1, noRetries); err == nil {
 		t.Fatal("Execute() error = nil, want tools-without-specs rejection")
+	}
+}
+
+// retryableFailure classifies itself retryable, like an adapter's 429/5xx
+// APIError.
+type retryableFailure struct{ message string }
+
+func (e *retryableFailure) Error() string   { return e.message }
+func (e *retryableFailure) Retryable() bool { return true }
+
+// flakyModel fails its first failCalls calls with failure, then returns
+// response, recording every call.
+type flakyModel struct {
+	failCalls int
+	failure   error
+	response  model.Response
+	calls     int
+}
+
+func (m *flakyModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	m.calls++
+	if m.calls <= m.failCalls {
+		return model.Response{}, m.failure
+	}
+	return m.response, nil
+}
+
+// cancelingModel cancels the run and then reports a retryable failure.
+type cancelingModel struct {
+	cancel  context.CancelFunc
+	failure error
+	calls   int
+}
+
+func (m *cancelingModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	m.calls++
+	m.cancel()
+	return model.Response{}, m.failure
+}
+
+func TestExecuteRetriesRetryableModelFailures(t *testing.T) {
+	t.Parallel()
+
+	transient := &retryableFailure{message: "429 rate limited"}
+	echo := echoTool(t)
+	m := &scriptedModel{
+		errs: []error{transient},
+		responses: []model.Response{
+			toolResponse(model.ToolCall{ID: "call-1", Name: "echo", Args: json.RawMessage(`{}`)}),
+			textResponse("recovered", model.Usage{}),
+		},
+	}
+
+	outcome, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{Tenant: "acme"},
+		model.Request{
+			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
+			ToolSpecs: specsFor(t, echo),
+		}, 3, runner.RetryConfig{MaxAttempts: 2, Backoff: zeroBackoff})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if outcome.Response.Message.Content != "recovered" {
+		t.Fatalf("final content = %q", outcome.Response.Message.Content)
+	}
+	// One failed attempt retried, then the recovered turn continued the
+	// loop: user, assistant-call, tool, assistant-final.
+	if len(m.requests) != 3 {
+		t.Fatalf("model calls = %d, want 3 (failed attempt, tool turn, final turn)", len(m.requests))
+	}
+	if len(outcome.Messages) != 4 {
+		t.Fatalf("evidence length = %d, want 4: %#v", len(outcome.Messages), outcome.Messages)
+	}
+}
+
+func TestExecuteWrapsTerminalCauseAfterExhaustedRetries(t *testing.T) {
+	t.Parallel()
+
+	transient := &retryableFailure{message: "503 overloaded"}
+	m := &flakyModel{failCalls: 100, failure: transient}
+	var backoffAttempts []int
+
+	_, err := runner.Execute(context.Background(), m, nil, deps{},
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 3,
+		runner.RetryConfig{
+			MaxAttempts: 3,
+			Backoff:     func(attempt int) time.Duration { backoffAttempts = append(backoffAttempts, attempt); return 0 },
+		})
+	if !errors.Is(err, transient) {
+		t.Fatalf("Execute() error = %v, want terminal cause %v", err, transient)
+	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("Execute() error = %q, want attempt count in message", err.Error())
+	}
+	if m.calls != 3 {
+		t.Fatalf("model attempts = %d, want 3", m.calls)
+	}
+	if !slices.Equal(backoffAttempts, []int{1, 2}) {
+		t.Fatalf("backoff attempts = %v, want [1 2]", backoffAttempts)
+	}
+}
+
+func TestExecuteReturnsNonRetryableFailuresUnchanged(t *testing.T) {
+	t.Parallel()
+
+	permanent := errors.New("unauthorized")
+	m := &flakyModel{failCalls: 100, failure: permanent}
+
+	_, err := runner.Execute(context.Background(), m, nil, deps{},
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 3,
+		runner.RetryConfig{MaxAttempts: 3, Backoff: zeroBackoff})
+	if err != permanent {
+		t.Fatalf("Execute() error = %v, want the model error unchanged", err)
+	}
+	if m.calls != 1 {
+		t.Fatalf("model attempts = %d, want 1", m.calls)
+	}
+}
+
+func TestExecuteStopsRetryingWhenContextIsCanceled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &cancelingModel{cancel: cancel, failure: &retryableFailure{message: "429 rate limited"}}
+
+	_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 3, runner.RetryConfig{
+		MaxAttempts: 5,
+		// The wait never elapses: the fake cancels ctx during Generate, so
+		// the context-aware wait aborts immediately.
+		Backoff: func(int) time.Duration { return time.Hour },
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute() error = %v, want context.Canceled", err)
+	}
+	if m.calls != 1 {
+		t.Fatalf("model attempts = %d, want 1", m.calls)
+	}
+}
+
+func TestExecuteRejectsInvalidRetryConfiguration(t *testing.T) {
+	t.Parallel()
+
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 1,
+		runner.RetryConfig{}); err == nil {
+		t.Fatal("Execute() error = nil, want MaxAttempts rejection")
 	}
 }

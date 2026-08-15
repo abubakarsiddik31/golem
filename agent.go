@@ -157,7 +157,8 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 		})
 	}
 
-	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations)
+	outcome, err := runner.Execute(ctx, a.model, a.tools, runCtx.Deps, request, a.maxIterations,
+		runner.RetryConfig{MaxAttempts: 1})
 	if err != nil {
 		return Result[Output]{}, classifyRunError(err)
 	}
