@@ -1,0 +1,10 @@
+# Go build and test artifacts
+bin/
+*.test
+*.out
+coverage.txt
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
