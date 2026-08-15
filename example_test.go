@@ -34,6 +34,52 @@ func (m *diceModel) Generate(ctx context.Context, request model.Request) (model.
 	}, nil
 }
 
+// conversationModel answers with the last user prompt it has seen.
+type conversationModel struct{}
+
+func (m *conversationModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	last := ""
+	for _, message := range request.Messages {
+		if message.Role == model.RoleUser {
+			last = message.Content
+		}
+	}
+	return model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: fmt.Sprintf("heard: %s", last)},
+	}, nil
+}
+
+// ExampleAgent_RunWithHistory continues a conversation across two runs:
+// the first result's messages become the second run's history, and the
+// second result carries the full chained conversation.
+func ExampleAgent_RunWithHistory() {
+	agent, err := golem.New[struct{}, string](&conversationModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	runCtx := golem.RunContext[struct{}]{}
+
+	first, err := agent.Run(context.Background(), runCtx, "hello")
+	if err != nil {
+		log.Fatal(err)
+	}
+	second, err := agent.RunWithHistory(context.Background(), runCtx, first.Messages, "goodbye")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(first.Output)
+	fmt.Println(second.Output)
+	fmt.Println(len(second.Messages), "messages in the chained conversation")
+	// Output:
+	// heard: hello
+	// heard: goodbye
+	// 4 messages in the chained conversation
+}
+
 // ExampleAgent demonstrates an agent that executes a typed tool with an
 // explicit dependency value and returns the full run evidence.
 func ExampleAgent() {

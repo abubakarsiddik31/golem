@@ -175,17 +175,21 @@ type Result[Output any] struct {
 // deadline errors are returned unwrapped so callers can match them
 // directly with errors.Is.
 func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string) (Result[Output], error) {
-	request := model.Request{Messages: make([]model.Message, 0, 2)}
-	if a.instructions != "" {
-		request.Messages = append(request.Messages, model.Message{
-			Role:    model.RoleSystem,
-			Content: a.instructions,
-		})
-	}
-	request.Messages = append(request.Messages, model.Message{
-		Role:    model.RoleUser,
-		Content: prompt,
-	})
+	return a.execute(ctx, runCtx, nil, prompt)
+}
+
+// RunWithHistory continues a conversation. history — typically the
+// Result.Messages of a previous run — is sent before a fresh user prompt,
+// and the result carries the full reconstructed conversation so runs chain
+// (ADR 0005). The agent's current instructions govern the request: any
+// system messages in history are replaced by them, so guidance is
+// re-evaluated per run and never duplicated.
+func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
+	return a.execute(ctx, runCtx, history, prompt)
+}
+
+func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
+	request := model.Request{Messages: a.requestMessages(history, prompt)}
 	for _, t := range a.tools {
 		request.ToolSpecs = append(request.ToolSpecs, model.ToolSpec{
 			Name:        t.Name,
@@ -213,6 +217,27 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 		Messages: outcome.Messages,
 		Usage:    outcome.Usage,
 	}, nil
+}
+
+// requestMessages builds the ordered request conversation: the agent's
+// current instructions when set, the supplied history with system messages
+// removed (instructions govern every run, per ADR 0005), and the new user
+// prompt.
+func (a *Agent[Deps, Output]) requestMessages(history []model.Message, prompt string) []model.Message {
+	messages := make([]model.Message, 0, len(history)+2)
+	if a.instructions != "" {
+		messages = append(messages, model.Message{
+			Role:    model.RoleSystem,
+			Content: a.instructions,
+		})
+	}
+	for _, message := range history {
+		if message.Role == model.RoleSystem {
+			continue
+		}
+		messages = append(messages, message)
+	}
+	return append(messages, model.Message{Role: model.RoleUser, Content: prompt})
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed

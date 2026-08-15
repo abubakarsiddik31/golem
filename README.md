@@ -51,6 +51,17 @@ agent, err := golem.New[struct{}, string](client, decoder,
 
 Retried attempts wait with exponential backoff (500 ms doubling, capped at 30 s); pass a function to `WithRetryBackoff` to control pacing yourself, including jitter. Exhausted retries fail with the `model` stage, preserving the provider cause for `errors.Is` and `errors.As` and reporting the attempt count in the message.
 
+## Continuing conversations
+
+A run returns the full normalized conversation in `result.Messages`; pass it back to continue. The agent's instructions are re-evaluated every run — system messages from earlier runs are replaced by the current instructions, so guidance never duplicates or goes stale (ADR 0005).
+
+```go
+result, err := agent.Run(ctx, golem.RunContext[MyDeps]{Deps: deps}, "first question")
+next, err := agent.RunWithHistory(ctx, golem.RunContext[MyDeps]{Deps: deps}, result.Messages, "follow-up")
+```
+
+Conversations persist anywhere with `encoding/json`: `json.Marshal(result.Messages)` produces the stable, additive-only shape pinned in ADR 0005. Storage stays the application's job — there is no session object.
+
 ## Connecting a provider
 
 Golem's core is provider-neutral: applications choose any implementation of `model.Model`. The first adapter targets the OpenAI-compatible chat-completions wire format with explicit configuration — a configurable `BaseURL` serves OpenAI, Groq, OpenRouter, DeepSeek, Together, Ollama, and vLLM. The adapter uses only the standard library.
