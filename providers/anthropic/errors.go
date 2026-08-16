@@ -29,6 +29,10 @@ func (e *APIError) Retryable() bool {
 
 func (e *APIError) Error() string {
 	if e.Code != "" {
+		if e.StatusCode == 0 {
+			// Provider error events raised mid-stream carry no status.
+			return fmt.Sprintf("anthropic: stream error (%s): %s", e.Code, e.Message)
+		}
 		return fmt.Sprintf("anthropic: status %d (%s): %s", e.StatusCode, e.Code, e.Message)
 	}
 	return fmt.Sprintf("anthropic: status %d: %s", e.StatusCode, e.Message)

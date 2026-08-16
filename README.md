@@ -133,7 +133,7 @@ agent, err := golem.New[struct{}, City](client, golem.DecodeJSON[City](),
 
 ## Streaming
 
-Models that can stream advertise it through the optional `model.StreamingModel` capability — `Model` itself is unchanged, so test fakes and simple adapters are unaffected. The OpenAI-compatible adapter implements it over SSE:
+Models that can stream advertise it through the optional `model.StreamingModel` capability — `Model` itself is unchanged, so test fakes and simple adapters are unaffected. The OpenAI-compatible and Anthropic adapters implement it over SSE:
 
 ```go
 response, err := client.GenerateStream(ctx, request, func(d model.Delta) error {

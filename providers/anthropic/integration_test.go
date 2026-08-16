@@ -137,3 +137,50 @@ func TestLiveAgentToolRoundTrip(t *testing.T) {
 	}
 	t.Logf("live output: %q, tool result: %q, usage: %+v", result.Output, toolResult, result.Usage)
 }
+
+// TestLiveGenerateStream streams one real generation and checks that the
+// fragments reassemble into the returned response. Opt-in like
+// TestLiveAgentRoundTrip; the same env vars configure it.
+func TestLiveGenerateStream(t *testing.T) {
+	apiKey := os.Getenv("GOLEM_ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		t.Skip("GOLEM_ANTHROPIC_API_KEY not set; skipping live integration test")
+	}
+	baseURL := os.Getenv("GOLEM_ANTHROPIC_BASE_URL")
+	modelName := os.Getenv("GOLEM_ANTHROPIC_MODEL")
+	if modelName == "" {
+		modelName = "claude-sonnet-4-5"
+	}
+
+	client, err := anthropic.New(anthropic.Config{
+		APIKey:  apiKey,
+		BaseURL: baseURL,
+		Model:   modelName,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var fragments []string
+	response, err := client.GenerateStream(context.Background(), model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "Count from one to five as digits, like 12345."}},
+	}, func(d model.Delta) error {
+		fragments = append(fragments, d.Content)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	joined := strings.Join(fragments, "")
+	if joined != response.Message.Content {
+		t.Fatalf("joined fragments %q != assembled content %q", joined, response.Message.Content)
+	}
+	if strings.TrimSpace(joined) == "" {
+		t.Fatalf("streamed content is empty; fragments = %#v", fragments)
+	}
+	if response.Usage.InputTokens == 0 && response.Usage.OutputTokens == 0 {
+		t.Log("warning: provider reported zero streamed usage")
+	}
+	t.Logf("live fragments: %d, content: %q, usage: %+v", len(fragments), joined, response.Usage)
+}
