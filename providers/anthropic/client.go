@@ -3,9 +3,7 @@
 //
 // The package is stdlib-only transport, explicit configuration, typed
 // error classification, and normalization of provider encodings into the
-// model contract. Request.OutputSchema is currently ignored: the Messages
-// API has no response-format field, so structured output stays
-// decoder-validated with correction rounds.
+// model contract.
 package anthropic
 
 import (
@@ -111,16 +109,25 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 }
 
 // newMessagesHTTPRequest builds the POST request for the messages
-// endpoint. stream selects streaming mode.
+// endpoint. stream selects streaming mode. A request carrying an output
+// schema maps to the json_schema output format.
 func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
 	system, turns := toWireTurns(request.Messages)
+	var outputConfig *wireOutputConfig
+	if len(request.OutputSchema) > 0 {
+		outputConfig = &wireOutputConfig{Format: &wireOutputFormat{
+			Type:   "json_schema",
+			Schema: request.OutputSchema,
+		}}
+	}
 	body, err := json.Marshal(messagesRequest{
-		Model:     c.cfg.Model,
-		MaxTokens: c.cfg.MaxTokens,
-		System:    system,
-		Messages:  turns,
-		Tools:     toWireTools(request.ToolSpecs),
-		Stream:    stream,
+		Model:        c.cfg.Model,
+		MaxTokens:    c.cfg.MaxTokens,
+		System:       system,
+		Messages:     turns,
+		Tools:        toWireTools(request.ToolSpecs),
+		OutputConfig: outputConfig,
+		Stream:       stream,
 	})
 	if err != nil {
 		return nil, &DecodeError{Stage: "encode request", Err: err}

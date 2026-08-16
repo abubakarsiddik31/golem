@@ -181,7 +181,7 @@ client, err := anthropic.New(anthropic.Config{
 agent, err := golem.New[struct{}, string](client, decoder)
 ```
 
-The Messages API has no response-format field, so the adapter currently ignores `WithOutputSchema`: structured output stays decoder-validated with correction rounds.
+`WithOutputSchema` maps to the Messages API `output_config` json_schema format: like OpenAI's strict mode, Anthropic requires strict-conformant schemas (`additionalProperties: false`, every property listed in `required`), and a non-conformant schema surfaces as a provider `APIError`.
 
 ## Planned package shape
 

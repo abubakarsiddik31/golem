@@ -16,8 +16,24 @@ type messagesRequest struct {
 	System    string        `json:"system,omitempty"`
 	Messages  []wireMessage `json:"messages"`
 	Tools     []wireTool    `json:"tools,omitempty"`
+	// OutputConfig requests provider-enforced output structure; set for
+	// structured output.
+	OutputConfig *wireOutputConfig `json:"output_config,omitempty"`
 	// Stream selects streaming mode.
 	Stream bool `json:"stream,omitempty"`
+}
+
+// wireOutputConfig is the structured-output configuration of a request.
+// The json_schema format requires a strict-conformant schema from the
+// caller; the provider rejects non-conformant schemas with an API error
+// instead of the adapter silently relaxing them.
+type wireOutputConfig struct {
+	Format *wireOutputFormat `json:"format,omitempty"`
+}
+
+type wireOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // wireMessage is one conversational turn. The Messages API alternates user

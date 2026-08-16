@@ -289,3 +289,54 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
 	}
 }
+
+func TestGenerateMapsOutputSchemaToOutputConfig(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"content": [{"type": "text", "text": "{\"city\":\"Lagos\"}"}],
+		"usage": {"input_tokens": 12, "output_tokens": 3}
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}`)
+	if _, err := client.Generate(context.Background(), model.Request{
+		Messages:     []model.Message{{Role: model.RoleUser, Content: "name a city"}},
+		OutputSchema: schema,
+	}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		OutputConfig *struct {
+			Format struct {
+				Type   string          `json:"type"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"format"`
+		} `json:"output_config"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.OutputConfig == nil || sent.OutputConfig.Format.Type != "json_schema" {
+		t.Fatalf("output_config = %#v, want json_schema", sent.OutputConfig)
+	}
+	if string(sent.OutputConfig.Format.Schema) != string(schema) {
+		t.Fatalf("output_config.format.schema = %s, want the request schema", sent.OutputConfig.Format.Schema)
+	}
+
+	// Without a schema the field stays off the wire entirely.
+	if _, err := client.Generate(context.Background(), model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	sent.OutputConfig = nil
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.OutputConfig != nil {
+		t.Fatalf("output_config = %#v, want nil without an output schema", sent.OutputConfig)
+	}
+}
