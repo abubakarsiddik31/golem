@@ -44,7 +44,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, run dependencies, sequential execution evidence |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, dynamic instructions |
-| [Structured output](docs/guides/structured-output.md) | Output schemas, `DecodeJSON`, strict provider schemas |
+| [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
 | [Retries](docs/guides/retries.md) | Transient model failures, backoff, cancellation precedence |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
@@ -62,6 +62,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
+| [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |

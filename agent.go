@@ -54,6 +54,8 @@ type Agent[Deps any, Output any] struct {
 	outputRetries    int
 	toolRetries      int
 	outputSchema     json.RawMessage
+	outputToolName   string
+	outputToolSpec   model.ToolSpec
 	usageLimit       UsageLimit
 }
 
@@ -137,10 +139,35 @@ func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 // map it to their native mechanism; adapters that do not ignore it. The
 // schema describes the expected shape to the model — the decoder remains
 // the validation boundary. An empty schema disables the behavior; a
-// non-empty schema that is not valid JSON fails New.
+// non-empty schema that is not valid JSON fails New. Mutually exclusive
+// with WithOutputTool, which expresses the same intent through an output
+// tool call.
 func WithOutputSchema[Deps any, Output any](schema json.RawMessage) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.outputSchema = schema
+	}
+}
+
+// WithOutputTool declares tool-mode structured output: schema becomes the
+// parameters of a synthesized output tool offered to the model, and the
+// run ends on the model's first call to it. The call's arguments reach
+// the decoder as the final response content, so DecodeJSON validates them
+// like any other response — the decoder remains the validation boundary.
+//
+// Tool mode reaches every model with tool calling, including those
+// without native JSON-schema output support. Calls co-emitted with the
+// output call are not executed; they are closed with an interrupted
+// result so the conversation keeps the call/result pairing providers
+// require. The output call itself is closed in the result evidence after
+// decoding: a recorded result on success, a rejection bound to the call
+// when the decoder asks for correction. Mutually exclusive with
+// WithOutputSchema. name must not collide with a registered tool;
+// description may be empty; schema must be a non-empty valid JSON
+// document.
+func WithOutputTool[Deps any, Output any](name, description string, schema json.RawMessage) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.outputToolName = name
+		agent.outputToolSpec = model.ToolSpec{Name: name, Description: description, Schema: schema}
 	}
 }
 
@@ -219,11 +246,26 @@ func New[Deps any, Output any](
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
 	}
+	if agent.outputToolName != "" {
+		if len(agent.outputSchema) > 0 {
+			return nil, fmt.Errorf("golem: output schema and output tool are mutually exclusive; configure one structured-output mode")
+		}
+		if len(agent.outputToolSpec.Schema) == 0 || !json.Valid(agent.outputToolSpec.Schema) {
+			return nil, fmt.Errorf("golem: output tool %q: schema is required and must be valid JSON", agent.outputToolName)
+		}
+	}
 	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 {
 		return nil, fmt.Errorf("golem: usage limit must not be negative, got %+v", agent.usageLimit)
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
+	}
+	if agent.outputToolName != "" {
+		for _, t := range agent.tools {
+			if t.Name == agent.outputToolName {
+				return nil, fmt.Errorf("golem: output tool %q collides with a registered tool", agent.outputToolName)
+			}
+		}
 	}
 	return agent, nil
 }
@@ -331,6 +373,9 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 			Schema:      t.Schema,
 		})
 	}
+	if a.outputToolName != "" {
+		specs = append(specs, a.outputToolSpec)
+	}
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
 	if retry.Backoff == nil && a.maxAttempts > 1 {
 		retry.Backoff = exponentialBackoff
@@ -345,10 +390,10 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStream(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, a.toolRetries, onDelta)
+				request, a.maxIterations, a.toolRetries, a.outputToolName, onDelta)
 		} else {
 			outcome, err = runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, a.toolRetries)
+				request, a.maxIterations, retry, a.toolRetries, a.outputToolName)
 		}
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)
@@ -361,7 +406,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 
 		output, err := a.decoder.Decode(ctx, outcome.Response)
 		if err == nil {
-			return Result[Output]{Output: output, Messages: outcome.Messages, Usage: usage}, nil
+			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response), Usage: usage}, nil
 		}
 		var rejection *model.ModelRetry
 		if !errors.As(err, &rejection) || attempt >= a.outputRetries {
@@ -372,11 +417,57 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		}
 		// Correction round: keep the rejected response as
 		// evidence, tell the model why it was rejected, and run again.
+		// In tool mode the rejection binds to the output call, so the
+		// correction round keeps the pairing providers require.
+		if call, ok := findOutputCall(outcome.Response.Message.ToolCalls, a.outputToolName); ok {
+			messages = append(outcome.Messages, model.Message{
+				Role:       model.RoleTool,
+				ToolCallID: call.ID,
+				ToolName:   call.Name,
+				Content: fmt.Sprintf("Your result was rejected: %v. "+
+					"Correct the arguments and call %s again.", rejection.Err, a.outputToolName),
+			})
+			continue
+		}
 		messages = append(outcome.Messages, model.Message{
 			Role:    model.RoleUser,
 			Content: fmt.Sprintf("Your previous response was rejected: %v. Correct it and respond again.", rejection.Err),
 		})
 	}
+}
+
+// recordedToolResult closes a successfully decoded output-tool call in the
+// result evidence: the run completed with this output.
+const recordedToolResult = "Result recorded."
+
+// closeOutputCall closes the output-tool call of the final response, when
+// the run used one, so result evidence keeps the call/result pairing
+// providers require. On success the close is a recorded result; for a
+// correction round the caller appends the rejection itself, bound to the
+// call.
+func (a *Agent[Deps, Output]) closeOutputCall(evidence []model.Message, response model.Response) []model.Message {
+	if a.outputToolName == "" {
+		return evidence
+	}
+	call, ok := findOutputCall(response.Message.ToolCalls, a.outputToolName)
+	if !ok {
+		return evidence
+	}
+	return append(evidence, model.Message{
+		Role:       model.RoleTool,
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Content:    recordedToolResult,
+	})
+}
+
+func findOutputCall(calls []model.ToolCall, name string) (model.ToolCall, bool) {
+	for _, call := range calls {
+		if call.Name == name {
+			return call, true
+		}
+	}
+	return model.ToolCall{}, false
 }
 
 // resolveInstructions builds the instructions governing one run: the
@@ -404,7 +495,7 @@ func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx Ru
 // removed (instructions govern every run), and the new user
 // prompt.
 func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string) []model.Message {
-	repaired := repairHistory(history)
+	repaired := runner.RepairHistory(history)
 	messages := make([]model.Message, 0, len(repaired)+2)
 	if instructions != "" {
 		messages = append(messages, model.Message{
@@ -419,73 +510,6 @@ func (a *Agent[Deps, Output]) requestMessages(instructions string, history []mod
 		messages = append(messages, message)
 	}
 	return append(messages, model.Message{Role: model.RoleUser, Content: prompt})
-}
-
-// interruptedToolResult is the neutral result synthesized for a tool call
-// whose run ended before the call executed. It states the absence of an
-// outcome — not a tool failure — so the model neither assumes a result nor
-// treats the call as a provider error.
-const interruptedToolResult = "Tool call was interrupted before execution; no result was produced. Call the tool again if you need its result."
-
-// repairHistory restores the call/result pairing providers require: every
-// tool call is answered by a tool result, and every tool result references a
-// call in the history. A run that ended before a requested tool executed — a
-// crash, a cancelled stream, or hand-built history — leaves calls without
-// results; each receives a synthesized result, placed directly after the
-// assistant message that requested it, in call order. Results whose call is
-// absent, including results that precede their call, are dropped: no
-// provider accepts them.
-//
-// Repair only adds or removes pairing evidence; it never rewrites messages.
-// It is deterministic and idempotent: synthesized results carry no
-// wall-clock data, so repairing an already-repaired history returns it
-// unchanged, and repeated resumes stay prompt-cache friendly. Pairing is by
-// call ID; calls without an ID cannot be paired and are left as-is.
-func repairHistory(history []model.Message) []model.Message {
-	pending := make(map[string]struct{}, len(history))
-	repaired := make([]model.Message, 0, len(history))
-	dropped := false
-	for _, message := range history {
-		switch message.Role {
-		case model.RoleAssistant:
-			repaired = append(repaired, message)
-			for _, call := range message.ToolCalls {
-				if call.ID != "" {
-					pending[call.ID] = struct{}{}
-				}
-			}
-		case model.RoleTool:
-			if _, requested := pending[message.ToolCallID]; requested {
-				delete(pending, message.ToolCallID)
-				repaired = append(repaired, message)
-			} else {
-				dropped = true
-			}
-		default:
-			repaired = append(repaired, message)
-		}
-	}
-	if len(pending) == 0 && !dropped {
-		return history
-	}
-	if len(pending) == 0 {
-		return repaired
-	}
-	withResults := make([]model.Message, 0, len(repaired)+len(pending))
-	for _, message := range repaired {
-		withResults = append(withResults, message)
-		for _, call := range message.ToolCalls {
-			if _, unanswered := pending[call.ID]; unanswered {
-				withResults = append(withResults, model.Message{
-					Role:       model.RoleTool,
-					ToolCallID: call.ID,
-					ToolName:   call.Name,
-					Content:    interruptedToolResult,
-				})
-			}
-		}
-	}
-	return withResults
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed

@@ -275,6 +275,50 @@ func ExampleWithOutputSchema() {
 	// Lagos: 31°C
 }
 
+// reportingModel calls the output tool with its final arguments.
+type reportingModel struct{}
+
+func (m *reportingModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	return model.Response{
+		Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+			{ID: "out-1", Name: "record_weather", Args: json.RawMessage(`{"city":"Lagos","celsius":31}`)},
+		}},
+		Usage: model.Usage{InputTokens: 20, OutputTokens: 6},
+	}, nil
+}
+
+// ExampleWithOutputTool declares tool-mode structured output: the schema
+// becomes the parameters of a synthesized output tool, the run ends on the
+// model's first call to it, and the call's arguments reach the decoder as
+// the final response content.
+func ExampleWithOutputTool() {
+	type weather struct {
+		City    string `json:"city"`
+		Celsius int    `json:"celsius"`
+	}
+	agent, err := golem.New[struct{}, weather](&reportingModel{}, golem.DecodeJSON[weather](),
+		golem.WithOutputTool[struct{}, weather]("record_weather",
+			"Record the final weather report.", json.RawMessage(`{
+				"type": "object",
+				"properties": {"city": {"type": "string"}, "celsius": {"type": "integer"}},
+				"required": ["city", "celsius"],
+				"additionalProperties": false
+			}`)),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "forecast for Lagos")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("%s: %d°C\n", result.Output.City, result.Output.Celsius)
+	// Output:
+	// Lagos: 31°C
+}
+
 // instructedModel echoes the instructions it was given, if any.
 type instructedModel struct{}
 

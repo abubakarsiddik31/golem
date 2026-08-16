@@ -86,7 +86,7 @@ func TestExecuteReturnsFinalResponseWithoutToolCalls(t *testing.T) {
 		textResponse("42", model.Usage{InputTokens: 10, OutputTokens: 2}),
 	}}
 	outcome, err := runner.Execute(context.Background(), m, nil, deps{},
-		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1, noRetries, 0)
+		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 1, noRetries, 0, "")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -115,7 +115,7 @@ func TestExecutePerformsOneToolRoundTrip(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5, noRetries, 0)
+		}, 5, noRetries, 0, "")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestExecuteRunsMultipleToolRoundsUntilFinalResponse(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "twice"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5, noRetries, 0)
+		}, 5, noRetries, 0, "")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -189,7 +189,7 @@ func TestExecuteAbortsWhenTurnLimitIsExceeded(t *testing.T) {
 	echo := echoTool(t)
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 2, noRetries, 0)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 2, noRetries, 0, "")
 	if !errors.Is(err, runner.ErrLoopLimit) {
 		t.Fatalf("Execute() error = %v, want ErrLoopLimit", err)
 	}
@@ -215,7 +215,7 @@ func TestExecuteClassifiesToolFailures(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{failing}, deps{},
-		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 0)
+		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 0, "")
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) {
 		t.Fatalf("Execute() error = %v, want ToolError", err)
@@ -237,7 +237,7 @@ func TestExecuteRejectsModelRequestsForUndeclaredTools(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{echo}, deps{},
-		model.Request{ToolSpecs: specsFor(t, echo)}, 3, noRetries, 0)
+		model.Request{ToolSpecs: specsFor(t, echo)}, 3, noRetries, 0, "")
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) || toolErr.ToolName != "unknown_tool" {
 		t.Fatalf("Execute() error = %v, want ToolError for unknown_tool", err)
@@ -294,7 +294,7 @@ func TestExecuteFeedsToolRejectionsBackToTheModel(t *testing.T) {
 	roll := validatingTool(t)
 
 	outcome, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{roll}, deps{},
-		model.Request{ToolSpecs: specsFor(t, roll)}, 5, noRetries, 1)
+		model.Request{ToolSpecs: specsFor(t, roll)}, 5, noRetries, 1, "")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -346,7 +346,7 @@ func TestExecuteWrapsCauseAfterExhaustedToolRetries(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{rejecting}, deps{},
-		model.Request{ToolSpecs: specsFor(t, rejecting)}, 5, noRetries, 2)
+		model.Request{ToolSpecs: specsFor(t, rejecting)}, 5, noRetries, 2, "")
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) || toolErr.ToolName != "roll" {
 		t.Fatalf("Execute() error = %v, want ToolError for roll", err)
@@ -376,7 +376,7 @@ func TestExecuteAbortsOnToolRejectionWithoutBudget(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{rejecting}, deps{},
-		model.Request{ToolSpecs: specsFor(t, rejecting)}, 3, noRetries, 0)
+		model.Request{ToolSpecs: specsFor(t, rejecting)}, 3, noRetries, 0, "")
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) || toolErr.ToolName != "roll" {
 		t.Fatalf("Execute() error = %v, want ToolError for roll", err)
@@ -413,7 +413,7 @@ func TestExecuteStillAbortsPlainToolErrorsWithBudget(t *testing.T) {
 	}}
 
 	_, err := runner.Execute(context.Background(), m, []tool.Tool[deps]{failing}, deps{},
-		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 3)
+		model.Request{ToolSpecs: specsFor(t, failing)}, 3, noRetries, 3, "")
 	var toolErr *runner.ToolError
 	if !errors.As(err, &toolErr) {
 		t.Fatalf("Execute() error = %v, want ToolError", err)
@@ -430,7 +430,7 @@ func TestExecuteRejectsNegativeToolRetries(t *testing.T) {
 	t.Parallel()
 
 	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 1,
-		runner.RetryConfig{MaxAttempts: 1}, -1); err == nil {
+		runner.RetryConfig{MaxAttempts: 1}, -1, ""); err == nil {
 		t.Fatal("Execute() error = nil, want negative toolRetries rejection")
 	}
 }
@@ -442,7 +442,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		m := &scriptedModel{responses: []model.Response{textResponse("late", model.Usage{})}}
-		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1, noRetries, 0)
+		_, err := runner.Execute(ctx, m, nil, deps{}, model.Request{}, 1, noRetries, 0, "")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -480,7 +480,7 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 		}}
 
 		_, err := runner.Execute(ctx, m, []tool.Tool[deps]{first, second}, deps{},
-			model.Request{ToolSpecs: specsFor(t, first, second)}, 3, noRetries, 0)
+			model.Request{ToolSpecs: specsFor(t, first, second)}, 3, noRetries, 0, "")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute() error = %v, want context.Canceled", err)
 		}
@@ -493,12 +493,12 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 func TestExecuteRejectsInvalidLimitsAndUnadvertisedTools(t *testing.T) {
 	t.Parallel()
 
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0, noRetries, 0); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 0, noRetries, 0, ""); err == nil {
 		t.Fatal("Execute() error = nil, want maxIterations rejection")
 	}
 
 	echo := echoTool(t)
-	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1, noRetries, 0); err == nil {
+	if _, err := runner.Execute(context.Background(), &scriptedModel{}, []tool.Tool[deps]{echo}, deps{}, model.Request{}, 1, noRetries, 0, ""); err == nil {
 		t.Fatal("Execute() error = nil, want tools-without-specs rejection")
 	}
 }
@@ -557,7 +557,7 @@ func TestExecuteRetriesRetryableModelFailures(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 3, runner.RetryConfig{MaxAttempts: 2, Backoff: zeroBackoff}, 0)
+		}, 3, runner.RetryConfig{MaxAttempts: 2, Backoff: zeroBackoff}, 0, "")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -586,7 +586,7 @@ func TestExecuteWrapsTerminalCauseAfterExhaustedRetries(t *testing.T) {
 		runner.RetryConfig{
 			MaxAttempts: 3,
 			Backoff:     func(attempt int) time.Duration { backoffAttempts = append(backoffAttempts, attempt); return 0 },
-		}, 0)
+		}, 0, "")
 	if !errors.Is(err, transient) {
 		t.Fatalf("Execute() error = %v, want terminal cause %v", err, transient)
 	}
@@ -609,7 +609,7 @@ func TestExecuteReturnsNonRetryableFailuresUnchanged(t *testing.T) {
 
 	_, err := runner.Execute(context.Background(), m, nil, deps{},
 		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}, 3,
-		runner.RetryConfig{MaxAttempts: 3, Backoff: zeroBackoff}, 0)
+		runner.RetryConfig{MaxAttempts: 3, Backoff: zeroBackoff}, 0, "")
 	if err != permanent {
 		t.Fatalf("Execute() error = %v, want the model error unchanged", err)
 	}
@@ -629,7 +629,7 @@ func TestExecuteStopsRetryingWhenContextIsCanceled(t *testing.T) {
 		// The wait never elapses: the fake cancels ctx during Generate, so
 		// the context-aware wait aborts immediately.
 		Backoff: func(int) time.Duration { return time.Hour },
-	}, 0)
+	}, 0, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Execute() error = %v, want context.Canceled", err)
 	}
@@ -642,7 +642,7 @@ func TestExecuteRejectsInvalidRetryConfiguration(t *testing.T) {
 	t.Parallel()
 
 	if _, err := runner.Execute(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{}, 1,
-		runner.RetryConfig{}, 0); err == nil {
+		runner.RetryConfig{}, 0, ""); err == nil {
 		t.Fatal("Execute() error = nil, want MaxAttempts rejection")
 	}
 }
@@ -688,7 +688,7 @@ func TestExecuteStreamRunsTheLoopOverStreamedTurns(t *testing.T) {
 		model.Request{
 			Messages:  []model.Message{{Role: model.RoleUser, Content: "roll"}},
 			ToolSpecs: specsFor(t, echo),
-		}, 5, 0, func(d model.Delta) error {
+		}, 5, 0, "", func(d model.Delta) error {
 			deltas = append(deltas, d)
 			return nil
 		})
@@ -733,7 +733,7 @@ func TestExecuteStreamRequiresStreamingModel(t *testing.T) {
 	t.Parallel()
 
 	_, err := runner.ExecuteStream(context.Background(), &scriptedModel{}, nil, deps{}, model.Request{},
-		1, 0, nil)
+		1, 0, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "does not support streaming") {
 		t.Fatalf("ExecuteStream() error = %v, want streaming capability error", err)
 	}
@@ -747,7 +747,7 @@ func TestExecuteStreamDoesNotRetryStreamedTurns(t *testing.T) {
 
 	_, err := runner.ExecuteStream(context.Background(), m, nil, deps{},
 		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}},
-		3, 0, func(model.Delta) error { return nil })
+		3, 0, "", func(model.Delta) error { return nil })
 	if !errors.Is(err, transient) {
 		t.Fatalf("ExecuteStream() error = %v, want the stream failure as-is", err)
 	}
@@ -768,7 +768,7 @@ func TestExecuteStreamReturnsCallerStopError(t *testing.T) {
 
 	_, err := runner.ExecuteStream(context.Background(), m, nil, deps{},
 		model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}},
-		3, 0, func(model.Delta) error { return stop })
+		3, 0, "", func(model.Delta) error { return stop })
 	if !errors.Is(err, stop) || err != stop {
 		t.Fatalf("ExecuteStream() error = %v, want the caller's stop error as-is", err)
 	}

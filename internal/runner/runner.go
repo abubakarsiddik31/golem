@@ -62,11 +62,12 @@ type RetryConfig struct {
 // execute any requested tool calls in order, append the evidence, and
 // repeat until the model responds without tool calls or a limit or error
 // ends the run. The caller's context is checked before every model call
-// and tool execution. maxIterations bounds model turns and must be at
-// least 1; retry bounds retried model calls per turn.
+// and tool execution. maxIterations bounds model turns and must be
+// at least 1; retry bounds retried model calls per turn.
 // toolRetries bounds how many tool rejections — errors carrying
 // *model.ModelRetry — are fed back to the model for correction per run;
-// it must not be negative.
+// it must not be negative. outputTool names a synthesized tool whose call
+// ends the run as the final output; empty means no output tool.
 func Execute[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -76,11 +77,12 @@ func Execute[Deps any](
 	maxIterations int,
 	retry RetryConfig,
 	toolRetries int,
+	outputTool string,
 ) (Outcome, error) {
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolRetries,
+	return execute(ctx, tools, deps, req, maxIterations, toolRetries, outputTool,
 		func(ctx context.Context, request model.Request) (model.Response, error) {
 			return generate(ctx, m, request, retry)
 		})
@@ -94,7 +96,8 @@ func Execute[Deps any](
 // parameter: streamed turns are single-attempt, because retrying a
 // stream would replay fragments the caller has already seen; retryable
 // failures fail the run classified. A non-nil error from onDelta stops
-// the run and is returned as-is.
+// the run and is returned as-is. outputTool names a synthesized tool
+// whose call ends the run as the final output; empty means no output tool.
 func ExecuteStream[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -103,13 +106,14 @@ func ExecuteStream[Deps any](
 	req model.Request,
 	maxIterations int,
 	toolRetries int,
+	outputTool string,
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
 	streamer, ok := m.(model.StreamingModel)
 	if !ok {
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolRetries,
+	return execute(ctx, tools, deps, req, maxIterations, toolRetries, outputTool,
 		func(ctx context.Context, request model.Request) (model.Response, error) {
 			return streamer.GenerateStream(ctx, request, onDelta)
 		})
@@ -121,6 +125,8 @@ type turnCall func(ctx context.Context, request model.Request) (model.Response, 
 
 // execute is the shared loop of Execute and ExecuteStream: identical
 // turn limits, tool execution, rejection feedback, and evidence order.
+// outputTool, when non-empty, names the synthesized output tool: the
+// model's first call to it ends the run.
 func execute[Deps any](
 	ctx context.Context,
 	tools []tool.Tool[Deps],
@@ -128,6 +134,7 @@ func execute[Deps any](
 	req model.Request,
 	maxIterations int,
 	toolRetries int,
+	outputTool string,
 	call turnCall,
 ) (Outcome, error) {
 	if maxIterations < 1 {
@@ -138,6 +145,9 @@ func execute[Deps any](
 	}
 	if len(req.ToolSpecs) == 0 && len(tools) > 0 {
 		return Outcome{}, fmt.Errorf("runner: tools registered without matching tool specs")
+	}
+	if outputTool != "" && findSpec(req.ToolSpecs, outputTool) == nil {
+		return Outcome{}, fmt.Errorf("runner: output tool %q has no matching tool spec", outputTool)
 	}
 
 	messages := make([]model.Message, len(req.Messages))
@@ -163,6 +173,12 @@ func execute[Deps any](
 
 		if len(response.Message.ToolCalls) == 0 {
 			return Outcome{Response: response, Messages: messages, Usage: usage}, nil
+		}
+
+		if outputTool != "" {
+			if call, ok := findCallByName(response.Message.ToolCalls, outputTool); ok {
+				return finishOnOutput(messages, usage, response, call), nil
+			}
 		}
 
 		for _, call := range response.Message.ToolCalls {
@@ -213,6 +229,116 @@ func findTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], 
 		}
 	}
 	return tool.Tool[Deps]{}, false
+}
+
+func findSpec(specs []model.ToolSpec, name string) *model.ToolSpec {
+	for i := range specs {
+		if specs[i].Name == name {
+			return &specs[i]
+		}
+	}
+	return nil
+}
+
+func findCallByName(calls []model.ToolCall, name string) (model.ToolCall, bool) {
+	for _, call := range calls {
+		if call.Name == name {
+			return call, true
+		}
+	}
+	return model.ToolCall{}, false
+}
+
+// finishOnOutput ends the run on the model's call to the output tool.
+// The call's arguments become the final response content — the decoder's
+// validation boundary — while every other call in the same response is
+// closed with an interrupted result: co-emitted calls are not executed,
+// and the call/result pairing providers require stays intact. The output
+// call itself is left for the caller to close, because only it knows
+// whether the decoder accepts the arguments (a recorded result) or
+// rejects them for correction (a rejection bound to the call).
+func finishOnOutput(messages []model.Message, usage model.Usage, response model.Response, call model.ToolCall) Outcome {
+	for _, other := range response.Message.ToolCalls {
+		if other.ID == call.ID {
+			continue
+		}
+		messages = append(messages, model.Message{
+			Role:       model.RoleTool,
+			ToolCallID: other.ID,
+			ToolName:   other.Name,
+			Content:    interruptedToolResult,
+		})
+	}
+	final := response
+	final.Message.Content = string(call.Args)
+	return Outcome{Response: final, Messages: messages, Usage: usage}
+}
+
+// interruptedToolResult is the neutral result synthesized for a tool call
+// that produced no outcome. It states the absence of a result — not a
+// tool failure — so the model neither assumes an outcome nor treats the
+// call as a provider error.
+const interruptedToolResult = "Tool call was interrupted before execution; no result was produced. Call the tool again if you need its result."
+
+// RepairHistory restores the call/result pairing providers require: every
+// tool call is answered by a tool result, and every tool result references a
+// call in the history. A run that ended before a requested tool executed — a
+// crash, a cancelled stream, or hand-built history — leaves calls without
+// results; each receives a synthesized result, placed directly after the
+// assistant message that requested it, in call order. Results whose call is
+// absent, including results that precede their call, are dropped: no
+// provider accepts them.
+//
+// Repair only adds or removes pairing evidence; it never rewrites messages.
+// It is deterministic and idempotent: synthesized results carry no
+// wall-clock data, so repairing an already-repaired history returns it
+// unchanged, and repeated resumes stay prompt-cache friendly. Pairing is by
+// call ID; calls without an ID cannot be paired and are left as-is.
+func RepairHistory(history []model.Message) []model.Message {
+	pending := make(map[string]struct{}, len(history))
+	repaired := make([]model.Message, 0, len(history))
+	dropped := false
+	for _, message := range history {
+		switch message.Role {
+		case model.RoleAssistant:
+			repaired = append(repaired, message)
+			for _, call := range message.ToolCalls {
+				if call.ID != "" {
+					pending[call.ID] = struct{}{}
+				}
+			}
+		case model.RoleTool:
+			if _, requested := pending[message.ToolCallID]; requested {
+				delete(pending, message.ToolCallID)
+				repaired = append(repaired, message)
+			} else {
+				dropped = true
+			}
+		default:
+			repaired = append(repaired, message)
+		}
+	}
+	if len(pending) == 0 && !dropped {
+		return history
+	}
+	if len(pending) == 0 {
+		return repaired
+	}
+	withResults := make([]model.Message, 0, len(repaired)+len(pending))
+	for _, message := range repaired {
+		withResults = append(withResults, message)
+		for _, call := range message.ToolCalls {
+			if _, unanswered := pending[call.ID]; unanswered {
+				withResults = append(withResults, model.Message{
+					Role:       model.RoleTool,
+					ToolCallID: call.ID,
+					ToolName:   call.Name,
+					Content:    interruptedToolResult,
+				})
+			}
+		}
+	}
+	return withResults
 }
 
 // generate calls the model once per turn, retrying retryable failures up to
