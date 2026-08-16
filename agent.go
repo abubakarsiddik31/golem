@@ -54,6 +54,7 @@ type Agent[Deps any, Output any] struct {
 	outputRetries    int
 	toolRetries      int
 	outputSchema     json.RawMessage
+	usageLimit       UsageLimit
 }
 
 // Option configures an Agent during construction.
@@ -156,6 +157,28 @@ func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 	}
 }
 
+// UsageLimit bounds a run's provider-recorded token consumption. The zero
+// value disables the limit; each dimension is independent, and zero within
+// a set limit means that dimension is unbounded. Providers that do not
+// report usage count as zero tokens, so a limit never trips without
+// provider-reported usage.
+type UsageLimit struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+}
+
+// WithUsageLimit bounds the tokens a single run may consume, counted
+// across every model turn, retried call, and correction round. The check
+// runs after each model response against the run's cumulative usage: the
+// response that crosses a bound fails the run at the usage stage, even
+// when it would have decoded successfully. Negative values fail New.
+func WithUsageLimit[Deps any, Output any](limit UsageLimit) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.usageLimit = limit
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -195,6 +218,9 @@ func New[Deps any, Output any](
 	}
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
+	}
+	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 {
+		return nil, fmt.Errorf("golem: usage limit must not be negative, got %+v", agent.usageLimit)
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -323,6 +349,9 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		}
 		usage.InputTokens += outcome.Usage.InputTokens
 		usage.OutputTokens += outcome.Usage.OutputTokens
+		if err := a.usageLimit.check(usage); err != nil {
+			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err}
+		}
 
 		output, err := a.decoder.Decode(ctx, outcome.Response)
 		if err == nil {
