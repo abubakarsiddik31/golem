@@ -17,8 +17,8 @@ Adapters translate the provider-neutral `model.Request` to their wire
 format and normalize responses back. They never retry on their own:
 failures are classified through `model.RetryableError` (408, 429, 5xx,
 transport faults — never context cancellation) and the runner's retry
-policy decides. All shipped adapters implement `model.StreamingModel`
-over SSE.
+policy decides. All shipped adapters except Bedrock implement
+`model.StreamingModel` over SSE.
 
 ## Example
 
@@ -26,6 +26,7 @@ over SSE.
 - `examples/anthropic` — Anthropic Messages API.
 - `examples/gemini` — Google Gemini GenerateContent API.
 - `examples/azure` — Azure OpenAI deployments.
+- `examples/bedrock` — AWS Bedrock Converse with SigV4.
 
 ```bash
 OPENAI_API_KEY=sk-... go run ./examples/minimal
@@ -34,6 +35,8 @@ GEMINI_API_KEY=... go run ./examples/gemini
 AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com \
     AZURE_OPENAI_DEPLOYMENT=gpt-4o AZURE_OPENAI_API_VERSION=2024-10-21 \
     go run ./examples/azure
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1 \
+    go run ./examples/bedrock
 ```
 
 ```go
@@ -46,6 +49,10 @@ azureClient, _ := azure.New(azure.Config{
     APIKey: key, Endpoint: "https://my-resource.openai.azure.com",
     Deployment: "gpt-4o", APIVersion: "2024-10-21",
 })
+bedrockClient, _ := bedrock.New(bedrock.Config{
+    Credentials: bedrock.Credentials{AccessKeyID: id, SecretAccessKey: secret},
+    Region: "us-east-1", Model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+})
 ```
 
 ## API surface
@@ -54,6 +61,7 @@ azureClient, _ := azure.New(azure.Config{
 - `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, HTTPClient})`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, HTTPClient})`
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, HTTPClient})`
+- `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, BaseURL, HTTPClient})`
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas
@@ -81,4 +89,10 @@ azureClient, _ := azure.New(azure.Config{
   `output_config`, and Gemini `generationConfig`; OpenAI and Anthropic
   require strict-conformant schemas (see
   [Structured output](structured-output.md)).
+- Bedrock credentials are wired in explicitly — the adapter never reads
+  the AWS environment or credential chain; requests are SigV4-signed
+  with the standard library. Bedrock streaming is not implemented yet
+  (ConverseStream uses AWS binary event-stream framing, not SSE), and
+  `OutputSchema` maps to the Converse `outputConfig` json_schema format
+  with the schema passed as a string.
 - Deciding conventions live in `docs/adr/0003-provider-adapter-conventions.md`.

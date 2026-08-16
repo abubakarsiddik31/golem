@@ -68,6 +68,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`anthropic`](examples/anthropic/main.go) | Anthropic Messages API adapter |
 | [`gemini`](examples/gemini/main.go) | Google Gemini GenerateContent adapter |
 | [`azure`](examples/azure/main.go) | Azure OpenAI deployment adapter |
+| [`bedrock`](examples/bedrock/main.go) | AWS Bedrock Converse adapter with SigV4 |
 | [`testing-without-a-provider`](examples/testing-without-a-provider/main.go) | Scripted fake model, offline and deterministic |
 
 ```bash
