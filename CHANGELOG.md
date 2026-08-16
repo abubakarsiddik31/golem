@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.2 — 2026-08-16
+
+Tool control, deterministic testing, and structured-output refinements.
+
+- **Testing helpers.** New exported `testmodel` package supplies scripted,
+  function, and streaming model fakes that record deep-copied normalized
+  requests without provider credentials or network access.
+- **Tool policy.** Tool correction retries are independently budgeted per
+  tool, with optional per-tool overrides. Context-aware default and per-tool
+  execution deadlines preserve cancellation identity.
+- **Parallel tools.** Opt-in concurrent calls from one model response retain
+  result evidence in model emission order; a `Sequential` tool acts as a
+  barrier for side-effecting work.
+- **Tool choice.** `WithToolChoice` restricts the tools advertised to a
+  selected registered capability, without relying on provider-specific
+  forcing semantics.
+- **Structured output and history.** Tool-mode structured output is available
+  for tool-calling models, and resumed conversations repair incomplete tool
+  call/result pairs before reaching a provider.
+
 ## v0.1.1 — 2026-08-16
 
 Provider coverage and documentation infrastructure.
