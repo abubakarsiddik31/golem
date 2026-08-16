@@ -111,6 +111,18 @@ agent, err := golem.New[MyDeps, string](client, decoder,
 
 Rejected calls and their rejection results stay in the evidence. The budget is off by default: without `WithToolRetries` — or for tool errors that are not `ModelRetry` — the run still aborts at the `tool` stage with the cause preserved.
 
+## Structured output
+
+`WithOutputSchema` declares the JSON Schema document describing the agent's expected final answer. Adapters that support structured output map it to their native mechanism (the OpenAI-compatible adapter requests strict `json_schema` responses); adapters without structured-output support ignore it. The schema describes the expected shape to the model — the decoder remains the validation boundary, so responses are still decoded and rejected the same way.
+
+```go
+agent, err := golem.New[struct{}, City](client, decoder,
+    golem.WithOutputSchema[struct{}, City](citySchema),
+)
+```
+
+An empty schema disables the behavior; a schema that is not valid JSON fails construction.
+
 ## Streaming
 
 Models that can stream advertise it through the optional `model.StreamingModel` capability — `Model` itself is unchanged, so test fakes and simple adapters are unaffected. The OpenAI-compatible adapter implements it over SSE:

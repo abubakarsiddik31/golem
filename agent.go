@@ -3,6 +3,7 @@ package golem
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -51,6 +52,7 @@ type Agent[Deps any, Output any] struct {
 	retryBackoff  func(attempt int) time.Duration
 	outputRetries int
 	toolRetries   int
+	outputSchema  json.RawMessage
 }
 
 // Option configures an Agent during construction.
@@ -110,6 +112,18 @@ func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 	}
 }
 
+// WithOutputSchema declares the JSON Schema document describing the
+// agent's expected final answer. Adapters that support structured output
+// map it to their native mechanism; adapters that do not ignore it. The
+// schema describes the expected shape to the model — the decoder remains
+// the validation boundary. An empty schema disables the behavior; a
+// non-empty schema that is not valid JSON fails New.
+func WithOutputSchema[Deps any, Output any](schema json.RawMessage) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.outputSchema = schema
+	}
+}
+
 // WithToolRetries sets how many tool rejections a run feeds back to the
 // model: a tool signals correctable arguments by returning an error
 // wrapping *model.ModelRetry, and the run delivers the rejection as the
@@ -159,6 +173,9 @@ func New[Deps any, Output any](
 	}
 	if agent.toolRetries < 0 {
 		return nil, fmt.Errorf("golem: tool retries must not be negative, got %d", agent.toolRetries)
+	}
+	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
+		return nil, fmt.Errorf("golem: output schema is not valid JSON")
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -272,7 +289,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 	var usage model.Usage
 
 	for attempt := 0; ; attempt++ {
-		request := model.Request{Messages: messages, ToolSpecs: specs}
+		request := model.Request{Messages: messages, ToolSpecs: specs, OutputSchema: a.outputSchema}
 		var outcome runner.Outcome
 		var err error
 		if onDelta != nil {

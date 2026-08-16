@@ -153,7 +153,7 @@ func execute[Deps any](
 			return Outcome{}, fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
-		response, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs})
+		response, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema})
 		if err != nil {
 			return Outcome{}, err
 		}
