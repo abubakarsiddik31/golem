@@ -10,8 +10,8 @@ import (
 
 // APIError reports a provider-side failure with an HTTP status. It
 // implements model.RetryableError: Retryable is true for 408, 429, and 5xx
-// responses — the classification the runner retry policy consumes (ADR
-// 0004). The adapter itself never retries.
+// responses — the classification the runner retry policy consumes. The
+// adapter itself never retries.
 type APIError struct {
 	StatusCode int
 	// Code is the provider-reported error code, when present.
