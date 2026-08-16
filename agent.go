@@ -43,16 +43,17 @@ func (f DecodeFunc[Output]) Decode(ctx context.Context, response model.Response)
 // Agent combines a model, instructions, tools, and a typed output boundary.
 // Deps is the dependency value tools receive on every run.
 type Agent[Deps any, Output any] struct {
-	model         model.Model
-	decoder       OutputDecoder[Output]
-	instructions  string
-	tools         []tool.Tool[Deps]
-	maxIterations int
-	maxAttempts   int
-	retryBackoff  func(attempt int) time.Duration
-	outputRetries int
-	toolRetries   int
-	outputSchema  json.RawMessage
+	model            model.Model
+	decoder          OutputDecoder[Output]
+	instructions     string
+	instructionsFunc func(ctx context.Context, runCtx RunContext[Deps]) string
+	tools            []tool.Tool[Deps]
+	maxIterations    int
+	maxAttempts      int
+	retryBackoff     func(attempt int) time.Duration
+	outputRetries    int
+	toolRetries      int
+	outputSchema     json.RawMessage
 }
 
 // Option configures an Agent during construction.
@@ -62,6 +63,24 @@ type Option[Deps any, Output any] func(*Agent[Deps, Output])
 func WithInstructions[Deps any, Output any](instructions string) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.instructions = instructions
+	}
+}
+
+// InstructionsFunc builds the instructions of one run. ctx is the
+// caller's run context, so a builder that consults external state can
+// honor cancellation.
+type InstructionsFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps]) string
+
+// WithInstructionsFunc configures instructions evaluated at the start of
+// every run, so guidance can depend on runtime state such as the run's
+// dependency value. The result joins static instructions — static text
+// first, separated by a blank line — and an empty result contributes
+// nothing. History system messages are replaced by the resolved
+// instructions of the current run, exactly as for static instructions.
+// Register one function; compose closures when several sources apply.
+func WithInstructionsFunc[Deps any, Output any](fn InstructionsFunc[Deps]) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.instructionsFunc = fn
 	}
 }
 
@@ -285,7 +304,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		retry.Backoff = exponentialBackoff
 	}
 
-	messages := a.requestMessages(history, prompt)
+	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt)
 	var usage model.Usage
 
 	for attempt := 0; ; attempt++ {
@@ -325,16 +344,36 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 	}
 }
 
-// requestMessages builds the ordered request conversation: the agent's
-// current instructions when set, the supplied history with system messages
+// resolveInstructions builds the instructions governing one run: the
+// static text, then the evaluated function's result, separated by a blank
+// line. Evaluation happens once per run, before the request conversation
+// is built.
+func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx RunContext[Deps]) string {
+	instructions := a.instructions
+	if a.instructionsFunc == nil {
+		return instructions
+	}
+	dynamic := a.instructionsFunc(ctx, runCtx)
+	switch {
+	case dynamic == "":
+		return instructions
+	case instructions == "":
+		return dynamic
+	default:
+		return instructions + "\n\n" + dynamic
+	}
+}
+
+// requestMessages builds the ordered request conversation: the run's
+// resolved instructions when set, the supplied history with system messages
 // removed (instructions govern every run), and the new user
 // prompt.
-func (a *Agent[Deps, Output]) requestMessages(history []model.Message, prompt string) []model.Message {
+func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string) []model.Message {
 	messages := make([]model.Message, 0, len(history)+2)
-	if a.instructions != "" {
+	if instructions != "" {
 		messages = append(messages, model.Message{
 			Role:    model.RoleSystem,
-			Content: a.instructions,
+			Content: instructions,
 		})
 	}
 	for _, message := range history {

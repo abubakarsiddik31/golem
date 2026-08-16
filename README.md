@@ -62,6 +62,20 @@ next, err := agent.RunWithHistory(ctx, golem.RunContext[MyDeps]{Deps: deps}, res
 
 Conversations persist anywhere with `encoding/json`: `json.Marshal(result.Messages)` produces the stable, additive-only shape. Storage stays the application's job — there is no session object.
 
+Instructions can also depend on runtime state: `WithInstructionsFunc` registers a function evaluated at the start of every run with the caller's context and the run's dependency value.
+
+```go
+agent, err := golem.New[PlayerDeps, string](client, decoder,
+    golem.WithInstructions[PlayerDeps, string]("Always greet the player."),
+    golem.WithInstructionsFunc[PlayerDeps, string](
+        func(ctx context.Context, runCtx golem.RunContext[PlayerDeps]) string {
+            return "The player's name is " + runCtx.Deps.Name + "."
+        }),
+)
+```
+
+The function's result joins the static instructions — static text first, separated by a blank line — and an empty result contributes nothing. Like static instructions, the resolved text replaces any system messages in history, so guidance never goes stale.
+
 ## Self-correcting output
 
 When a typed decoder rejects a response the model can fix, return `model.ModelRetry` from the decoder and enable a correction budget: the run appends the rejection reason to the conversation and asks the model again.
