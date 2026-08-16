@@ -22,7 +22,7 @@ var ErrLoopLimit = errors.New("runner: model turn limit exceeded")
 // that was not declared. The core maps it to StageTool and callers can
 // reach the cause with errors.Is and errors.As. A tool rejection whose
 // correction budget was exhausted lands here too, the *model.ModelRetry
-// preserved in the chain (ADR 0007).
+// preserved in the chain.
 type ToolError struct {
 	ToolName string
 	CallID   string
@@ -46,9 +46,9 @@ type Outcome struct {
 	Usage    model.Usage
 }
 
-// RetryConfig bounds and paces retries of failed model calls (ADR 0004).
+// RetryConfig bounds and paces retries of failed model calls.
 // Tool executions and output decoding are never retried; tool rejections
-// are fed back to the model under their own budget instead (ADR 0007).
+// are fed back to the model under their own budget instead.
 type RetryConfig struct {
 	// MaxAttempts bounds model calls per turn, including the first. It must
 	// be at least 1; 1 disables retries.
@@ -58,15 +58,15 @@ type RetryConfig struct {
 	Backoff func(attempt int) time.Duration
 }
 
-// Execute runs the sequential loop described by ADR 0002: call the model,
+// Execute runs the sequential loop: call the model,
 // execute any requested tool calls in order, append the evidence, and
 // repeat until the model responds without tool calls or a limit or error
 // ends the run. The caller's context is checked before every model call
 // and tool execution. maxIterations bounds model turns and must be at
-// least 1; retry bounds retried model calls per turn per ADR 0004.
+// least 1; retry bounds retried model calls per turn.
 // toolRetries bounds how many tool rejections — errors carrying
 // *model.ModelRetry — are fed back to the model for correction per run;
-// it must not be negative (ADR 0007).
+// it must not be negative.
 func Execute[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -86,8 +86,8 @@ func Execute[Deps any](
 		})
 }
 
-// ExecuteStream runs the same loop as Execute over streamed model calls
-// (ADR 0009): every fragment is forwarded to onDelta in arrival order,
+// ExecuteStream runs the same loop as Execute over streamed model calls:
+// every fragment is forwarded to onDelta in arrival order,
 // across tool turns and correction feedbacks, and the outcome is the
 // assembled run, identical in shape to Execute's. The model must
 // implement model.StreamingModel. There is deliberately no retry
@@ -181,7 +181,7 @@ func execute[Deps any](
 			if err != nil {
 				var rejection *model.ModelRetry
 				if toolRetries > 0 && errors.As(err, &rejection) {
-					// Correction feedback (ADR 0007): deliver the rejection
+					// Correction feedback: deliver the rejection
 					// as the call's tool result and let the model try again.
 					toolRetries--
 					feedbacks++
@@ -216,7 +216,7 @@ func findTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], 
 }
 
 // generate calls the model once per turn, retrying retryable failures up to
-// retry.MaxAttempts with context-aware waits between attempts (ADR 0004).
+// retry.MaxAttempts with context-aware waits between attempts.
 // A context error always wins over the model error: cancellation is
 // returned raw, never retried or wrapped.
 func generate(ctx context.Context, m model.Model, request model.Request, retry RetryConfig) (model.Response, error) {

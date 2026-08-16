@@ -10,7 +10,7 @@ const (
 	StageModel Stage = "model"
 	// StageDecode means a generated response could not become the declared type.
 	StageDecode Stage = "decode"
-	// StageTool means a tool execution failed; the run aborted per ADR 0002.
+	// StageTool means a tool execution failed; the run aborted.
 	StageTool Stage = "tool"
 	// StageLoop means the run exceeded its model-turn limit before producing
 	// a final response.

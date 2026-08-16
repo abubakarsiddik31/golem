@@ -18,7 +18,7 @@ import (
 type deps struct{ Tenant string }
 
 // noRetries preserves the pre-retry behavior for tests that do not
-// exercise ADR 0004.
+// exercise retry behavior.
 var noRetries = runner.RetryConfig{MaxAttempts: 1}
 
 // zeroBackoff keeps retry tests free of real waits.
@@ -751,7 +751,7 @@ func TestExecuteStreamDoesNotRetryStreamedTurns(t *testing.T) {
 	if !errors.Is(err, transient) {
 		t.Fatalf("ExecuteStream() error = %v, want the stream failure as-is", err)
 	}
-	// Streamed turns are single-attempt (ADR 0009): the retryable failure
+	// Streamed turns are single-attempt: the retryable failure
 	// is not re-attempted.
 	if len(m.requests) != 1 {
 		t.Fatalf("stream attempts = %d, want 1", len(m.requests))

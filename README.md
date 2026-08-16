@@ -53,14 +53,14 @@ Retried attempts wait with exponential backoff (500 ms doubling, capped at 30 s)
 
 ## Continuing conversations
 
-A run returns the full normalized conversation in `result.Messages`; pass it back to continue. The agent's instructions are re-evaluated every run — system messages from earlier runs are replaced by the current instructions, so guidance never duplicates or goes stale (ADR 0005).
+A run returns the full normalized conversation in `result.Messages`; pass it back to continue. The agent's instructions are re-evaluated every run — system messages from earlier runs are replaced by the current instructions, so guidance never duplicates or goes stale.
 
 ```go
 result, err := agent.Run(ctx, golem.RunContext[MyDeps]{Deps: deps}, "first question")
 next, err := agent.RunWithHistory(ctx, golem.RunContext[MyDeps]{Deps: deps}, result.Messages, "follow-up")
 ```
 
-Conversations persist anywhere with `encoding/json`: `json.Marshal(result.Messages)` produces the stable, additive-only shape pinned in ADR 0005. Storage stays the application's job — there is no session object.
+Conversations persist anywhere with `encoding/json`: `json.Marshal(result.Messages)` produces the stable, additive-only shape. Storage stays the application's job — there is no session object.
 
 ## Self-correcting output
 
@@ -79,7 +79,7 @@ agent, err := golem.New[struct{}, int](client,
 )
 ```
 
-Rejected responses and rejection prompts stay in the evidence, and usage sums across rounds. The budget is off by default: without `WithOutputRetries` — or for decode errors that are not `ModelRetry` — the run fails at the `decode` stage exactly as before (ADR 0006).
+Rejected responses and rejection prompts stay in the evidence, and usage sums across rounds. The budget is off by default: without `WithOutputRetries` — or for decode errors that are not `ModelRetry` — the run fails at the `decode` stage exactly as before.
 
 ## Self-correcting tools
 
@@ -109,7 +109,7 @@ agent, err := golem.New[MyDeps, string](client, decoder,
 )
 ```
 
-Rejected calls and their rejection results stay in the evidence. The budget is off by default: without `WithToolRetries` — or for tool errors that are not `ModelRetry` — the run still aborts at the `tool` stage with the cause preserved (ADR 0007).
+Rejected calls and their rejection results stay in the evidence. The budget is off by default: without `WithToolRetries` — or for tool errors that are not `ModelRetry` — the run still aborts at the `tool` stage with the cause preserved.
 
 ## Streaming
 
@@ -122,7 +122,7 @@ response, err := client.GenerateStream(ctx, request, func(d model.Delta) error {
 })
 ```
 
-`GenerateStream` returns the fully assembled `model.Response` — the same shape and normalization as `Generate` — so evidence, tools, and decoding keep operating on the canonical response. Streamed usage depends on provider support (`stream_options.include_usage`); providers that omit it report zeroes (ADR 0008).
+`GenerateStream` returns the fully assembled `model.Response` — the same shape and normalization as `Generate` — so evidence, tools, and decoding keep operating on the canonical response. Streamed usage depends on provider support (`stream_options.include_usage`); providers that omit it report zeroes.
 
 Agents stream whole runs: `RunStream` (and `RunStreamWithHistory`) forward every fragment across tool turns and correction rounds while producing the identical `Result`.
 
@@ -135,7 +135,7 @@ result, err := agent.RunStream(ctx, golem.RunContext[MyDeps]{Deps: deps}, "summa
 )
 ```
 
-The model must implement `model.StreamingModel` — otherwise the call fails up front rather than silently degrading. Streamed turns are single-attempt: a retryable failure ends the run at the model stage instead of replaying fragments the caller already saw; use non-streaming runs when retry resilience matters more than progress (ADR 0009).
+The model must implement `model.StreamingModel` — otherwise the call fails up front rather than silently degrading. Streamed turns are single-attempt: a retryable failure ends the run at the model stage instead of replaying fragments the caller already saw; use non-streaming runs when retry resilience matters more than progress.
 
 ## Connecting a provider
 

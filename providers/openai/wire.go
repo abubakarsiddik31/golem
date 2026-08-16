@@ -15,7 +15,7 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Tools    []chatTool    `json:"tools,omitempty"`
-	// Stream selects streaming mode (ADR 0008); when set, StreamOptions
+	// Stream selects streaming mode; when set, StreamOptions
 	// asks the provider to report usage in the final chunk.
 	Stream        bool               `json:"stream,omitempty"`
 	StreamOptions *chatStreamOptions `json:"stream_options,omitempty"`
@@ -69,7 +69,7 @@ type chatUsage struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
-// chatChunk is one streamed SSE chunk (ADR 0008): a delta for the first
+// chatChunk is one streamed SSE chunk: a delta for the first
 // choice, or usage only in the final chunk where Choices is empty.
 type chatChunk struct {
 	Choices []chatChunkChoice `json:"choices"`
@@ -170,7 +170,7 @@ func toWireTools(specs []model.ToolSpec) []chatTool {
 }
 
 // normalizeArguments converts stringified wire arguments to raw JSON,
-// mapping an empty string to an empty object (ADR 0003).
+// mapping an empty string to an empty object.
 func normalizeArguments(arguments string) json.RawMessage {
 	args := strings.TrimSpace(arguments)
 	if args == "" {
@@ -180,7 +180,7 @@ func normalizeArguments(arguments string) json.RawMessage {
 }
 
 // fromWireResponse normalizes a chat-completions body. The first choice
-// wins per ADR 0003; stringified arguments become raw JSON, with an empty
+// wins; stringified arguments become raw JSON, with an empty
 // string mapped to an empty object.
 func fromWireResponse(payload []byte) (model.Response, error) {
 	var wire chatResponse

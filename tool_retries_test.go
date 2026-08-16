@@ -13,7 +13,7 @@ import (
 	"github.com/abubakarsiddik31/golem/tool"
 )
 
-// rollTool rejects non-positive n as correctable model content (ADR 0007).
+// rollTool rejects non-positive n as correctable model content.
 func rollTool(t *testing.T) tool.Tool[struct{}] {
 	t.Helper()
 	return tool.MustNew(tool.Tool[struct{}]{

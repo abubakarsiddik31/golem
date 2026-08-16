@@ -25,7 +25,7 @@ type Tool[Deps any] struct {
 	// must honor ctx cancellation and return a classified error rather than
 	// logging it. Returning an error that wraps *model.ModelRetry rejects
 	// this call as correctable: with a tool retry budget configured, the
-	// run feeds the rejection back to the model (ADR 0007).
+	// run feeds the rejection back to the model.
 	Exec func(ctx context.Context, deps Deps, args json.RawMessage) (string, error)
 }
 

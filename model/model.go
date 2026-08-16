@@ -34,7 +34,7 @@ type ToolCall struct {
 // Message is a normalized conversational message. Provider adapters are
 // responsible for translating it to their native request format. Its JSON
 // encoding is a durable, additive-only contract for persisted
-// conversations (ADR 0005).
+// conversations.
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content,omitempty"`

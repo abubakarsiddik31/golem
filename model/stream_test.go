@@ -23,7 +23,7 @@ func (m *streamingFake) GenerateStream(ctx context.Context, request model.Reques
 }
 
 // TestStreamingIsAnOptionalCapability pins the port's core promise: a
-// Generate-only implementation still satisfies Model (ADR 0008), and
+// Generate-only implementation still satisfies Model, and
 // adding GenerateStream opts a model into StreamingModel.
 func TestStreamingIsAnOptionalCapability(t *testing.T) {
 	t.Parallel()

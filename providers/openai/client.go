@@ -3,7 +3,7 @@
 // the same adapter serve Groq, OpenRouter, DeepSeek, Together, Ollama,
 // and vLLM.
 //
-// The package follows ADR 0003: stdlib-only transport, explicit
+// The package is stdlib-only transport, explicit
 // configuration, typed error classification, and normalization of provider
 // encodings into the model contract.
 package openai
@@ -100,7 +100,7 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 
 // newChatHTTPRequest builds the POST request for the chat-completions
 // endpoint. stream selects streaming mode, which also requests usage in
-// the final chunk (ADR 0008).
+// the final chunk.
 func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
 	var streamOptions *chatStreamOptions
 	if stream {

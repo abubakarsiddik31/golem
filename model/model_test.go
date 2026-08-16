@@ -149,8 +149,8 @@ func TestMessageJSONShapeIsPinned(t *testing.T) {
 		t.Fatalf("Marshal() error = %v", err)
 	}
 
-	// The exact wire shape of the first three messages; ADR 0005 pins it as
-	// additive-only, so field names here are contract.
+	// The exact wire shape of the first three messages; field names are a
+	// durable, additive-only contract.
 	wantPrefix := `[{"role":"system","content":"Be concise."},` +
 		`{"role":"user","content":"Roll the dice."},` +
 		`{"role":"assistant","toolCalls":[{"id":"call-1","name":"roll_dice","args":{"guess":4}}]},` +

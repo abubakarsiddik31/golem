@@ -7,7 +7,7 @@ import (
 )
 
 // ModelRetry reports that a model response failed validation in a way the
-// model can correct if asked (ADR 0006). Decoders return it — typically
+// model can correct if asked. Decoders return it — typically
 // wrapped — to reject a response; the agent appends the failure to the
 // conversation and asks the model again, bounded by the run's output retry
 // budget. It is a content signal, not a transport one: it never classifies
@@ -28,7 +28,7 @@ func (e *ModelRetry) Unwrap() error {
 
 // RetryableError is implemented by model errors that report whether the
 // failed generation can reasonably be attempted again, such as an adapter's
-// classification of HTTP 429 and 5xx responses (ADR 0004). The runner's
+// classification of HTTP 429 and 5xx responses. The runner's
 // retry policy inspects errors through this contract; the core never learns
 // provider-specific failure shapes.
 type RetryableError interface {

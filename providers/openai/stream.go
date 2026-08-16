@@ -16,11 +16,11 @@ const doneSentinel = "[DONE]"
 
 // maxSSELine bounds one SSE line. Streamed tool arguments arrive as JSON
 // text inside a single data line, which can exceed the bufio.Scanner
-// default of 64 KB (ADR 0008).
+// default of 64 KB.
 const maxSSELine = 1 << 20
 
 // Client streams responses through the same chat-completions endpoint as
-// Generate (ADR 0008).
+// Generate.
 var _ model.StreamingModel = (*Client)(nil)
 
 // GenerateStream translates request to the chat-completions wire format
@@ -54,7 +54,7 @@ func (c *Client) GenerateStream(ctx context.Context, request model.Request, onDe
 // readStream parses the SSE body, forwards fragments to onDelta, and
 // returns the assembled response. The [DONE] sentinel is required: EOF
 // without it means the stream was truncated, which is a decode error, not
-// a short success (ADR 0008).
+// a short success.
 func readStream(body io.Reader, onDelta func(model.Delta) error) (model.Response, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELine)
@@ -96,8 +96,8 @@ func sseData(line string) (string, bool) {
 	return strings.TrimSpace(after), true
 }
 
-// streamAssembler accumulates chunk fragments into the final response
-// (ADR 0008). Index-based tool-call merging is wire-specific and stays in
+// streamAssembler accumulates chunk fragments into the final response.
+// Index-based tool-call merging is wire-specific and stays in
 // the adapter.
 type streamAssembler struct {
 	content strings.Builder
@@ -107,7 +107,7 @@ type streamAssembler struct {
 }
 
 // consume decodes one data payload, accumulates it, and reports the
-// fragment to onDelta. The first choice wins per ADR 0003; a chunk with
+// fragment to onDelta. The first choice wins; a chunk with
 // no choices carries usage only.
 func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) error {
 	var chunk chatChunk

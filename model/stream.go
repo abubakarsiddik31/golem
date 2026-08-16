@@ -2,11 +2,11 @@ package model
 
 import "context"
 
-// Delta is one streamed fragment of an assistant response (ADR 0008). A
+// Delta is one streamed fragment of an assistant response. A
 // delta carries whichever fragments the provider emitted: a piece of text
 // content, one or more tool-call fragments, or both. Deltas are in-flight
 // progress, not a persistence contract: they carry no JSON tags and no
-// stability promise, unlike Message (ADR 0005).
+// stability promise, unlike Message.
 type Delta struct {
 	// Content is a text fragment to append to the response content.
 	Content string
@@ -27,7 +27,7 @@ type ToolCallDelta struct {
 	ArgsFragment string
 }
 
-// StreamingModel is an optional streaming capability of Model (ADR 0008):
+// StreamingModel is an optional streaming capability of Model:
 // implementations that can stream advertise it, and the rest are
 // unaffected. GenerateStream behaves exactly like Generate — same request
 // translation, same error classification, same normalization of the

@@ -12,12 +12,11 @@ import (
 	"github.com/abubakarsiddik31/golem/tool"
 )
 
-// DefaultMaxIterations bounds model turns per run when no explicit limit is
-// configured (ADR 0002).
+// DefaultMaxIterations bounds model turns per run when no explicit limit is configured.
 const DefaultMaxIterations = 10
 
 // Retry pacing used when attempts are enabled without an explicit backoff
-// (ADR 0004): 500 ms doubling per failed attempt, capped at 30 s.
+// 500 ms doubling per failed attempt, capped at 30 s.
 const (
 	retryBaseBackoff = 500 * time.Millisecond
 	retryMaxBackoff  = 30 * time.Second
@@ -27,7 +26,7 @@ const (
 // declared result type. It is the boundary at which model-produced data becomes
 // application data. Returning *model.ModelRetry rejects a response the model
 // can correct; with an output retry budget configured, the run feeds the
-// rejection back to the model (ADR 0006).
+// rejection back to the model.
 type OutputDecoder[Output any] interface {
 	Decode(ctx context.Context, response model.Response) (Output, error)
 }
@@ -83,7 +82,7 @@ func WithMaxIterations[Deps any, Output any](iterations int) Option[Deps, Output
 // WithMaxAttempts bounds how many times each model call may be attempted,
 // including the first, when the model reports a retryable failure (408,
 // 429, 5xx, transport faults). Tool and decode failures are never retried.
-// The default is 1 — retries are opt-in (ADR 0004) — and values below 1
+// The default is 1 — retries are opt-in — and values below 1
 // fail New.
 func WithMaxAttempts[Deps any, Output any](attempts int) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
@@ -103,7 +102,7 @@ func WithRetryBackoff[Deps any, Output any](backoff func(attempt int) time.Durat
 
 // WithOutputRetries sets how many correction rounds a decoder may request
 // by returning *model.ModelRetry: each round appends the rejection reason
-// to the conversation and asks the model again (ADR 0006). The default is
+// to the conversation and asks the model again. The default is
 // 0 — self-correction is opt-in — and negative values fail New.
 func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
@@ -114,7 +113,7 @@ func WithOutputRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 // WithToolRetries sets how many tool rejections a run feeds back to the
 // model: a tool signals correctable arguments by returning an error
 // wrapping *model.ModelRetry, and the run delivers the rejection as the
-// call's tool result so the model can try again (ADR 0007). The default
+// call's tool result so the model can try again. The default
 // is 0 — self-correction is opt-in — and negative values fail New. The
 // budget counts total rejections per run and is additionally bounded by
 // the model turn limit.
@@ -216,8 +215,8 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 
 // RunWithHistory continues a conversation. history — typically the
 // Result.Messages of a previous run — is sent before a fresh user prompt,
-// and the result carries the full reconstructed conversation so runs chain
-// (ADR 0005). The agent's current instructions govern the request: any
+// and the result carries the full reconstructed conversation so runs
+// chain. The agent's current instructions govern the request: any
 // system messages in history are replaced by them, so guidance is
 // re-evaluated per run and never duplicated.
 func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
@@ -226,8 +225,8 @@ func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunCont
 
 // RunStream executes the agent like Run while streaming progress: every
 // model fragment — text, tool-call arguments, and re-streamed correction
-// rounds — is forwarded to onDelta in arrival order, across tool turns
-// (ADR 0009). The returned Result is identical in shape to Run's; deltas
+// rounds — is forwarded to onDelta in arrival order, across tool turns.
+// The returned Result is identical in shape to Run's; deltas
 // are advisory progress on top of the canonical run.
 //
 // The model must implement model.StreamingModel; otherwise RunStream
@@ -300,7 +299,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 			}
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
 		}
-		// Correction round (ADR 0006): keep the rejected response as
+		// Correction round: keep the rejected response as
 		// evidence, tell the model why it was rejected, and run again.
 		messages = append(outcome.Messages, model.Message{
 			Role:    model.RoleUser,
@@ -311,7 +310,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 
 // requestMessages builds the ordered request conversation: the agent's
 // current instructions when set, the supplied history with system messages
-// removed (instructions govern every run, per ADR 0005), and the new user
+// removed (instructions govern every run), and the new user
 // prompt.
 func (a *Agent[Deps, Output]) requestMessages(history []model.Message, prompt string) []model.Message {
 	messages := make([]model.Message, 0, len(history)+2)
@@ -331,7 +330,7 @@ func (a *Agent[Deps, Output]) requestMessages(history []model.Message, prompt st
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed
-// attempt, doubling per attempt, capped at 30 s (ADR 0004).
+// attempt, doubling per attempt, capped at 30 s.
 func exponentialBackoff(attempt int) time.Duration {
 	if attempt < 1 {
 		return retryBaseBackoff
