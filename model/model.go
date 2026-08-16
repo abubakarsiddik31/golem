@@ -62,6 +62,12 @@ type Request struct {
 	Messages []Message
 	// ToolSpecs lists the tools the model may request this turn.
 	ToolSpecs []ToolSpec
+	// OutputSchema is an optional JSON Schema document describing the
+	// expected final answer. Adapters that support structured output map
+	// it to their native mechanism; adapters that do not ignore it. The
+	// decoder remains the validation boundary: the schema describes, it
+	// does not validate.
+	OutputSchema json.RawMessage
 }
 
 // Usage reports provider-recorded consumption for a generation. A missing
