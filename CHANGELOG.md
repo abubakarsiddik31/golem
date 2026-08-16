@@ -1,24 +1,34 @@
 # Changelog
 
-## v0.1.2 — 2026-08-16
+## v0.2.0 — 2026-08-16
 
-Tool control, deterministic testing, and structured-output refinements.
+This minor release expands the agent and tool contracts with new, opt-in
+capabilities while retaining the existing default execution behavior.
 
-- **Testing helpers.** New exported `testmodel` package supplies scripted,
-  function, and streaming model fakes that record deep-copied normalized
-  requests without provider credentials or network access.
-- **Tool policy.** Tool correction retries are independently budgeted per
-  tool, with optional per-tool overrides. Context-aware default and per-tool
-  execution deadlines preserve cancellation identity.
-- **Parallel tools.** Opt-in concurrent calls from one model response retain
-  result evidence in model emission order; a `Sequential` tool acts as a
-  barrier for side-effecting work.
-- **Tool choice.** `WithToolChoice` restricts the tools advertised to a
-  selected registered capability, without relying on provider-specific
-  forcing semantics.
-- **Structured output and history.** Tool-mode structured output is available
-  for tool-calling models, and resumed conversations repair incomplete tool
-  call/result pairs before reaching a provider.
+### Added
+
+- `testmodel`: exported scripted, function, and streaming model fakes for
+  deterministic, provider-free agent tests. Recorded requests are deep-copied
+  so assertions cannot mutate the captured evidence.
+- Tool-mode structured output via `WithOutputTool`, for models that support
+  tool calling but not native JSON-schema response formats.
+- Fine-grained tool controls: per-tool retry limits and deadlines,
+  `WithToolChoice` to constrain advertised capabilities, and opt-in ordered
+  parallel execution. A `tool.Tool.Sequential` declaration forms a barrier
+  for side-effecting work.
+
+### Changed
+
+- Tool correction budgets are now tracked independently for each tool; the
+  agent-level `WithToolRetries` setting remains the default and can be
+  overridden per tool.
+- Tool results from a parallel batch are retained in the model's original call
+  order, independent of completion order.
+
+### Fixed
+
+- Resuming a conversation repairs incomplete tool-call/result pairs before a
+  provider receives the history, preventing invalid dangling calls.
 
 ## v0.1.1 — 2026-08-16
 
