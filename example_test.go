@@ -3,6 +3,7 @@ package golem_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -232,6 +233,127 @@ func ExampleAgent_RunStream() {
 	// Output:
 	// good |morning
 	// good morning
+}
+
+// forecastModel answers with JSON shaped by the output schema.
+type forecastModel struct{}
+
+func (m *forecastModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	return model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: `{"city":"Lagos","celsius":31}`},
+		Usage:   model.Usage{InputTokens: 20, OutputTokens: 6},
+	}, nil
+}
+
+// ExampleWithOutputSchema pairs a declared output schema — sent to the
+// model as structured-output instructions by adapters that support them —
+// with the JSON decoder that validates the response content.
+func ExampleWithOutputSchema() {
+	type weather struct {
+		City    string `json:"city"`
+		Celsius int    `json:"celsius"`
+	}
+	agent, err := golem.New[struct{}, weather](&forecastModel{}, golem.DecodeJSON[weather](),
+		golem.WithOutputSchema[struct{}, weather](json.RawMessage(`{
+			"type": "object",
+			"properties": {"city": {"type": "string"}, "celsius": {"type": "integer"}},
+			"required": ["city", "celsius"],
+			"additionalProperties": false
+		}`)),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "forecast for Lagos")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("%s: %d°C\n", result.Output.City, result.Output.Celsius)
+	// Output:
+	// Lagos: 31°C
+}
+
+// instructedModel echoes the instructions it was given, if any.
+type instructedModel struct{}
+
+func (m *instructedModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	for _, message := range request.Messages {
+		if message.Role == model.RoleSystem {
+			return model.Response{
+				Message: model.Message{Role: model.RoleAssistant, Content: message.Content},
+			}, nil
+		}
+	}
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, Content: ""}}, nil
+}
+
+// ExampleWithInstructionsFunc shows instructions resolved per run: the
+// function's result joins the static instructions, and both flow to the
+// model as the run's system guidance.
+func ExampleWithInstructionsFunc() {
+	type player struct{ Name string }
+	agent, err := golem.New[player, string](&instructedModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithInstructions[player, string]("Always greet the player."),
+		golem.WithInstructionsFunc[player, string](
+			func(ctx context.Context, runCtx golem.RunContext[player]) string {
+				return "The player's name is " + runCtx.Deps.Name + "."
+			}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[player]{Deps: player{Name: "Anne"}}, "greet")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(result.Output)
+	// Output:
+	// Always greet the player.
+	//
+	// The player's name is Anne.
+}
+
+// verboseModel reports heavy usage on every response.
+type verboseModel struct{}
+
+func (m *verboseModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	return model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "an expensive answer"},
+		Usage:   model.Usage{InputTokens: 1200, OutputTokens: 800},
+	}, nil
+}
+
+// ExampleWithUsageLimit shows a run stopped at the usage stage: the
+// response that crosses the bound fails the run, with the crossed
+// dimension inspectable through the typed cause.
+func ExampleWithUsageLimit() {
+	agent, err := golem.New[struct{}, string](&verboseModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithUsageLimit[struct{}, string](golem.UsageLimit{TotalTokens: 1000}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "answer")
+	var runErr *golem.RunError
+	if !errors.As(err, &runErr) {
+		log.Fatal(err)
+	}
+	fmt.Println(runErr.Stage)
+	fmt.Println(runErr.Err)
+	// Output:
+	// usage
+	// run exceeded the total token limit of 1000 (used 2000)
 }
 
 // ExampleAgent demonstrates an agent that executes a typed tool with an
