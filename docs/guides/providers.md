@@ -25,11 +25,15 @@ over SSE.
 - `examples/minimal` — OpenAI-compatible.
 - `examples/anthropic` — Anthropic Messages API.
 - `examples/gemini` — Google Gemini GenerateContent API.
+- `examples/azure` — Azure OpenAI deployments.
 
 ```bash
 OPENAI_API_KEY=sk-... go run ./examples/minimal
 ANTHROPIC_API_KEY=sk-... go run ./examples/anthropic
 GEMINI_API_KEY=... go run ./examples/gemini
+AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com \
+    AZURE_OPENAI_DEPLOYMENT=gpt-4o AZURE_OPENAI_API_VERSION=2024-10-21 \
+    go run ./examples/azure
 ```
 
 ```go
@@ -38,6 +42,10 @@ anthropicClient, _ := anthropic.New(anthropic.Config{
     APIKey: key, Model: "claude-sonnet-4-5", MaxTokens: 1024,
 })
 geminiClient, _ := gemini.New(gemini.Config{APIKey: key, Model: "gemini-2.5-flash"})
+azureClient, _ := azure.New(azure.Config{
+    APIKey: key, Endpoint: "https://my-resource.openai.azure.com",
+    Deployment: "gpt-4o", APIVersion: "2024-10-21",
+})
 ```
 
 ## API surface
@@ -45,6 +53,7 @@ geminiClient, _ := gemini.New(gemini.Config{APIKey: key, Model: "gemini-2.5-flas
 - `openai.New(openai.Config{APIKey, BaseURL, Model, HTTPClient})`
 - `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, HTTPClient})`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, HTTPClient})`
+- `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, HTTPClient})`
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas
@@ -58,6 +67,10 @@ geminiClient, _ := gemini.New(gemini.Config{APIKey: key, Model: "gemini-2.5-flas
   roles.
 - Gemini function calls carry no provider ID: the adapter generates
   stable ones and correlates function responses by tool name.
+- Azure OpenAI shares the OpenAI wire format but addresses models by
+  deployment URL with an explicit `api-version`; there is no default
+  version, because versions gate feature support — structured output
+  needs one that supports `response_format`.
 - Gemini structured output maps to `generationConfig` JSON responses
   (`responseMimeType` + `responseSchema`); Gemini accepts a JSON-Schema
   subset — no `additionalProperties`.

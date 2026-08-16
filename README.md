@@ -67,6 +67,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
 | [`anthropic`](examples/anthropic/main.go) | Anthropic Messages API adapter |
 | [`gemini`](examples/gemini/main.go) | Google Gemini GenerateContent adapter |
+| [`azure`](examples/azure/main.go) | Azure OpenAI deployment adapter |
 | [`testing-without-a-provider`](examples/testing-without-a-provider/main.go) | Scripted fake model, offline and deterministic |
 
 ```bash
