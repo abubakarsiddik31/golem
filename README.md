@@ -42,7 +42,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | --- | --- |
 | [Getting started](docs/guides/getting-started.md) | The smallest agent, result shape, error stages |
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
-| [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, run dependencies, sequential execution evidence |
+| [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, dynamic instructions |
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |

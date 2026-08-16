@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/abubakarsiddik31/golem/model"
@@ -225,48 +226,88 @@ func execute[Deps any](
 			}
 		}
 
-		for _, call := range response.Message.ToolCalls {
-			if err := ctx.Err(); err != nil {
-				return Outcome{}, err
-			}
-			declared, ok := findTool(tools, call.Name)
-			if !ok {
-				return Outcome{}, &ToolError{
-					ToolName: call.Name,
-					CallID:   call.ID,
-					Err:      fmt.Errorf("tool was not declared for this run"),
-				}
-			}
-			result, err := executeTool(ctx, declared, deps, call.Args, toolConfig.DefaultTimeout)
-			if err != nil {
-				var rejection *model.ModelRetry
-				limit := toolConfig.DefaultRetries
-				if declared.MaxRetries != nil {
-					limit = *declared.MaxRetries
-				}
-				if feedbacks[declared.Name] < limit && errors.As(err, &rejection) {
-					// Correction feedback: deliver the rejection
-					// as the call's tool result and let the model try again.
-					feedbacks[declared.Name]++
-					messages = append(messages, model.Message{
-						Role:       model.RoleTool,
-						ToolCallID: call.ID,
-						ToolName:   call.Name,
-						Content: fmt.Sprintf("Your tool call was rejected: %v. "+
-							"Correct the arguments and call the tool again.", rejection.Err),
-					})
-					continue
-				}
-				return Outcome{}, &ToolError{ToolName: call.Name, CallID: call.ID, Err: terminalToolError(feedbacks[declared.Name], err)}
-			}
-			messages = append(messages, model.Message{
-				Role:       model.RoleTool,
-				ToolCallID: call.ID,
-				ToolName:   call.Name,
-				Content:    result,
-			})
+		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks)
+		if err != nil {
+			return Outcome{}, err
 		}
+		messages = append(messages, toolMessages...)
 	}
+}
+
+type toolCallResult[Deps any] struct {
+	call     model.ToolCall
+	declared tool.Tool[Deps]
+	result   string
+	err      error
+}
+
+// runToolCalls validates every requested call, executes them either in
+// emission order or concurrent barrier-separated groups, then emits results
+// in emission order regardless of completion order.
+func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int) ([]model.Message, error) {
+	results := make([]toolCallResult[Deps], len(calls))
+	for i, call := range calls {
+		declared, ok := findTool(tools, call.Name)
+		if !ok {
+			return nil, &ToolError{ToolName: call.Name, CallID: call.ID, Err: fmt.Errorf("tool was not declared for this run")}
+		}
+		results[i] = toolCallResult[Deps]{call: call, declared: declared}
+	}
+	for start := 0; start < len(results); {
+		end := start + 1
+		if config.Parallel && !results[start].declared.Sequential {
+			for end < len(results) && !results[end].declared.Sequential {
+				end++
+			}
+		}
+		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1)
+		start = end
+	}
+	messages := make([]model.Message, 0, len(results))
+	for _, item := range results {
+		if item.err == nil {
+			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID, ToolName: item.call.Name, Content: item.result})
+			continue
+		}
+		if errors.Is(item.err, context.Canceled) || errors.Is(item.err, context.DeadlineExceeded) {
+			return nil, item.err
+		}
+		var rejection *model.ModelRetry
+		limit := config.DefaultRetries
+		if item.declared.MaxRetries != nil {
+			limit = *item.declared.MaxRetries
+		}
+		if feedbacks[item.declared.Name] < limit && errors.As(item.err, &rejection) {
+			feedbacks[item.declared.Name]++
+			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID, ToolName: item.call.Name,
+				Content: fmt.Sprintf("Your tool call was rejected: %v. Correct the arguments and call the tool again.", rejection.Err)})
+			continue
+		}
+		return nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: terminalToolError(feedbacks[item.declared.Name], item.err)}
+	}
+	return messages, nil
+}
+
+func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool) {
+	if !parallel {
+		for i := range group {
+			if err := ctx.Err(); err != nil {
+				group[i].err = err
+				return
+			}
+			group[i].result, group[i].err = executeTool(ctx, group[i].declared, deps, group[i].call.Args, timeout)
+		}
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range group {
+		wg.Add(1)
+		go func(item *toolCallResult[Deps]) {
+			defer wg.Done()
+			item.result, item.err = executeTool(ctx, item.declared, deps, item.call.Args, timeout)
+		}(&group[i])
+	}
+	wg.Wait()
 }
 
 func findTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], bool) {

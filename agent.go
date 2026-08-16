@@ -43,21 +43,22 @@ func (f DecodeFunc[Output]) Decode(ctx context.Context, response model.Response)
 // Agent combines a model, instructions, tools, and a typed output boundary.
 // Deps is the dependency value tools receive on every run.
 type Agent[Deps any, Output any] struct {
-	model            model.Model
-	decoder          OutputDecoder[Output]
-	instructions     string
-	instructionsFunc func(ctx context.Context, runCtx RunContext[Deps]) string
-	tools            []tool.Tool[Deps]
-	maxIterations    int
-	maxAttempts      int
-	retryBackoff     func(attempt int) time.Duration
-	outputRetries    int
-	toolRetries      int
-	toolTimeout      time.Duration
-	outputSchema     json.RawMessage
-	outputToolName   string
-	outputToolSpec   model.ToolSpec
-	usageLimit       UsageLimit
+	model             model.Model
+	decoder           OutputDecoder[Output]
+	instructions      string
+	instructionsFunc  func(ctx context.Context, runCtx RunContext[Deps]) string
+	tools             []tool.Tool[Deps]
+	maxIterations     int
+	maxAttempts       int
+	retryBackoff      func(attempt int) time.Duration
+	outputRetries     int
+	toolRetries       int
+	toolTimeout       time.Duration
+	parallelToolCalls bool
+	outputSchema      json.RawMessage
+	outputToolName    string
+	outputToolSpec    model.ToolSpec
+	usageLimit        UsageLimit
 }
 
 // Option configures an Agent during construction.
@@ -192,6 +193,17 @@ func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 func WithToolTimeout[Deps any, Output any](timeout time.Duration) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.toolTimeout = timeout
+	}
+}
+
+// WithParallelToolCalls lets independent calls returned in one model response
+// run concurrently. Result messages remain in model emission order. A tool
+// marked Sequential is a barrier: earlier calls finish, it runs alone, then
+// later calls begin. The default is false for compatibility and predictable
+// side effects.
+func WithParallelToolCalls[Deps any, Output any]() Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.parallelToolCalls = true
 	}
 }
 
@@ -410,10 +422,10 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout}, a.outputToolName, onDelta)
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, onDelta)
 		} else {
 			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout}, a.outputToolName)
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName)
 		}
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)

@@ -52,6 +52,8 @@ result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "A
 
 - `tool.New(tool.Tool[Deps]) (Tool[Deps], error)` and `tool.MustNew` — reject missing names, invalid schema JSON, nil Exec, and duplicate names at registration.
 - `golem.WithTools[Deps, Output](tools ...tool.Tool[Deps])`
+- `golem.WithParallelToolCalls[Deps, Output]()` enables concurrent calls in
+  one model response; `tool.Tool.Sequential` makes one tool a barrier.
 - `tool.Tool[Deps]{Name, Description, Schema, Exec}`
 
 ## Gotchas
