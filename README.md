@@ -6,7 +6,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-The project is at the foundation stage. The public API is intentionally small while the core execution contract is established.
+v0.1.0 — the core execution contract is established: typed agents, evidence-preserving runs, self-correction, retries, streaming, structured output, and two provider adapters. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 
