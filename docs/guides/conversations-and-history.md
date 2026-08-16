@@ -25,6 +25,26 @@ runtime state through a per-run function.
 and shapes only gain fields, never rename or drop them. Storage stays the
 application's job — there is no session object.
 
+### History repair
+
+Providers reject a conversation with broken call/result pairing: a tool
+call without a result, or a result without its call. A run that crashed or
+was cancelled partway — or hand-built history — can leave exactly that.
+`RunWithHistory` and `RunStreamWithHistory` repair history before each
+request:
+
+- A tool call with no result receives a synthesized, neutral result
+  ("interrupted before execution; no result was produced"), placed right
+  after the assistant message that requested it. It states the absence of
+  an outcome, not a tool failure, so the model can re-request the call.
+- A result whose call is absent — including a result placed before its
+  call — is dropped; no provider accepts it.
+
+Repair is deterministic and idempotent: synthesized results carry no
+timestamps, so repairing already-repaired history leaves it unchanged and
+repeated resumes stay prompt-cache friendly. Repaired messages become part
+of the run's canonical `result.Messages`.
+
 ## Example
 
 Run `examples/conversation` for an interactive chat loop:
@@ -58,4 +78,7 @@ golem.WithInstructionsFunc[MyDeps, string](
   separated by a blank line; an empty result contributes nothing.
 - Never reshape serialized messages yourself; rely on the additive
   contract (`json.Marshal`/`json.Unmarshal` round-trips).
+- Repair pairs calls and results by call ID; calls without an ID cannot
+  be paired and pass through unrepaired. Duplicate results for one call
+  keep the first and drop the rest.
 - Decisions live in `docs/adr/0005-message-history.md`.

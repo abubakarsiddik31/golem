@@ -278,9 +278,15 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 // RunWithHistory continues a conversation. history — typically the
 // Result.Messages of a previous run — is sent before a fresh user prompt,
 // and the result carries the full reconstructed conversation so runs
-// chain. The agent's current instructions govern the request: any
-// system messages in history are replaced by them, so guidance is
-// re-evaluated per run and never duplicated.
+// chain. The agent's current instructions govern the request: any system
+// messages in history are replaced by them, so guidance is re-evaluated
+// per run and never duplicated.
+//
+// History is repaired before the request is built so it keeps the
+// call/result pairing providers require: a tool call that never received a
+// result — from a crashed or cancelled run, or hand-built history — gets a
+// synthesized result stating no outcome was produced, and a result whose
+// call is absent is dropped.
 func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
 	return a.execute(ctx, runCtx, history, prompt, nil)
 }
@@ -394,24 +400,92 @@ func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx Ru
 }
 
 // requestMessages builds the ordered request conversation: the run's
-// resolved instructions when set, the supplied history with system messages
+// resolved instructions when set, the repaired history with system messages
 // removed (instructions govern every run), and the new user
 // prompt.
 func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string) []model.Message {
-	messages := make([]model.Message, 0, len(history)+2)
+	repaired := repairHistory(history)
+	messages := make([]model.Message, 0, len(repaired)+2)
 	if instructions != "" {
 		messages = append(messages, model.Message{
 			Role:    model.RoleSystem,
 			Content: instructions,
 		})
 	}
-	for _, message := range history {
+	for _, message := range repaired {
 		if message.Role == model.RoleSystem {
 			continue
 		}
 		messages = append(messages, message)
 	}
 	return append(messages, model.Message{Role: model.RoleUser, Content: prompt})
+}
+
+// interruptedToolResult is the neutral result synthesized for a tool call
+// whose run ended before the call executed. It states the absence of an
+// outcome — not a tool failure — so the model neither assumes a result nor
+// treats the call as a provider error.
+const interruptedToolResult = "Tool call was interrupted before execution; no result was produced. Call the tool again if you need its result."
+
+// repairHistory restores the call/result pairing providers require: every
+// tool call is answered by a tool result, and every tool result references a
+// call in the history. A run that ended before a requested tool executed — a
+// crash, a cancelled stream, or hand-built history — leaves calls without
+// results; each receives a synthesized result, placed directly after the
+// assistant message that requested it, in call order. Results whose call is
+// absent, including results that precede their call, are dropped: no
+// provider accepts them.
+//
+// Repair only adds or removes pairing evidence; it never rewrites messages.
+// It is deterministic and idempotent: synthesized results carry no
+// wall-clock data, so repairing an already-repaired history returns it
+// unchanged, and repeated resumes stay prompt-cache friendly. Pairing is by
+// call ID; calls without an ID cannot be paired and are left as-is.
+func repairHistory(history []model.Message) []model.Message {
+	pending := make(map[string]struct{}, len(history))
+	repaired := make([]model.Message, 0, len(history))
+	dropped := false
+	for _, message := range history {
+		switch message.Role {
+		case model.RoleAssistant:
+			repaired = append(repaired, message)
+			for _, call := range message.ToolCalls {
+				if call.ID != "" {
+					pending[call.ID] = struct{}{}
+				}
+			}
+		case model.RoleTool:
+			if _, requested := pending[message.ToolCallID]; requested {
+				delete(pending, message.ToolCallID)
+				repaired = append(repaired, message)
+			} else {
+				dropped = true
+			}
+		default:
+			repaired = append(repaired, message)
+		}
+	}
+	if len(pending) == 0 && !dropped {
+		return history
+	}
+	if len(pending) == 0 {
+		return repaired
+	}
+	withResults := make([]model.Message, 0, len(repaired)+len(pending))
+	for _, message := range repaired {
+		withResults = append(withResults, message)
+		for _, call := range message.ToolCalls {
+			if _, unanswered := pending[call.ID]; unanswered {
+				withResults = append(withResults, model.Message{
+					Role:       model.RoleTool,
+					ToolCallID: call.ID,
+					ToolName:   call.Name,
+					Content:    interruptedToolResult,
+				})
+			}
+		}
+	}
+	return withResults
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed
