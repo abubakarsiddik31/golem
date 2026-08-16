@@ -66,8 +66,27 @@ bedrockClient, _ := bedrock.New(bedrock.Config{
 
 ## Gotchas
 
-- A configurable `BaseURL` serves Groq, OpenRouter, DeepSeek, Together,
-  Ollama, and vLLM with the OpenAI adapter.
+- Many providers speak the OpenAI chat-completions wire format; the
+  OpenAI adapter serves them all through `BaseURL`:
+
+  | Provider | BaseURL |
+  | --- | --- |
+  | Groq | `https://api.groq.com/openai/v1` |
+  | OpenRouter | `https://openrouter.ai/api/v1` |
+  | DeepSeek | `https://api.deepseek.com/v1` |
+  | Mistral | `https://api.mistral.ai/v1` |
+  | xAI (Grok) | `https://api.x.ai/v1` |
+  | Perplexity | `https://api.perplexity.ai` |
+  | Cerebras | `https://api.cerebras.ai/v1` |
+  | Fireworks | `https://api.fireworks.ai/inference/v1` |
+  | Together | `https://api.together.xyz/v1` |
+  | Cohere (compatibility) | `https://api.cohere.com/compatibility/v1` |
+  | Ollama (local) | `http://localhost:11434/v1` |
+  | vLLM (local) | `http://localhost:8000/v1` |
+
+  Compatibility is the providers' own promise — verify structured output
+  and streaming support against their docs; some gate `json_schema`
+  responses or `stream_options` behind specific model versions.
 - Anthropic requires a positive `max_tokens`; zero selects
   `anthropic.DefaultMaxTokens` (1024).
 - `anthropic` merges consecutive user-side messages (tool results plus a
