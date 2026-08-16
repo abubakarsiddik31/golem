@@ -6,7 +6,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-v0.1.0 — the core execution contract is established: typed agents, evidence-preserving runs, self-correction, retries, streaming, structured output, and two provider adapters. The public API remains intentionally small; additive changes only until v1.
+v0.1.1 — the core execution contract is established: typed agents, evidence-preserving runs, self-correction, retries, streaming, structured output, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 

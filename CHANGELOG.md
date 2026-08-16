@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.1 — 2026-08-16
+
+Provider coverage and documentation infrastructure.
+
+- **Google Gemini adapter.** Native `generateContent` wire format with
+  `systemInstruction`, function calling (adapter-generated stable call
+  IDs — the wire carries none), `responseSchema` structured output, and
+  SSE streaming.
+- **Azure OpenAI adapter.** OpenAI chat-completions wire over deployment
+  URLs with the `api-key` header and an explicit, required `api-version`;
+  strict `response_format` structured output and SSE streaming included.
+- **AWS Bedrock adapter.** Converse API with AWS Signature Version 4
+  request signing implemented in the standard library, pinned in tests to
+  AWS's documented signing example. Structured output maps to the
+  Converse `outputConfig` json_schema format. Streaming is not
+  implemented yet (AWS binary event-stream framing).
+- **Documentation.** Feature guides under `docs/guides/` are the source
+  of truth (written from a shared template), runnable examples under
+  `examples/` cover each capability, the README indexes both, and the
+  contributor rules require keeping all three in sync. The providers
+  guide lists twelve OpenAI-compatible services reachable through the
+  openai adapter's `BaseURL`.
+
 ## v0.1.0 — 2026-08-16
 
 Initial tagged release: the core agent execution contract, two provider
