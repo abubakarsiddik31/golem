@@ -171,6 +171,18 @@ agent, err := golem.New[struct{}, string](client, decoder)
 
 Provider failures return a typed `openai.APIError` and network-level failures a `TransportError`. Both expose their retryability through `model.RetryableError` (408, 429, 5xx, transport faults — never context cancellation) for the runner's retry policy; the adapter never retries on its own. Environment variables are read by the application, never implicitly by Golem.
 
+The Anthropic adapter targets the Messages API the same way: explicit configuration, stdlib-only transport, and the same typed error classification (`anthropic.APIError`, `TransportError`, `DecodeError`). System guidance becomes the top-level `system` field, tool results travel as merged `tool_result` blocks, and `MaxTokens` defaults to 1024 because the API requires a positive bound.
+
+```go
+client, err := anthropic.New(anthropic.Config{
+    APIKey: os.Getenv("ANTHROPIC_API_KEY"),
+    Model:  "claude-sonnet-4-5",
+})
+agent, err := golem.New[struct{}, string](client, decoder)
+```
+
+The Messages API has no response-format field, so the adapter currently ignores `WithOutputSchema`: structured output stays decoder-validated with correction rounds.
+
 ## Planned package shape
 
 ```text

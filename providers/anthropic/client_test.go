@@ -1,0 +1,291 @@
+package anthropic_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/providers/anthropic"
+)
+
+// recordedServer replies with a scripted status and body and records the
+// body and headers of every request it receives.
+type recordedServer struct {
+	server *httptest.Server
+
+	mu       sync.Mutex
+	bodies   []string
+	apiKeys  []string
+	versions []string
+}
+
+func newRecordedServer(status int, body string) *recordedServer {
+	recorder := &recordedServer{}
+	recorder.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		recorder.mu.Lock()
+		recorder.bodies = append(recorder.bodies, string(payload))
+		recorder.apiKeys = append(recorder.apiKeys, r.Header.Get("x-api-key"))
+		recorder.versions = append(recorder.versions, r.Header.Get("anthropic-version"))
+		recorder.mu.Unlock()
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	return recorder
+}
+
+func (r *recordedServer) lastBody(t *testing.T) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.bodies) == 0 {
+		t.Fatal("recordedServer received no requests")
+	}
+	return r.bodies[len(r.bodies)-1]
+}
+
+func (r *recordedServer) lastHeader(t *testing.T, name string) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	values := map[string][]string{"x-api-key": r.apiKeys, "anthropic-version": r.versions}
+	if len(values[name]) == 0 {
+		t.Fatalf("recordedServer received no requests")
+	}
+	return values[name][len(values[name])-1]
+}
+
+func newClient(t *testing.T, baseURL string) *anthropic.Client {
+	t.Helper()
+	client, err := anthropic.New(anthropic.Config{
+		APIKey:  "test-key",
+		BaseURL: baseURL,
+		Model:   "claude-sonnet-4-5",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	return client
+}
+
+func TestNewRejectsMissingRequiredConfiguration(t *testing.T) {
+	t.Parallel()
+
+	if _, err := anthropic.New(anthropic.Config{Model: "claude-sonnet-4-5"}); err == nil {
+		t.Fatal("New() error = nil, want missing API key rejection")
+	}
+	if _, err := anthropic.New(anthropic.Config{APIKey: "k"}); err == nil {
+		t.Fatal("New() error = nil, want missing model rejection")
+	}
+	if _, err := anthropic.New(anthropic.Config{APIKey: "k", Model: "claude-sonnet-4-5", MaxTokens: -1}); err == nil {
+		t.Fatal("New() error = nil, want negative max tokens rejection")
+	}
+}
+
+func TestGenerateTranslatesRequestAndResponse(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"content": [
+			{"type": "text", "text": "Let me roll."},
+			{"type": "tool_use", "id": "toolu-1", "name": "roll", "input": {"n": 2}},
+			{"type": "tool_use", "id": "toolu-2", "name": "roll", "input": {}}
+		],
+		"usage": {"input_tokens": 12, "output_tokens": 3}
+	}`)
+	defer recorder.server.Close()
+
+	client := newClient(t, recorder.server.URL)
+	_, err := client.Generate(context.Background(), model.Request{
+		Messages: []model.Message{
+			{Role: model.RoleSystem, Content: "Be concise."},
+			{Role: model.RoleUser, Content: "Roll a die."},
+			{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+				{ID: "toolu-1", Name: "roll", Args: json.RawMessage(`{"n":1}`)},
+				{ID: "toolu-2", Name: "roll", Args: json.RawMessage(`{}`)},
+			}},
+			{Role: model.RoleTool, ToolCallID: "toolu-1", ToolName: "roll", Content: "rolled 1"},
+			{Role: model.RoleTool, ToolCallID: "toolu-2", ToolName: "roll", Content: "rolled 1"},
+			{Role: model.RoleUser, Content: "Now roll two."},
+		},
+		ToolSpecs: []model.ToolSpec{{
+			Name:        "roll",
+			Description: "Roll a die.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	if got := recorder.lastHeader(t, "x-api-key"); got != "test-key" {
+		t.Fatalf("x-api-key = %q, want test-key", got)
+	}
+	if got := recorder.lastHeader(t, "anthropic-version"); got != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want 2023-06-01", got)
+	}
+
+	var sent struct {
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		System    string `json:"system"`
+		Messages  []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type      string          `json:"type"`
+				Text      string          `json:"text,omitempty"`
+				ID        string          `json:"id,omitempty"`
+				Name      string          `json:"name,omitempty"`
+				Input     json.RawMessage `json:"input,omitempty"`
+				ToolUseID string          `json:"tool_use_id,omitempty"`
+				Content   string          `json:"content,omitempty"`
+			} `json:"content"`
+		} `json:"messages"`
+		Tools []struct {
+			Name        string          `json:"name"`
+			InputSchema json.RawMessage `json:"input_schema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.Model != "claude-sonnet-4-5" {
+		t.Fatalf("wire model = %q", sent.Model)
+	}
+	if sent.MaxTokens != anthropic.DefaultMaxTokens {
+		t.Fatalf("wire max_tokens = %d, want the default %d", sent.MaxTokens, anthropic.DefaultMaxTokens)
+	}
+	if sent.System != "Be concise." {
+		t.Fatalf("wire system = %q, want the instructions as top-level system guidance", sent.System)
+	}
+	if len(sent.Tools) != 1 || sent.Tools[0].Name != "roll" ||
+		string(sent.Tools[0].InputSchema) != `{"type":"object","properties":{"n":{"type":"integer"}}}` {
+		t.Fatalf("wire tools = %#v", sent.Tools)
+	}
+
+	// System guidance leaves the turn list; the two tool results and the
+	// following user prompt merge into one user turn; the assistant's
+	// calls become tool_use blocks.
+	if len(sent.Messages) != 3 {
+		t.Fatalf("wire turns = %d, want 3 (user, assistant, user): %#v", len(sent.Messages), sent.Messages)
+	}
+	if sent.Messages[0].Role != "user" || len(sent.Messages[0].Content) != 1 ||
+		sent.Messages[0].Content[0].Type != "text" || sent.Messages[0].Content[0].Text != "Roll a die." {
+		t.Fatalf("first turn = %#v", sent.Messages[0])
+	}
+	second := sent.Messages[1]
+	if second.Role != "assistant" || len(second.Content) != 2 ||
+		second.Content[0].Type != "tool_use" || second.Content[0].ID != "toolu-1" ||
+		string(second.Content[0].Input) != `{"n":1}` ||
+		second.Content[1].Type != "tool_use" || second.Content[1].ID != "toolu-2" ||
+		string(second.Content[1].Input) != "{}" {
+		t.Fatalf("assistant turn = %#v", second)
+	}
+	third := sent.Messages[2]
+	if third.Role != "user" || len(third.Content) != 3 ||
+		third.Content[0].Type != "tool_result" || third.Content[0].ToolUseID != "toolu-1" || third.Content[0].Content != "rolled 1" ||
+		third.Content[1].Type != "tool_result" || third.Content[1].ToolUseID != "toolu-2" ||
+		third.Content[2].Type != "text" || third.Content[2].Text != "Now roll two." {
+		t.Fatalf("merged user turn = %#v", third)
+	}
+}
+
+func TestGenerateNormalizesResponse(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"content": [
+			{"type": "text", "text": "Rolled"},
+			{"type": "text", "text": "a 2."},
+			{"type": "thinking", "thinking": "internal reasoning"}
+		],
+		"usage": {"input_tokens": 12, "output_tokens": 3}
+	}`)
+	defer recorder.server.Close()
+
+	response, err := newClient(t, recorder.server.URL).Generate(context.Background(), model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "roll"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Message.Role != model.RoleAssistant {
+		t.Fatalf("role = %q, want assistant", response.Message.Role)
+	}
+	if response.Message.Content != "Rolled\na 2." {
+		t.Fatalf("content = %q, want text blocks joined on newlines", response.Message.Content)
+	}
+	if response.Usage != (model.Usage{InputTokens: 12, OutputTokens: 3}) {
+		t.Fatalf("usage = %#v", response.Usage)
+	}
+}
+
+func TestGenerateClassifiesProviderErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("retryable on 529", func(t *testing.T) {
+		t.Parallel()
+		recorder := newRecordedServer(529, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+		defer recorder.server.Close()
+
+		_, err := newClient(t, recorder.server.URL).Generate(context.Background(), model.Request{
+			Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}},
+		})
+		var apiError *anthropic.APIError
+		if !errors.As(err, &apiError) {
+			t.Fatalf("Generate() error = %v, want APIError", err)
+		}
+		if apiError.Code != "overloaded_error" || apiError.Message != "Overloaded" {
+			t.Fatalf("APIError = {%q %q}", apiError.Code, apiError.Message)
+		}
+		if !model.IsRetryable(err) {
+			t.Fatal("model.IsRetryable(err) = false, want true for 5xx")
+		}
+	})
+
+	t.Run("not retryable on 400", func(t *testing.T) {
+		t.Parallel()
+		recorder := newRecordedServer(400, `{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens is required"}}`)
+		defer recorder.server.Close()
+
+		_, err := newClient(t, recorder.server.URL).Generate(context.Background(), model.Request{
+			Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}},
+		})
+		var apiError *anthropic.APIError
+		if !errors.As(err, &apiError) {
+			t.Fatalf("Generate() error = %v, want APIError", err)
+		}
+		if model.IsRetryable(err) {
+			t.Fatal("model.IsRetryable(err) = true, want false for 400")
+		}
+	})
+}
+
+func TestGeneratePropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := newRecordedServer(http.StatusOK, `{"content":[{"type":"text","text":"late"}]}`)
+	defer recorder.server.Close()
+
+	_, err := newClient(t, recorder.server.URL).Generate(ctx, model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Generate() error = %v, want context.Canceled", err)
+	}
+	var transportError *anthropic.TransportError
+	if !errors.As(err, &transportError) {
+		t.Fatalf("Generate() error = %v, want TransportError", err)
+	}
+	if model.IsRetryable(err) {
+		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
+	}
+}
