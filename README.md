@@ -121,7 +121,7 @@ agent, err := golem.New[struct{}, City](client, decoder,
 )
 ```
 
-An empty schema disables the behavior; a schema that is not valid JSON fails construction.
+An empty schema disables the behavior; a schema that is not valid JSON fails construction. The OpenAI-compatible adapter sends the schema as a strict `response_format` (`json_schema`, name `output`) — OpenAI requires strict-conformant schemas (`additionalProperties: false`, every property listed in `required`), and a non-conformant schema surfaces as a provider `APIError` rather than being silently relaxed.
 
 `DecodeJSON` pairs naturally with a schema: it returns a decoder that unmarshals the response content as JSON into the declared type, rejecting malformed content with `ModelRetry` so an enabled correction budget asks the model to fix the response instead of failing.
 

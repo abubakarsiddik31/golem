@@ -19,10 +19,27 @@ type chatRequest struct {
 	// asks the provider to report usage in the final chunk.
 	Stream        bool               `json:"stream,omitempty"`
 	StreamOptions *chatStreamOptions `json:"stream_options,omitempty"`
+	// ResponseFormat requests a response shape; set for structured output.
+	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 }
 
 type chatStreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
+}
+
+// chatResponseFormat requests provider-enforced output structure. The
+// json_schema form requires a strict-conformant schema from the caller;
+// the provider rejects non-conformant schemas with an API error instead
+// of the adapter silently relaxing them.
+type chatResponseFormat struct {
+	Type       string          `json:"type"`
+	JSONSchema *chatJSONSchema `json:"json_schema,omitempty"`
+}
+
+type chatJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type chatMessage struct {

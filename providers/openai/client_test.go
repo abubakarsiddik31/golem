@@ -370,3 +370,89 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
 	}
 }
+
+func TestGenerateMapsOutputSchemaToResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"choices": [{"message": {"role": "assistant", "content": "{\"city\":\"Lagos\"}"}}]
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}`)
+	if _, err := client.Generate(context.Background(), model.Request{
+		Messages:     []model.Message{{Role: model.RoleUser, Content: "name a city"}},
+		OutputSchema: schema,
+	}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		ResponseFormat *struct {
+			Type       string `json:"type"`
+			JSONSchema struct {
+				Name   string          `json:"name"`
+				Strict bool            `json:"strict"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"json_schema"`
+		} `json:"response_format"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.ResponseFormat == nil {
+		t.Fatal("response_format = nil, want json_schema")
+	}
+	if sent.ResponseFormat.Type != "json_schema" {
+		t.Fatalf("response_format.type = %q, want json_schema", sent.ResponseFormat.Type)
+	}
+	if name, strict := sent.ResponseFormat.JSONSchema.Name, sent.ResponseFormat.JSONSchema.Strict; name != "output" || !strict {
+		t.Fatalf("json_schema = {name: %q, strict: %v}, want {output, true}", name, strict)
+	}
+	if string(sent.ResponseFormat.JSONSchema.Schema) != string(schema) {
+		t.Fatalf("json_schema.schema = %s, want the request schema", sent.ResponseFormat.JSONSchema.Schema)
+	}
+
+	// Without a schema the field stays off the wire entirely.
+	if _, err := client.Generate(context.Background(), userPrompt()); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	sent.ResponseFormat = nil
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.ResponseFormat != nil {
+		t.Fatalf("response_format = %#v, want nil without an output schema", sent.ResponseFormat)
+	}
+}
+
+func TestGenerateStreamCarriesResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		"data: {\"choices\":[{\"delta\":{\"content\":\"{}\"}}]}\n\n",
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n",
+		"data: [DONE]\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	if _, err := client.GenerateStream(context.Background(), model.Request{
+		Messages:     []model.Message{{Role: model.RoleUser, Content: "name a city"}},
+		OutputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(model.Delta) error { return nil }); err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	var sent struct {
+		ResponseFormat *struct {
+			Type string `json:"type"`
+		} `json:"response_format"`
+	}
+	if err := json.Unmarshal([]byte(server.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if sent.ResponseFormat == nil || sent.ResponseFormat.Type != "json_schema" {
+		t.Fatalf("response_format = %#v, want json_schema", sent.ResponseFormat)
+	}
+}

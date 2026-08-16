@@ -100,18 +100,27 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 
 // newChatHTTPRequest builds the POST request for the chat-completions
 // endpoint. stream selects streaming mode, which also requests usage in
-// the final chunk.
+// the final chunk. A request carrying an output schema maps to a strict
+// json_schema response format.
 func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
 	var streamOptions *chatStreamOptions
 	if stream {
 		streamOptions = &chatStreamOptions{IncludeUsage: true}
 	}
+	var responseFormat *chatResponseFormat
+	if len(request.OutputSchema) > 0 {
+		responseFormat = &chatResponseFormat{
+			Type:       "json_schema",
+			JSONSchema: &chatJSONSchema{Name: "output", Strict: true, Schema: request.OutputSchema},
+		}
+	}
 	body, err := json.Marshal(chatRequest{
-		Model:         c.cfg.Model,
-		Messages:      toWireMessages(request.Messages),
-		Tools:         toWireTools(request.ToolSpecs),
-		Stream:        stream,
-		StreamOptions: streamOptions,
+		Model:          c.cfg.Model,
+		Messages:       toWireMessages(request.Messages),
+		Tools:          toWireTools(request.ToolSpecs),
+		Stream:         stream,
+		StreamOptions:  streamOptions,
+		ResponseFormat: responseFormat,
 	})
 	if err != nil {
 		return nil, &DecodeError{Stage: "encode request", Err: err}
