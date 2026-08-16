@@ -12,9 +12,12 @@ integration tests that skip without environment keys.
 
 ## How it works
 
-`model.Model` is one method; a fake is a struct with scripted responses
-that records the requests it receives. Write the fake at the port your
-code owns, drive the agent, and assert three things:
+`testmodel.Scripted` plays queued `model.Response` values or errors and
+records the normalized requests an agent sends. Use it when a fixed
+conversation is enough; use `testmodel.Func` when the response should
+inspect the request, and `testmodel.StreamFunc` for streaming contracts.
+All three are provider-free and deterministic. Drive the agent, then assert
+three things:
 
 1. **The exact normalized request** — ordered messages, tool specs,
    output schema, and that the caller's `context.Context` reached the
@@ -42,7 +45,12 @@ packages, and the opt-in `TestLive*` integration tests.
 
 ## API surface
 
-- `model.Model` — implement `Generate(ctx, request) (Response, error)`; add `GenerateStream` only when testing streaming.
+- `testmodel.New()` — queues outcomes with `Respond` and `Fail`, and returns a
+  scripted `model.StreamingModel`; `Requests` returns a snapshot of what it
+  received.
+- `testmodel.Func` and `testmodel.StreamFunc` — function adapters for tests
+  whose outcome depends on the normalized request or context.
+- `testmodel.Emit` — safely forwards a streaming delta from a `StreamFunc`.
 - `golem.DecodeFunc[Output]` — inline decoders for assertions.
 
 ## Gotchas

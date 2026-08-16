@@ -11,28 +11,9 @@ import (
 
 	"github.com/abubakarsiddik31/golem"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/testmodel"
 	"github.com/abubakarsiddik31/golem/tool"
 )
-
-// scriptedModel requests the tool once, then answers from the tool result.
-type scriptedModel struct{ calls int }
-
-func (m *scriptedModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
-	for _, message := range request.Messages {
-		if message.Role == model.RoleTool {
-			return model.Response{
-				Message: model.Message{Role: model.RoleAssistant,
-					Content: "the answer came from the tool: " + message.Content},
-			}, nil
-		}
-	}
-	m.calls++
-	return model.Response{
-		Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
-			{ID: "call-1", Name: "get_player_name", Args: json.RawMessage(`{}`)},
-		}},
-	}, nil
-}
 
 func main() {
 	getPlayerName := tool.MustNew(tool.Tool[string]{
@@ -44,7 +25,13 @@ func main() {
 		},
 	})
 
-	agent, err := golem.New[string, string](&scriptedModel{},
+	client := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+			{ID: "call-1", Name: "get_player_name", Args: json.RawMessage(`{}`)},
+		}}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Anne wins"}},
+	)
+	agent, err := golem.New[string, string](client,
 		golem.DecodeFunc[string](func(_ context.Context, response model.Response) (string, error) {
 			return response.Message.Content, nil
 		}),
@@ -64,5 +51,8 @@ func main() {
 	fmt.Println(result.Output)
 	for i, message := range result.Messages {
 		fmt.Printf("message %d: role=%s content=%q\n", i, message.Role, message.Content)
+	}
+	for i, request := range client.Requests() {
+		fmt.Printf("request %d: messages=%d tools=%d\n", i, len(request.Messages), len(request.ToolSpecs))
 	}
 }
