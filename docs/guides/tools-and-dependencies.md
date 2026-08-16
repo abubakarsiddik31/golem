@@ -54,6 +54,8 @@ result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "A
 - `golem.WithTools[Deps, Output](tools ...tool.Tool[Deps])`
 - `golem.WithParallelToolCalls[Deps, Output]()` enables concurrent calls in
   one model response; `tool.Tool.Sequential` makes one tool a barrier.
+- `golem.WithToolChoice[Deps, Output](name)` advertises only the selected
+  registered tool for runs where the application must constrain availability.
 - `tool.Tool[Deps]{Name, Description, Schema, Exec}`
 
 ## Gotchas

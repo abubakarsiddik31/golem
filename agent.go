@@ -55,6 +55,7 @@ type Agent[Deps any, Output any] struct {
 	toolRetries       int
 	toolTimeout       time.Duration
 	parallelToolCalls bool
+	toolChoice        string
 	outputSchema      json.RawMessage
 	outputToolName    string
 	outputToolSpec    model.ToolSpec
@@ -207,6 +208,17 @@ func WithParallelToolCalls[Deps any, Output any]() Option[Deps, Output] {
 	}
 }
 
+// WithToolChoice restricts this agent's advertised tools to name. It is a
+// provider-neutral availability boundary: the selected tool is the only
+// function sent to the model, so models that do not support a provider-native
+// forced-choice flag still cannot request another registered tool. An empty or
+// unregistered name fails New.
+func WithToolChoice[Deps any, Output any](name string) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolChoice = name
+	}
+}
+
 // UsageLimit bounds a run's provider-recorded token consumption. The zero
 // value disables the limit; each dimension is independent, and zero within
 // a set limit means that dimension is unbounded. Providers that do not
@@ -285,6 +297,11 @@ func New[Deps any, Output any](
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
+	}
+	if agent.toolChoice != "" {
+		if _, ok := findDeclaredTool(agent.tools, agent.toolChoice); !ok {
+			return nil, fmt.Errorf("golem: chosen tool %q is not registered", agent.toolChoice)
+		}
 	}
 	if agent.outputToolName != "" {
 		for _, t := range agent.tools {
@@ -399,6 +416,9 @@ func (a *Agent[Deps, Output]) RunStreamWithHistory(ctx context.Context, runCtx R
 func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
+		if a.toolChoice != "" && t.Name != a.toolChoice {
+			continue
+		}
 		specs = append(specs, model.ToolSpec{
 			Name:        t.Name,
 			Description: t.Description,
@@ -466,6 +486,15 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 			Content: fmt.Sprintf("Your previous response was rejected: %v. Correct it and respond again.", rejection.Err),
 		})
 	}
+}
+
+func findDeclaredTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], bool) {
+	for _, t := range tools {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return tool.Tool[Deps]{}, false
 }
 
 // recordedToolResult closes a successfully decoded output-tool call in the
