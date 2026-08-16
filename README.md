@@ -123,6 +123,14 @@ agent, err := golem.New[struct{}, City](client, decoder,
 
 An empty schema disables the behavior; a schema that is not valid JSON fails construction.
 
+`DecodeJSON` pairs naturally with a schema: it returns a decoder that unmarshals the response content as JSON into the declared type, rejecting malformed content with `ModelRetry` so an enabled correction budget asks the model to fix the response instead of failing.
+
+```go
+agent, err := golem.New[struct{}, City](client, golem.DecodeJSON[City](),
+    golem.WithOutputSchema[struct{}, City](citySchema),
+)
+```
+
 ## Streaming
 
 Models that can stream advertise it through the optional `model.StreamingModel` capability — `Model` itself is unchanged, so test fakes and simple adapters are unaffected. The OpenAI-compatible adapter implements it over SSE:
