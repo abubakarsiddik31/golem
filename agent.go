@@ -53,6 +53,7 @@ type Agent[Deps any, Output any] struct {
 	retryBackoff     func(attempt int) time.Duration
 	outputRetries    int
 	toolRetries      int
+	toolTimeout      time.Duration
 	outputSchema     json.RawMessage
 	outputToolName   string
 	outputToolSpec   model.ToolSpec
@@ -184,6 +185,16 @@ func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 	}
 }
 
+// WithToolTimeout sets the default deadline for one tool execution. A tool's
+// non-zero Timeout takes precedence. The zero value disables the default;
+// negative values fail New. Tools must honor their context so work ends when
+// the deadline expires.
+func WithToolTimeout[Deps any, Output any](timeout time.Duration) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolTimeout = timeout
+	}
+}
+
 // UsageLimit bounds a run's provider-recorded token consumption. The zero
 // value disables the limit; each dimension is independent, and zero within
 // a set limit means that dimension is unbounded. Providers that do not
@@ -243,6 +254,9 @@ func New[Deps any, Output any](
 	if agent.toolRetries < 0 {
 		return nil, fmt.Errorf("golem: tool retries must not be negative, got %d", agent.toolRetries)
 	}
+	if agent.toolTimeout < 0 {
+		return nil, fmt.Errorf("golem: tool timeout must not be negative, got %s", agent.toolTimeout)
+	}
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
 	}
@@ -278,6 +292,12 @@ func validateTools[Deps any](tools []tool.Tool[Deps]) error {
 		}
 		if t.Exec == nil {
 			return fmt.Errorf("golem: tool %q: exec function is required", t.Name)
+		}
+		if t.MaxRetries != nil && *t.MaxRetries < 0 {
+			return fmt.Errorf("golem: tool %q: max retries must not be negative, got %d", t.Name, *t.MaxRetries)
+		}
+		if t.Timeout < 0 {
+			return fmt.Errorf("golem: tool %q: timeout must not be negative, got %s", t.Name, t.Timeout)
 		}
 		if _, duplicate := seen[t.Name]; duplicate {
 			return fmt.Errorf("golem: tool %q: duplicate name", t.Name)
@@ -389,11 +409,11 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		var outcome runner.Outcome
 		var err error
 		if onDelta != nil {
-			outcome, err = runner.ExecuteStream(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, a.toolRetries, a.outputToolName, onDelta)
+			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout}, a.outputToolName, onDelta)
 		} else {
-			outcome, err = runner.Execute(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, a.toolRetries, a.outputToolName)
+			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout}, a.outputToolName)
 		}
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)

@@ -23,8 +23,9 @@ Two independent, opt-in budgets:
 - **Tools.** A tool rejects correctable arguments by returning an error
   wrapping `*model.ModelRetry`. The run delivers the rejection as that
   call's tool result so the model can correct its arguments and call
-  again — up to `WithToolRetries` rejections per run, bounded also by the
-  model-turn limit.
+  again — up to `WithToolRetries` rejections for that tool, bounded also by
+  the model-turn limit. `tool.Tool.MaxRetries` overrides that default for one
+  named tool; use `tool.RetryLimit(0)` to make a tool's failures terminal.
 
 Without a budget — or for errors that are not `ModelRetry` — the run
 fails at the `decode` or `tool` stage exactly as before, with the cause
@@ -49,12 +50,14 @@ if input.N <= 0 {
 
 - `golem.WithOutputRetries[Deps, Output](retries int)`
 - `golem.WithToolRetries[Deps, Output](retries int)`
+- `tool.Tool.MaxRetries` and `tool.RetryLimit(retries int)`
 - `model.ModelRetry{Err: error}` — the correction signal.
 
 ## Gotchas
 
 - Budgets are off by default; negative values fail construction.
-- The tool budget counts total rejections per run, not per tool.
+- Retry counters are independent per tool name; a per-tool limit overrides
+  the agent default.
 - Rejected exchanges stay in `result.Messages` — evidence grows with
   each round.
 - Decisions live in `docs/adr/0006-output-self-correction.md` and

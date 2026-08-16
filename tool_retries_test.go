@@ -137,3 +137,29 @@ func TestNewRejectsNegativeToolRetries(t *testing.T) {
 		t.Fatal("New() error = nil, want negative tool retries rejection")
 	}
 }
+
+func TestAgentRunUsesPerToolRetryLimit(t *testing.T) {
+	t.Parallel()
+
+	client := &queuedModel{responses: []model.Response{
+		rollCall("call-1", `{"n":0}`),
+		rollCall("call-2", `{"n":0}`),
+	}}
+	limit := 1
+	roll := rollTool(t)
+	roll.MaxRetries = &limit
+	agent, err := golem.New[struct{}, string](client, decoderOf(),
+		golem.WithTools[struct{}, string](roll),
+		golem.WithToolRetries[struct{}, string](5))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "roll")
+	if err == nil || !strings.Contains(err.Error(), "after 2 attempts") {
+		t.Fatalf("Run() error = %v, want the per-tool exhaustion", err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("model turns = %d, want 2", len(client.requests))
+	}
+}

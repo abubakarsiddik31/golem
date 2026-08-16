@@ -5,6 +5,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -58,6 +59,14 @@ type RetryConfig struct {
 	Backoff func(attempt int) time.Duration
 }
 
+// ToolConfig controls execution of declared tools. Zero values preserve the
+// original sequential behavior: no default timeout and no parallel calls.
+type ToolConfig struct {
+	DefaultRetries int
+	DefaultTimeout time.Duration
+	Parallel       bool
+}
+
 // Execute runs the sequential loop: call the model,
 // execute any requested tool calls in order, append the evidence, and
 // repeat until the model responds without tool calls or a limit or error
@@ -79,10 +88,26 @@ func Execute[Deps any](
 	toolRetries int,
 	outputTool string,
 ) (Outcome, error) {
+	return ExecuteWithToolConfig(ctx, m, tools, deps, req, maxIterations, retry,
+		ToolConfig{DefaultRetries: toolRetries}, outputTool)
+}
+
+// ExecuteWithToolConfig runs the loop with explicit tool policy.
+func ExecuteWithToolConfig[Deps any](
+	ctx context.Context,
+	m model.Model,
+	tools []tool.Tool[Deps],
+	deps Deps,
+	req model.Request,
+	maxIterations int,
+	retry RetryConfig,
+	toolConfig ToolConfig,
+	outputTool string,
+) (Outcome, error) {
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolRetries, outputTool,
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
 		func(ctx context.Context, request model.Request) (model.Response, error) {
 			return generate(ctx, m, request, retry)
 		})
@@ -109,11 +134,27 @@ func ExecuteStream[Deps any](
 	outputTool string,
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
+	return ExecuteStreamWithToolConfig(ctx, m, tools, deps, req, maxIterations,
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, onDelta)
+}
+
+// ExecuteStreamWithToolConfig runs streamed turns with explicit tool policy.
+func ExecuteStreamWithToolConfig[Deps any](
+	ctx context.Context,
+	m model.Model,
+	tools []tool.Tool[Deps],
+	deps Deps,
+	req model.Request,
+	maxIterations int,
+	toolConfig ToolConfig,
+	outputTool string,
+	onDelta func(model.Delta) error,
+) (Outcome, error) {
 	streamer, ok := m.(model.StreamingModel)
 	if !ok {
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolRetries, outputTool,
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
 		func(ctx context.Context, request model.Request) (model.Response, error) {
 			return streamer.GenerateStream(ctx, request, onDelta)
 		})
@@ -133,15 +174,18 @@ func execute[Deps any](
 	deps Deps,
 	req model.Request,
 	maxIterations int,
-	toolRetries int,
+	toolConfig ToolConfig,
 	outputTool string,
 	call turnCall,
 ) (Outcome, error) {
 	if maxIterations < 1 {
 		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
 	}
-	if toolRetries < 0 {
-		return Outcome{}, fmt.Errorf("runner: toolRetries must not be negative, got %d", toolRetries)
+	if toolConfig.DefaultRetries < 0 {
+		return Outcome{}, fmt.Errorf("runner: default tool retries must not be negative, got %d", toolConfig.DefaultRetries)
+	}
+	if toolConfig.DefaultTimeout < 0 {
+		return Outcome{}, fmt.Errorf("runner: default tool timeout must not be negative, got %s", toolConfig.DefaultTimeout)
 	}
 	if len(req.ToolSpecs) == 0 && len(tools) > 0 {
 		return Outcome{}, fmt.Errorf("runner: tools registered without matching tool specs")
@@ -153,7 +197,7 @@ func execute[Deps any](
 	messages := make([]model.Message, len(req.Messages))
 	copy(messages, req.Messages)
 	var usage model.Usage
-	feedbacks := 0
+	feedbacks := make(map[string]int)
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -193,14 +237,17 @@ func execute[Deps any](
 					Err:      fmt.Errorf("tool was not declared for this run"),
 				}
 			}
-			result, err := declared.Exec(ctx, deps, call.Args)
+			result, err := executeTool(ctx, declared, deps, call.Args, toolConfig.DefaultTimeout)
 			if err != nil {
 				var rejection *model.ModelRetry
-				if toolRetries > 0 && errors.As(err, &rejection) {
+				limit := toolConfig.DefaultRetries
+				if declared.MaxRetries != nil {
+					limit = *declared.MaxRetries
+				}
+				if feedbacks[declared.Name] < limit && errors.As(err, &rejection) {
 					// Correction feedback: deliver the rejection
 					// as the call's tool result and let the model try again.
-					toolRetries--
-					feedbacks++
+					feedbacks[declared.Name]++
 					messages = append(messages, model.Message{
 						Role:       model.RoleTool,
 						ToolCallID: call.ID,
@@ -210,7 +257,7 @@ func execute[Deps any](
 					})
 					continue
 				}
-				return Outcome{}, &ToolError{ToolName: call.Name, CallID: call.ID, Err: terminalToolError(feedbacks, err)}
+				return Outcome{}, &ToolError{ToolName: call.Name, CallID: call.ID, Err: terminalToolError(feedbacks[declared.Name], err)}
 			}
 			messages = append(messages, model.Message{
 				Role:       model.RoleTool,
@@ -247,6 +294,29 @@ func findCallByName(calls []model.ToolCall, name string) (model.ToolCall, bool) 
 		}
 	}
 	return model.ToolCall{}, false
+}
+
+// executeTool applies the narrowest configured deadline to one call. The
+// tool owns any work it starts and must honor ctx cancellation; this wrapper
+// does not leave a goroutine behind to race a non-cooperative tool.
+func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (string, error) {
+	timeout := defaultTimeout
+	if declared.Timeout != 0 {
+		timeout = declared.Timeout
+	}
+	if timeout <= 0 {
+		return declared.Exec(ctx, deps, args)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result, err := declared.Exec(callCtx, deps, args)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if callCtx.Err() != nil {
+		return "", callCtx.Err()
+	}
+	return result, err
 }
 
 // finishOnOutput ends the run on the model's call to the output tool.
