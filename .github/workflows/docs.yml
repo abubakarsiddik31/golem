@@ -22,7 +22,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A job-level permissions block replaces the workflow-level grant,
+    # so checkout needs contents: read restated here.
     permissions:
+      contents: read
       pages: write
       id-token: write
     steps:
