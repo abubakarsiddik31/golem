@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -44,6 +45,17 @@ func newRecordedServer(status int, body string, responseHeaders map[string]strin
 		_, _ = w.Write([]byte(body))
 	}))
 	return recorder
+}
+
+// lastOptional returns the last recorded body, or "" when the server
+// received no request.
+func (r *recordedServer) lastOptional() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.bodies) == 0 {
+		return ""
+	}
+	return r.bodies[len(r.bodies)-1]
 }
 
 func (r *recordedServer) last(t *testing.T) recordedRequest {
@@ -340,5 +352,70 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 	}
 	if model.IsRetryable(err) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
+	}
+}
+
+func TestGenerateMapsInlineImagePartsToImageBlocks(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"output": {"message": {"role": "assistant", "content": [{"text": "a red square"}]}},
+		"usage": {"inputTokens": 10, "outputTokens": 4}
+	}`, nil)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{{
+		Role:    model.RoleUser,
+		Content: "what is this",
+		Parts:   []model.Part{model.ImageData("image/png", []byte{1, 2})},
+	}}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		Messages []struct {
+			Role    string           `json:"role"`
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	wantBlocks := []map[string]any{
+		{"text": "what is this"},
+		{"image": map[string]any{"format": "png", "source": map[string]any{"bytes": "AQI="}}},
+	}
+	got := sent.Messages[0].Content
+	if len(got) != len(wantBlocks) {
+		t.Fatalf("user turn blocks = %#v, want %d blocks", got, len(wantBlocks))
+	}
+	for i, want := range wantBlocks {
+		if !reflect.DeepEqual(got[i], want) {
+			t.Fatalf("block[%d] = %#v, want %#v", i, got[i], want)
+		}
+	}
+}
+
+func TestGenerateRejectsURLImagePartsWithoutSending(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"output": {"message": {"role": "assistant", "content": [{"text": "unused"}]}}}`, nil)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	_, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{{
+		Role:    model.RoleUser,
+		Content: "what is this",
+		Parts:   []model.Part{model.ImageURL("https://example.com/a.png")},
+	}}})
+	if !errors.Is(err, bedrock.ErrUnsupportedContent) {
+		t.Fatalf("Generate() error = %v, want ErrUnsupportedContent", err)
+	}
+	if !strings.Contains(err.Error(), "inline") {
+		t.Fatalf("error should point at inline data as the fix: %v", err)
+	}
+	if request := recorder.lastOptional(); request != "" {
+		t.Fatalf("adapter sent a request despite rejecting the content: %s", request)
 	}
 }

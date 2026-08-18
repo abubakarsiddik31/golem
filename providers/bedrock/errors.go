@@ -106,3 +106,10 @@ func trimErrorType(errorType string) string {
 	}
 	return errorType
 }
+
+// ErrUnsupportedContent reports a request carrying content the Converse
+// API cannot express, such as an image referenced by URL: Converse
+// accepts inline image bytes only. Fetch the content and attach it inline
+// (golem.WithPromptImageData). Errors wrapping this sentinel are
+// generated before any request is sent; they are never retryable.
+var ErrUnsupportedContent = errors.New("bedrock: content not supported by the Converse API")

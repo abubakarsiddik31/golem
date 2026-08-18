@@ -1,7 +1,9 @@
 package bedrock
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/abubakarsiddik31/golem/model"
@@ -34,6 +36,22 @@ type wireBlock struct {
 	ToolUse *wireToolUse `json:"toolUse,omitempty"`
 	// ToolResult carries the execution outcome back.
 	ToolResult *wireToolResult `json:"toolResult,omitempty"`
+	// Image carries an inline image block; see wireImage for the formats
+	// Converse accepts.
+	Image *wireImage `json:"image,omitempty"`
+}
+
+// wireImage is an inline image block. Converse accepts base64 bytes only,
+// in the png, jpeg, gif, and webp formats.
+type wireImage struct {
+	Format string       `json:"format"`
+	Source wireImageSrc `json:"source"`
+}
+
+// wireImageSrc carries the image payload. Bytes is base64-encoded; the
+// Converse API decodes it.
+type wireImageSrc struct {
+	Bytes string `json:"bytes"`
 }
 
 type wireToolUse struct {
@@ -112,7 +130,10 @@ type converseResponse struct {
 // of the same role — tool results after an assistant turn, or a user
 // prompt after tool results — merge into one turn, because tool results
 // must ride the user turn that follows the request.
-func toWireMessages(messages []model.Message) (system []wireSystem, turns []wireMessage) {
+// toWireMessages converts normalized messages into Converse turns. It
+// fails before anything is sent when a message carries content Converse
+// cannot express, such as an image referenced by URL.
+func toWireMessages(messages []model.Message) (system []wireSystem, turns []wireMessage, err error) {
 	for _, message := range messages {
 		var role string
 		var blocks []wireBlock
@@ -131,7 +152,10 @@ func toWireMessages(messages []model.Message) (system []wireSystem, turns []wire
 			}}}
 		default:
 			role = "user"
-			blocks = []wireBlock{{Text: message.Content}}
+			blocks, err = userBlocks(message)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		if len(turns) > 0 && turns[len(turns)-1].Role == role {
 			turns[len(turns)-1].Content = append(turns[len(turns)-1].Content, blocks...)
@@ -139,7 +163,7 @@ func toWireMessages(messages []model.Message) (system []wireSystem, turns []wire
 		}
 		turns = append(turns, wireMessage{Role: role, Content: blocks})
 	}
-	return system, turns
+	return system, turns, nil
 }
 
 // assistantBlocks renders an assistant message: its text as a text block,
@@ -157,6 +181,35 @@ func assistantBlocks(message model.Message) []wireBlock {
 		}})
 	}
 	return blocks
+}
+
+// userBlocks renders a user message: its text as a text block when
+// present, followed by one image block per attached part. Converse
+// accepts inline bytes in the png, jpeg, gif, and webp formats; any other
+// form — a URL, or an unknown media type — fails with
+// ErrUnsupportedContent instead of being silently dropped.
+func userBlocks(message model.Message) ([]wireBlock, error) {
+	var blocks []wireBlock
+	if message.Content != "" {
+		blocks = append(blocks, wireBlock{Text: message.Content})
+	}
+	for _, part := range message.Parts {
+		if part.URL != "" {
+			return nil, fmt.Errorf("%w: image URL parts; fetch the image and attach it inline with golem.WithPromptImageData", ErrUnsupportedContent)
+		}
+		format, ok := strings.CutPrefix(part.MediaType, "image/")
+		if !ok || format == "" {
+			return nil, fmt.Errorf("%w: image media type %q; Converse accepts image/png, image/jpeg, image/gif, or image/webp", ErrUnsupportedContent, part.MediaType)
+		}
+		blocks = append(blocks, wireBlock{Image: &wireImage{
+			Format: format,
+			Source: wireImageSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
+		}})
+	}
+	if len(blocks) == 0 {
+		blocks = []wireBlock{{Text: message.Content}}
+	}
+	return blocks, nil
 }
 
 func toWireToolConfig(specs []model.ToolSpec) *wireToolConfig {

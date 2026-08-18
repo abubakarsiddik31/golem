@@ -118,7 +118,10 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 // converse endpoint. A request carrying an output schema maps to the
 // json_schema output format.
 func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Request) (*http.Request, error) {
-	system, turns := toWireMessages(request.Messages)
+	system, turns, err := toWireMessages(request.Messages)
+	if err != nil {
+		return nil, err
+	}
 	var inferenceConfig *wireInference
 	if c.cfg.MaxTokens > 0 {
 		inferenceConfig = &wireInference{MaxTokens: c.cfg.MaxTokens}
