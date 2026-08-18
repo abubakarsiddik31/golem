@@ -3,12 +3,15 @@ package golem_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/abubakarsiddik31/golem"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/testmodel"
+	"github.com/abubakarsiddik31/golem/tool"
 )
 
 type fakeModel struct {
@@ -232,5 +235,113 @@ func TestRunWithHistoryRejectsPartsOutsideUserMessages(t *testing.T) {
 	}
 	if client.request.Messages != nil {
 		t.Fatal("model was called despite invalid history parts")
+	}
+}
+
+// usageEchoTool is a minimal tool the usage-bound tests execute.
+func usageEchoTool(t *testing.T) tool.Tool[struct{}] {
+	t.Helper()
+	return tool.MustNew(tool.Tool[struct{}]{
+		Name:        "echo",
+		Description: "Echo the arguments.",
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+			return string(args), nil
+		},
+	})
+}
+
+func TestUsageLimitBoundsRequests(t *testing.T) {
+	t.Parallel()
+
+	client := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant,
+			ToolCalls: []model.ToolCall{{ID: "c1", Name: "echo", Args: json.RawMessage(`{}`)}}}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}},
+	)
+	agent, err := golem.New[struct{}, string](client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithTools[struct{}, string](usageEchoTool(t)),
+		golem.WithUsageLimit[struct{}, string](golem.UsageLimit{Requests: 1}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go")
+	var runErr *golem.RunError
+	var limitErr *golem.UsageLimitError
+	if !errors.As(err, &runErr) || runErr.Stage != golem.StageUsage ||
+		!errors.As(err, &limitErr) || limitErr.Kind != "request" || limitErr.Limit != 1 || limitErr.Actual != 2 {
+		t.Fatalf("Run() error = %v, want the usage stage with a crossed request bound", err)
+	}
+}
+
+func TestUsageLimitBoundsToolCalls(t *testing.T) {
+	t.Parallel()
+
+	client := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant,
+			ToolCalls: []model.ToolCall{
+				{ID: "c1", Name: "echo", Args: json.RawMessage(`{}`)},
+				{ID: "c2", Name: "echo", Args: json.RawMessage(`{}`)},
+			}}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}},
+	)
+	agent, err := golem.New[struct{}, string](client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithTools[struct{}, string](usageEchoTool(t)),
+		golem.WithUsageLimit[struct{}, string](golem.UsageLimit{ToolCalls: 1}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go")
+	var limitErr *golem.UsageLimitError
+	if !errors.As(err, &limitErr) || limitErr.Kind != "tool call" || limitErr.Limit != 1 || limitErr.Actual != 2 {
+		t.Fatalf("Run() error = %v, want a crossed tool-call bound", err)
+	}
+}
+
+func TestUsageLimitRequestsWithinBoundSucceeds(t *testing.T) {
+	t.Parallel()
+
+	client := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}},
+	)
+	agent, err := golem.New[struct{}, string](client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithUsageLimit[struct{}, string](golem.UsageLimit{Requests: 2, ToolCalls: 1}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go"); err != nil {
+		t.Fatalf("Run() error = %v, want success within the bounds", err)
+	}
+}
+
+func TestNewRejectsNegativeActivityBounds(t *testing.T) {
+	t.Parallel()
+
+	for _, limit := range []golem.UsageLimit{
+		{Requests: -1},
+		{ToolCalls: -1},
+	} {
+		if _, err := golem.New[struct{}, string](&fakeModel{},
+			golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+				return response.Message.Content, nil
+			}),
+			golem.WithUsageLimit[struct{}, string](limit)); err == nil {
+			t.Fatalf("New() accepted negative limit %+v", limit)
+		}
 	}
 }
