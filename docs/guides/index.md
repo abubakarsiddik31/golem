@@ -5,8 +5,9 @@ a capability end to end — purpose, contract, a runnable example, the API
 surface, and gotchas — and links the ADR that decided it. The README
 indexes them; it must not drift ahead of them.
 
-New guides start from [TEMPLATE.md](TEMPLATE.md). A behavior change is
-only complete when its guide, its example, and the README index agree.
+New guides start from `TEMPLATE.md` in this directory (excluded from the
+published site). A behavior change is only complete when its guide, its
+example, and the README index agree.
 
 ## Reading order
 

@@ -14,3 +14,7 @@ coverage.txt
 
 # Local upstream reference cache; refresh from its canonical remote when needed.
 reference/pydantic-ai/
+
+# Local MkDocs build output and docs preview environment
+site/
+.venv-docs/

@@ -1,0 +1,57 @@
+site_name: Golem
+site_description: >-
+  A Go-first framework for building dependable AI agents: typed
+  dependencies and outputs, explicit tools, composable models, and an
+  observable execution loop.
+site_url: https://abubakarsiddik31.github.io/golem/
+repo_url: https://github.com/abubakarsiddik31/golem
+repo_name: abubakarsiddik31/golem
+edit_uri: edit/main/docs/guides/
+
+# Publish the guides only; foundation.md, patterns.md, adr/, and
+# upstream-references.md are contributor documents and stay in the repo.
+docs_dir: docs/guides
+exclude_docs: |
+  TEMPLATE.md
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+# Mirrors the reading order in docs/guides/index.md; keep the two in
+# sync when adding a guide.
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Providers: providers.md
+  - Tools and dependencies: tools-and-dependencies.md
+  - Tool timeouts: tool-timeouts.md
+  - Conversations and history: conversations-and-history.md
+  - Structured output: structured-output.md
+  - Self-correction: self-correction.md
+  - Retries: retries.md
+  - Streaming: streaming.md
+  - Usage limits: usage-limits.md
+  - Testing without a provider: testing.md
