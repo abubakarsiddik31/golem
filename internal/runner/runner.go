@@ -41,11 +41,17 @@ func (e *ToolError) Unwrap() error {
 }
 
 // Outcome is the terminal state of a completed loop: the final response,
-// the full ordered conversation evidence, and usage summed across turns.
+// the full ordered conversation evidence, usage summed across turns, and
+// activity counts for usage bounds.
 type Outcome struct {
 	Response model.Response
 	Messages []model.Message
 	Usage    model.Usage
+	// ModelCalls counts provider calls, including retried attempts.
+	ModelCalls int
+	// ToolExecutions counts tool executions attempted; unknown-tool
+	// requests and interrupted output-tool co-emissions do not count.
+	ToolExecutions int
 }
 
 // RetryConfig bounds and paces retries of failed model calls.
@@ -109,7 +115,7 @@ func ExecuteWithToolConfig[Deps any](
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
 	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
-		func(ctx context.Context, request model.Request) (model.Response, error) {
+		func(ctx context.Context, request model.Request) (model.Response, int, error) {
 			return generate(ctx, m, request, retry)
 		})
 }
@@ -156,14 +162,23 @@ func ExecuteStreamWithToolConfig[Deps any](
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
 	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
-		func(ctx context.Context, request model.Request) (model.Response, error) {
-			return streamer.GenerateStream(ctx, request, onDelta)
+		func(ctx context.Context, request model.Request) (model.Response, int, error) {
+			response, err := streamer.GenerateStream(ctx, request, onDelta)
+			return response, 1, err
 		})
 }
 
-// turnCall produces one model response for a turn. Injecting it lets the
-// loop run over plain or streamed model calls without duplicating policy.
-type turnCall func(ctx context.Context, request model.Request) (model.Response, error)
+// turnCall produces one model response for a turn and reports how many
+// provider calls the turn consumed, retries included. Injecting it lets
+// the loop run over plain or streamed model calls without duplicating
+// policy.
+type turnCall func(ctx context.Context, request model.Request) (model.Response, int, error)
+
+// runCounts accumulates activity across the turns of one loop.
+type runCounts struct {
+	modelCalls     int
+	toolExecutions int
+}
 
 // execute is the shared loop of Execute and ExecuteStream: identical
 // turn limits, tool execution, rejection feedback, and evidence order.
@@ -179,6 +194,7 @@ func execute[Deps any](
 	outputTool string,
 	call turnCall,
 ) (Outcome, error) {
+	var counts runCounts
 	if maxIterations < 1 {
 		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
 	}
@@ -208,25 +224,30 @@ func execute[Deps any](
 			return Outcome{}, fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
-		response, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema})
+		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema})
 		if err != nil {
 			return Outcome{}, err
 		}
+		counts.modelCalls += providerCalls
 		messages = append(messages, response.Message)
 		usage.InputTokens += response.Usage.InputTokens
 		usage.OutputTokens += response.Usage.OutputTokens
 
 		if len(response.Message.ToolCalls) == 0 {
-			return Outcome{Response: response, Messages: messages, Usage: usage}, nil
+			return Outcome{Response: response, Messages: messages, Usage: usage,
+				ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions}, nil
 		}
 
 		if outputTool != "" {
 			if call, ok := findCallByName(response.Message.ToolCalls, outputTool); ok {
-				return finishOnOutput(messages, usage, response, call), nil
+				outcome := finishOnOutput(messages, usage, response, call)
+				outcome.ModelCalls = counts.modelCalls
+				outcome.ToolExecutions = counts.toolExecutions
+				return outcome, nil
 			}
 		}
 
-		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks)
+		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -244,7 +265,7 @@ type toolCallResult[Deps any] struct {
 // runToolCalls validates every requested call, executes them either in
 // emission order or concurrent barrier-separated groups, then emits results
 // in emission order regardless of completion order.
-func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int) ([]model.Message, error) {
+func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts) ([]model.Message, error) {
 	results := make([]toolCallResult[Deps], len(calls))
 	for i, call := range calls {
 		declared, ok := findTool(tools, call.Name)
@@ -260,7 +281,7 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 				end++
 			}
 		}
-		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1)
+		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1, counts)
 		start = end
 	}
 	messages := make([]model.Message, 0, len(results))
@@ -288,13 +309,14 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 	return messages, nil
 }
 
-func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool) {
+func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool, counts *runCounts) {
 	if !parallel {
 		for i := range group {
 			if err := ctx.Err(); err != nil {
 				group[i].err = err
 				return
 			}
+			counts.toolExecutions++
 			group[i].result, group[i].err = executeTool(ctx, group[i].declared, deps, group[i].call.Args, timeout)
 		}
 		return
@@ -304,6 +326,7 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 		wg.Add(1)
 		go func(item *toolCallResult[Deps]) {
 			defer wg.Done()
+			counts.toolExecutions++
 			item.result, item.err = executeTool(ctx, item.declared, deps, item.call.Args, timeout)
 		}(&group[i])
 	}
@@ -453,27 +476,28 @@ func RepairHistory(history []model.Message) []model.Message {
 }
 
 // generate calls the model once per turn, retrying retryable failures up to
-// retry.MaxAttempts with context-aware waits between attempts.
-// A context error always wins over the model error: cancellation is
-// returned raw, never retried or wrapped.
-func generate(ctx context.Context, m model.Model, request model.Request, retry RetryConfig) (model.Response, error) {
+// retry.MaxAttempts with context-aware waits between attempts, and reports
+// the provider calls consumed, attempts included. A context error always
+// wins over the model error: cancellation is returned raw, never retried
+// or wrapped.
+func generate(ctx context.Context, m model.Model, request model.Request, retry RetryConfig) (model.Response, int, error) {
 	for attempt := 1; ; attempt++ {
 		response, err := m.Generate(ctx, request)
 		if err == nil {
-			return response, nil
+			return response, attempt, nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return model.Response{}, ctxErr
+			return model.Response{}, attempt, ctxErr
 		}
 		if attempt >= retry.MaxAttempts || !model.IsRetryable(err) {
-			return model.Response{}, terminalModelError(attempt, err)
+			return model.Response{}, attempt, terminalModelError(attempt, err)
 		}
 		delay := time.Duration(0)
 		if retry.Backoff != nil {
 			delay = retry.Backoff(attempt)
 		}
 		if err := waitFor(ctx, delay); err != nil {
-			return model.Response{}, err
+			return model.Response{}, attempt, err
 		}
 	}
 }

@@ -776,3 +776,43 @@ func TestExecuteStreamReturnsCallerStopError(t *testing.T) {
 		t.Fatalf("model turns = %d, want 1", len(m.requests))
 	}
 }
+
+func TestExecuteCountsModelCallsAndToolExecutions(t *testing.T) {
+	t.Parallel()
+
+	tools := []tool.Tool[deps]{echoTool(t)}
+	m := &scriptedModel{responses: []model.Response{
+		toolResponse(model.ToolCall{ID: "c1", Name: "echo"}),
+		textResponse("done", model.Usage{}),
+	}}
+	outcome, err := runner.ExecuteWithToolConfig(context.Background(), m, tools, deps{},
+		model.Request{ToolSpecs: specsFor(t, tools...)}, 5,
+		runner.RetryConfig{MaxAttempts: 1}, runner.ToolConfig{}, "")
+	if err != nil {
+		t.Fatalf("ExecuteWithToolConfig() error = %v", err)
+	}
+	if outcome.ModelCalls != 2 {
+		t.Fatalf("ModelCalls = %d, want 2 (one per turn)", outcome.ModelCalls)
+	}
+	if outcome.ToolExecutions != 1 {
+		t.Fatalf("ToolExecutions = %d, want 1", outcome.ToolExecutions)
+	}
+}
+
+func TestExecuteCountsRetriedAttemptsAsModelCalls(t *testing.T) {
+	t.Parallel()
+
+	m := &scriptedModel{
+		errs:      []error{&retryableFailure{}},
+		responses: []model.Response{textResponse("ok", model.Usage{})},
+	}
+	outcome, err := runner.ExecuteWithToolConfig(context.Background(), m, nil, deps{},
+		model.Request{}, 5,
+		runner.RetryConfig{MaxAttempts: 2}, runner.ToolConfig{}, "")
+	if err != nil {
+		t.Fatalf("ExecuteWithToolConfig() error = %v", err)
+	}
+	if outcome.ModelCalls != 2 {
+		t.Fatalf("ModelCalls = %d, want 2 (failed attempt + successful retry)", outcome.ModelCalls)
+	}
+}

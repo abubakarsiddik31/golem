@@ -220,15 +220,20 @@ func WithToolChoice[Deps any, Output any](name string) Option[Deps, Output] {
 	}
 }
 
-// UsageLimit bounds a run's provider-recorded token consumption. The zero
-// value disables the limit; each dimension is independent, and zero within
-// a set limit means that dimension is unbounded. Providers that do not
-// report usage count as zero tokens, so a limit never trips without
-// provider-reported usage.
+// UsageLimit bounds a run's provider-recorded token consumption and its
+// model-request and tool-execution activity. The zero value disables the
+// limit; each dimension is independent, and zero within a set limit means
+// that dimension is unbounded. Providers that do not report usage count
+// as zero tokens, so a token limit never trips without provider-reported
+// usage; requests and tool executions are counted by the run itself.
 type UsageLimit struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
+	// Requests bounds model calls, retried attempts included.
+	Requests int
+	// ToolCalls bounds tool executions.
+	ToolCalls int
 }
 
 // runOptions carries per-run input configuration.
@@ -286,11 +291,12 @@ func validatePromptInput(promptParts []model.Part, history []model.Message) erro
 	return nil
 }
 
-// WithUsageLimit bounds the tokens a single run may consume, counted
-// across every model turn, retried call, and correction round. The check
-// runs after each model response against the run's cumulative usage: the
-// response that crosses a bound fails the run at the usage stage, even
-// when it would have decoded successfully. Negative values fail New.
+// WithUsageLimit bounds the tokens a single run may consume and the model
+// requests and tool executions it may make, counted across every model
+// turn, retried call, and correction round. The check runs after each
+// model response against the run's cumulative usage: the response that
+// crosses a bound fails the run at the usage stage, even when it would
+// have decoded successfully. Negative values fail New.
 func WithUsageLimit[Deps any, Output any](limit UsageLimit) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.usageLimit = limit
@@ -348,7 +354,8 @@ func New[Deps any, Output any](
 			return nil, fmt.Errorf("golem: output tool %q: schema is required and must be valid JSON", agent.outputToolName)
 		}
 	}
-	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 {
+	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 ||
+		agent.usageLimit.Requests < 0 || agent.usageLimit.ToolCalls < 0 {
 		return nil, fmt.Errorf("golem: usage limit must not be negative, got %+v", agent.usageLimit)
 	}
 	if err := validateTools(agent.tools); err != nil {
@@ -510,6 +517,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 
 	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
 	var usage model.Usage
+	var modelCalls, toolExecutions int
 
 	for attempt := 0; ; attempt++ {
 		request := model.Request{Messages: messages, ToolSpecs: specs, OutputSchema: a.outputSchema}
@@ -527,7 +535,9 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		}
 		usage.InputTokens += outcome.Usage.InputTokens
 		usage.OutputTokens += outcome.Usage.OutputTokens
-		if err := a.usageLimit.check(usage); err != nil {
+		modelCalls += outcome.ModelCalls
+		toolExecutions += outcome.ToolExecutions
+		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
 			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err}
 		}
 

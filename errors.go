@@ -41,7 +41,7 @@ func (e *RunError) Unwrap() error {
 
 // check reports whether cumulative usage crossed any configured bound.
 // A zero limit is a no-op: only positive bounds are enforced.
-func (l UsageLimit) check(usage model.Usage) error {
+func (l UsageLimit) check(usage model.Usage, modelCalls, toolExecutions int) error {
 	var crossed *UsageLimitError
 	switch {
 	case l.InputTokens > 0 && usage.InputTokens > l.InputTokens:
@@ -61,6 +61,18 @@ func (l UsageLimit) check(usage model.Usage) error {
 			Kind:   "total token",
 			Limit:  l.TotalTokens,
 			Actual: usage.InputTokens + usage.OutputTokens,
+		}
+	case l.Requests > 0 && modelCalls > l.Requests:
+		crossed = &UsageLimitError{
+			Kind:   "request",
+			Limit:  l.Requests,
+			Actual: modelCalls,
+		}
+	case l.ToolCalls > 0 && toolExecutions > l.ToolCalls:
+		crossed = &UsageLimitError{
+			Kind:   "tool call",
+			Limit:  l.ToolCalls,
+			Actual: toolExecutions,
 		}
 	}
 	if crossed == nil {
