@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.3.0 — 2026-08-18
+
+This minor release makes conversations richer and longer-lived: images in
+prompts, bounded history, and models that survive each other's failures.
+Every addition is opt-in and additive; existing call sites and persisted
+message JSON are unchanged.
+
+### Added
+
+- **Multimodal input.** `model.Message` carries image parts — a URL the
+  provider fetches or inline bytes with a media type — appended after the
+  prompt text through `WithPromptImageURL` and `WithPromptImageData` run
+  options, on `Run` and its history and streaming variants. Parts are
+  validated before any model call and ride the additive-only message JSON,
+  so persisted history decodes unchanged (ADR 0011). All five adapters
+  translate them: openai, azure, and anthropic accept URLs and inline
+  data; gemini maps URLs to file data that must be provider-reachable;
+  bedrock accepts inline bytes only and fails URL parts with a typed
+  error instead of dropping content.
+- **History processing.** `WithHistoryProcessor` installs a function that
+  rewrites a run's supplied history once, before validation and repair.
+  The `TrimHistory` builtin keeps the newest messages and cuts at turns
+  that can open a request, so long conversations stay bounded without
+  synthesized repair evidence.
+- **Fallback model.** `model.NewFallback(primary, alternates...)` tries
+  its models in order on retryable-classified failures; the first success
+  answers, non-retryable failures return immediately, and the last error
+  keeps its classification for the run's retry policy. Streams fall back
+  only before the first forwarded fragment.
+- **Activity-based usage bounds.** `UsageLimit` gains `Requests` and
+  `ToolCalls` dimensions alongside its token bounds. The run counts
+  provider calls — retried attempts included — and tool executions, and
+  fails at the usage stage with a `UsageLimitError` naming the crossed
+  dimension.
+- **Documentation website.** The guides publish as a MkDocs Material
+  site with a strict build in CI; deployment stays gated until the
+  repository goes public (see `docs/website.md`).
+
+### Fixed
+
+- The guides' reading order regains the Tool timeouts entry the site
+  navigation already listed.
+
 ## v0.2.0 — 2026-08-16
 
 This minor release expands the agent and tool contracts with new, opt-in
