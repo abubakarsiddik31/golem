@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -356,5 +357,57 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 	}
 	if model.IsRetryable(err) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
+	}
+}
+
+func TestGenerateMapsPromptPartsToInlineDataAndFileData(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"candidates": [{"content": {"parts": [{"text": "a red square"}], "role": "model"}, "finishReason": "STOP"}],
+		"usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 4}
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{
+			Role:    model.RoleUser,
+			Content: "what is this",
+			Parts: []model.Part{
+				model.ImageURL("https://example.com/a.png"),
+				model.ImageData("image/png", []byte{1, 2}),
+			},
+		},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		Contents []struct {
+			Role  string           `json:"role"`
+			Parts []map[string]any `json:"parts"`
+		} `json:"contents"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+
+	wantParts := []map[string]any{
+		{"text": "what is this"},
+		{"fileData": map[string]any{"fileUri": "https://example.com/a.png"}},
+		{"inlineData": map[string]any{"mimeType": "image/png", "data": "AQI="}},
+	}
+	if len(sent.Contents) != 1 || sent.Contents[0].Role != "user" {
+		t.Fatalf("wire contents = %#v", sent.Contents)
+	}
+	got := sent.Contents[0].Parts
+	if len(got) != len(wantParts) {
+		t.Fatalf("user turn parts = %#v, want %d parts", got, len(wantParts))
+	}
+	for i, want := range wantParts {
+		if !reflect.DeepEqual(got[i], want) {
+			t.Fatalf("part[%d] = %#v, want %#v", i, got[i], want)
+		}
 	}
 }

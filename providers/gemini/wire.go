@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -36,6 +37,26 @@ type wirePart struct {
 	// response field must be an object; text results wrap as
 	// {"result": string}.
 	FunctionResponse *wireFunctionResponse `json:"functionResponse,omitempty"`
+	// InlineData carries inline binary content on user turns, such as
+	// image bytes with their media type.
+	InlineData *wireInlineData `json:"inlineData,omitempty"`
+	// FileData carries provider-addressable content by URI on user turns,
+	// such as a Files API or GCS image.
+	FileData *wireFileData `json:"fileData,omitempty"`
+}
+
+// wireInlineData is base64 inline content. The GenerateContent API only
+// accepts bytes the API can decode itself; arbitrary remote URLs must be
+// fetched by the application and sent inline.
+type wireInlineData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+// wireFileData references content by URI. GenerateContent resolves URIs
+// the provider can reach itself, such as Files API or GCS objects.
+type wireFileData struct {
+	FileURI string `json:"fileUri"`
 }
 
 type wireFunctionCall struct {
@@ -113,7 +134,7 @@ func toWireContents(messages []model.Message) (system *wireSystem, contents []wi
 			}}}
 		default:
 			role = "user"
-			parts = []wirePart{{Text: message.Content}}
+			parts = userParts(message)
 		}
 		if len(contents) > 0 && contents[len(contents)-1].Role == role {
 			contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, parts...)
@@ -139,6 +160,31 @@ func modelParts(message model.Message) []wirePart {
 			Name: call.Name,
 			Args: normalizeArgs(call.Args),
 		}})
+	}
+	return parts
+}
+
+// userParts renders a user message: its text as a text part when present,
+// followed by one image part per attached part. Inline bytes send base64
+// inlineData; URLs send fileData and must reference content the provider
+// can reach itself, such as Files API or GCS objects.
+func userParts(message model.Message) []wirePart {
+	var parts []wirePart
+	if message.Content != "" {
+		parts = append(parts, wirePart{Text: message.Content})
+	}
+	for _, part := range message.Parts {
+		if part.URL != "" {
+			parts = append(parts, wirePart{FileData: &wireFileData{FileURI: part.URL}})
+			continue
+		}
+		parts = append(parts, wirePart{InlineData: &wireInlineData{
+			MimeType: part.MediaType,
+			Data:     base64.StdEncoding.EncodeToString(part.Data),
+		}})
+	}
+	if len(parts) == 0 {
+		parts = []wirePart{{Text: message.Content}}
 	}
 	return parts
 }
