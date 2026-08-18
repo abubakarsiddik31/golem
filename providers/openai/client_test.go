@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -454,5 +455,75 @@ func TestGenerateStreamCarriesResponseFormat(t *testing.T) {
 	}
 	if sent.ResponseFormat == nil || sent.ResponseFormat.Type != "json_schema" {
 		t.Fatalf("response_format = %#v, want json_schema", sent.ResponseFormat)
+	}
+}
+
+func TestGenerateMapsPromptPartsToContentArray(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"choices": [{"message": {"role": "assistant", "content": "a red square"}}]
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleSystem, Content: "Be concise."},
+		{
+			Role:    model.RoleUser,
+			Content: "what is this",
+			Parts: []model.Part{
+				model.ImageURL("https://example.com/a.png"),
+				model.ImageData("image/png", []byte{1, 2}),
+			},
+		},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		Messages []struct {
+			Role    string            `json:"role"`
+			Content json.RawMessage   `json:"content"`
+			Parts   []json.RawMessage `json:"parts"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+	if string(sent.Messages[0].Content) != `"Be concise."` {
+		t.Fatalf("system content = %s, want a plain string", sent.Messages[0].Content)
+	}
+	if sent.Messages[1].Parts != nil {
+		t.Fatalf("wire message leaked parts field: %s", sent.Messages[1].Parts)
+	}
+
+	var content []any
+	if err := json.Unmarshal(sent.Messages[1].Content, &content); err != nil {
+		t.Fatalf("user content is not an array: %s", sent.Messages[1].Content)
+	}
+	wantParts := []string{
+		`{"type":"text","text":"what is this"}`,
+		`{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}`,
+		`{"type":"image_url","image_url":{"url":"data:image/png;base64,AQI="}}`,
+	}
+	if len(content) != len(wantParts) {
+		t.Fatalf("content array length = %d, want %d: %s", len(content), len(wantParts), sent.Messages[1].Content)
+	}
+	for i, want := range wantParts {
+		got, err := json.Marshal(content[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var gotValue, wantValue any
+		if err := json.Unmarshal(got, &gotValue); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(gotValue, wantValue) {
+			t.Fatalf("content[%d] = %s, want %s", i, got, want)
+		}
 	}
 }
