@@ -55,6 +55,8 @@ result, err := agent.RunStream(ctx, runCtx, "summarize the match",
   fails up front — no silent fallback to non-streaming generation.
 - Streamed turns are single-attempt: a retryable failure ends the run at
   the model stage instead of replaying fragments the caller already saw.
+  A `model.Fallback` honors the same rule between its members — see
+  [Retries](retries.md).
 - An error returned from `onDelta` stops the run and comes back at the
   model stage with the original error reachable via `errors.Is`.
 - Deltas are in-flight progress, not a persistence contract.

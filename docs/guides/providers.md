@@ -18,7 +18,9 @@ format and normalize responses back. They never retry on their own:
 failures are classified through `model.RetryableError` (408, 429, 5xx,
 transport faults — never context cancellation) and the runner's retry
 policy decides. All shipped adapters except Bedrock implement
-`model.StreamingModel` over SSE.
+`model.StreamingModel` over SSE. Every adapter also translates image
+parts on user messages to its native multimodal form; the per-provider
+differences live in [Multimodal input](multimodal-input.md).
 
 ## Example
 

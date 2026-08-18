@@ -6,7 +6,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-v0.2.0 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries, streaming, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, deterministic test models, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The public API remains intentionally small; additive changes only until v1.
+v0.3.0 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries with fallback models, streaming, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal image input, history processing with a trim builtin, token/request/tool-call usage bounds, deterministic test models, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 
