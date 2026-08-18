@@ -14,10 +14,12 @@ example, and the README index agree.
 1. [Getting started](getting-started.md) — the smallest agent and where everything lives.
 2. [Providers](providers.md) — connecting OpenAI-compatible and Anthropic APIs.
 3. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
-4. [Conversations and history](conversations-and-history.md) — multi-turn runs and durable message JSON.
-5. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
-6. [Self-correction](self-correction.md) — rejection budgets for output and tools.
-7. [Retries](retries.md) — surviving transient model failures.
-8. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-9. [Usage limits](usage-limits.md) — bounding a run's token consumption.
-10. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+4. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
+5. [Conversations and history](conversations-and-history.md) — multi-turn runs and durable message JSON.
+6. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
+7. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
+8. [Self-correction](self-correction.md) — rejection budgets for output and tools.
+9. [Retries](retries.md) — surviving transient model failures.
+10. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
+11. [Usage limits](usage-limits.md) — bounding a run's token consumption.
+12. [Testing without a provider](testing.md) — deterministic fakes and what to assert.

@@ -49,6 +49,7 @@ nav:
   - Tools and dependencies: tools-and-dependencies.md
   - Tool timeouts: tool-timeouts.md
   - Conversations and history: conversations-and-history.md
+  - Multimodal input: multimodal-input.md
   - Structured output: structured-output.md
   - Self-correction: self-correction.md
   - Retries: retries.md
