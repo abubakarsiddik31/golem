@@ -1,7 +1,9 @@
 package model_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/abubakarsiddik31/golem/model"
@@ -176,5 +178,88 @@ func TestUnmarshalToleratesUnknownAndMissingFields(t *testing.T) {
 	}
 	if messages[1].Role != model.RoleAssistant || messages[1].Content != "" || messages[1].ToolCalls != nil {
 		t.Fatalf("message[1] = %#v, want zero optional fields", messages[1])
+	}
+}
+
+func TestImagePartsValidateAtTheBoundary(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		part model.Part
+		want string
+	}{
+		{"url and data", model.Part{Kind: model.PartImage, URL: "https://example.com/y.png", Data: []byte{1}}, "both"},
+		{"neither url nor data", model.Part{Kind: model.PartImage}, "neither"},
+		{"data without media type", model.Part{Kind: model.PartImage, Data: []byte{1}}, "media type"},
+		{"unknown kind", model.Part{Kind: "video", URL: "https://example.com/y.mp4"}, "unsupported part kind"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.part.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error mentioning %q", err, tc.want)
+			}
+		})
+	}
+
+	if err := (model.ImageURL("https://example.com/a.png")).Validate(); err != nil {
+		t.Fatalf("ImageURL part invalid: %v", err)
+	}
+	if err := (model.ImageData("image/png", []byte{1, 2, 3})).Validate(); err != nil {
+		t.Fatalf("ImageData part invalid: %v", err)
+	}
+}
+
+func TestMessageJSONStaysAdditiveWithParts(t *testing.T) {
+	t.Parallel()
+
+	// Existing text-only encoding must stay byte-identical: the JSON
+	// shape is a durable, additive-only contract.
+	textOnly := model.Message{Role: model.RoleUser, Content: "hi"}
+	encoded, err := json.Marshal(textOnly)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if want := `{"role":"user","content":"hi"}`; string(encoded) != want {
+		t.Fatalf("text-only encoding changed:\n got %s\nwant %s", encoded, want)
+	}
+
+	withURL := model.Message{Role: model.RoleUser, Content: "look",
+		Parts: []model.Part{model.ImageURL("https://example.com/cat.png")}}
+	encoded, err = json.Marshal(withURL)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	want := `{"role":"user","content":"look","parts":[{"kind":"image","url":"https://example.com/cat.png"}]}`
+	if string(encoded) != want {
+		t.Fatalf("url part encoding:\n got %s\nwant %s", encoded, want)
+	}
+
+	// Inline data encodes base64 and round-trips.
+	withData := model.Message{Role: model.RoleUser,
+		Parts: []model.Part{model.ImageData("image/png", []byte{1, 2, 3})}}
+	encoded, err = json.Marshal(withData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var decoded model.Message
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if decoded.Parts[0].Kind != model.PartImage || decoded.Parts[0].MediaType != "image/png" ||
+		!bytes.Equal(decoded.Parts[0].Data, []byte{1, 2, 3}) {
+		t.Fatalf("inline data did not round-trip: %#v", decoded.Parts[0])
+	}
+
+	// History persisted before parts exists decodes unchanged.
+	var legacy model.Message
+	if err := json.Unmarshal([]byte(`{"role":"user","content":"hi"}`), &legacy); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if legacy.Parts != nil {
+		t.Fatalf("legacy message gained parts: %#v", legacy.Parts)
 	}
 }

@@ -4,6 +4,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // Role identifies the speaker that authored a message.
@@ -38,6 +39,11 @@ type ToolCall struct {
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content,omitempty"`
+	// Parts carries non-text content appended after Content, such as
+	// images on a user message; see Part. Additive to the durable JSON
+	// contract: text stays in Content and older history decodes with no
+	// parts.
+	Parts []Part `json:"parts,omitempty"`
 	// ToolCalls holds executions requested by an assistant message. When a
 	// message carries both content and tool calls, the tool calls decide the
 	// turn. Ignored on other roles.
@@ -46,6 +52,53 @@ type Message struct {
 	// call. Meaningless on other roles.
 	ToolCallID string `json:"toolCallId,omitempty"`
 	ToolName   string `json:"toolName,omitempty"`
+}
+
+// PartKind identifies the kind of non-text content a Part carries.
+type PartKind string
+
+// PartImage is an image attached to a user message.
+const PartImage PartKind = "image"
+
+// Part is one non-text piece of message content, carried on user messages
+// alongside the text in Content. Exactly one of URL or Data is set, and
+// Data requires MediaType; constructors make the common path well-formed
+// and Validate is the boundary check for parts that arrive through decoded
+// history. Adapters translate parts to their native multimodal form.
+type Part struct {
+	Kind      PartKind `json:"kind"`
+	URL       string   `json:"url,omitempty"`
+	Data      []byte   `json:"data,omitempty"`
+	MediaType string   `json:"mediaType,omitempty"`
+}
+
+// ImageURL attaches an image reachable at url; the provider fetches it.
+func ImageURL(url string) Part {
+	return Part{Kind: PartImage, URL: url}
+}
+
+// ImageData attaches inline image bytes with their media type, such as
+// "image/png". Data is application-owned: treat it as immutable once
+// attached, because a Part does not copy it.
+func ImageData(mediaType string, data []byte) Part {
+	return Part{Kind: PartImage, MediaType: mediaType, Data: data}
+}
+
+// Validate reports whether the part is well-formed. The agent validates
+// parts at run start, before any model call; adapters may assume the parts
+// that reach them passed this check.
+func (p Part) Validate() error {
+	switch {
+	case p.Kind != PartImage:
+		return fmt.Errorf("model: unsupported part kind %q", p.Kind)
+	case p.URL != "" && len(p.Data) > 0:
+		return fmt.Errorf("model: image part carries both a URL and inline data; set exactly one")
+	case p.URL == "" && len(p.Data) == 0:
+		return fmt.Errorf("model: image part has neither a URL nor inline data")
+	case len(p.Data) > 0 && p.MediaType == "":
+		return fmt.Errorf("model: image part with inline data requires a media type")
+	}
+	return nil
 }
 
 // ToolSpec advertises one tool to the model. Schema is a JSON Schema
