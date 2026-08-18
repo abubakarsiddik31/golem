@@ -1,6 +1,7 @@
 package azure
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -43,10 +44,24 @@ type chatJSONSchema struct {
 }
 
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
+	Role string `json:"role"`
+	// Content is the message text, or a multimodal content-part array
+	// when the message carries image parts; see toWireContent.
+	Content    any            `json:"content,omitempty"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+// chatContentPart is one entry of a multimodal content array: the text of
+// the message or a provider-fetched image.
+type chatContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *chatImageURL `json:"image_url,omitempty"`
+}
+
+type chatImageURL struct {
+	URL string `json:"url"`
 }
 
 type chatToolCall struct {
@@ -129,12 +144,34 @@ func toWireMessages(messages []model.Message) []chatMessage {
 	for _, message := range messages {
 		wire = append(wire, chatMessage{
 			Role:       toWireRole(message.Role),
-			Content:    message.Content,
+			Content:    toWireContent(message),
 			ToolCalls:  toWireToolCalls(message.ToolCalls),
 			ToolCallID: message.ToolCallID,
 		})
 	}
 	return wire
+}
+
+// toWireContent renders message content: the text alone when no parts are
+// attached, or a text part followed by one image part per attached part.
+// Inline image data becomes a data URL, the only inline form the
+// chat-completions content array accepts.
+func toWireContent(message model.Message) any {
+	if len(message.Parts) == 0 {
+		return message.Content
+	}
+	parts := make([]chatContentPart, 0, 1+len(message.Parts))
+	if message.Content != "" {
+		parts = append(parts, chatContentPart{Type: "text", Text: message.Content})
+	}
+	for _, part := range message.Parts {
+		url := part.URL
+		if len(part.Data) > 0 {
+			url = "data:" + part.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+		}
+		parts = append(parts, chatContentPart{Type: "image_url", ImageURL: &chatImageURL{URL: url}})
+	}
+	return parts
 }
 
 func toWireRole(role model.Role) string {
@@ -186,6 +223,13 @@ func toWireTools(specs []model.ToolSpec) []chatTool {
 	return wire
 }
 
+// contentText extracts the text of a decoded content field. Assistant
+// responses the agent consumes are text; any other shape decodes as empty.
+func contentText(content any) string {
+	text, _ := content.(string)
+	return text
+}
+
 // normalizeArguments converts stringified wire arguments to raw JSON,
 // mapping an empty string to an empty object.
 func normalizeArguments(arguments string) json.RawMessage {
@@ -224,7 +268,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
-			Content:   choice.Content,
+			Content:   contentText(choice.Content),
 			ToolCalls: calls,
 		},
 		Usage: model.Usage{

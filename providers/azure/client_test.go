@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -226,5 +227,56 @@ func TestGeneratePropagatesCancellation(t *testing.T) {
 	}
 	if model.IsRetryable(err) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
+	}
+}
+
+func TestGenerateMapsPromptPartsToContentArray(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"choices": [{"message": {"role": "assistant", "content": "a red square"}}]
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{
+			Role:    model.RoleUser,
+			Content: "what is this",
+			Parts: []model.Part{
+				model.ImageURL("https://example.com/a.png"),
+				model.ImageData("image/png", []byte{1, 2}),
+			},
+		},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+
+	var content []map[string]any
+	if err := json.Unmarshal(sent.Messages[0].Content, &content); err != nil {
+		t.Fatalf("user content is not an array: %s", sent.Messages[0].Content)
+	}
+	wantParts := []map[string]any{
+		{"type": "text", "text": "what is this"},
+		{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+		{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AQI="}},
+	}
+	if len(content) != len(wantParts) {
+		t.Fatalf("content array length = %d, want %d: %s", len(content), len(wantParts), sent.Messages[0].Content)
+	}
+	for i, want := range wantParts {
+		if !reflect.DeepEqual(content[i], want) {
+			t.Fatalf("content[%d] = %#v, want %#v", i, content[i], want)
+		}
 	}
 }
