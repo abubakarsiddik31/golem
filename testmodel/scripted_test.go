@@ -1,6 +1,7 @@
 package testmodel_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -185,5 +186,43 @@ func TestScriptedDrivesAnAgentEndToEnd(t *testing.T) {
 	}
 	if last := requests[1].Messages[len(requests[1].Messages)-1]; last.Role != model.RoleTool || last.Content != "Anne" {
 		t.Fatalf("second request tail = %#v", last)
+	}
+}
+
+func TestRecordedRequestsDefendPartEvidence(t *testing.T) {
+	t.Parallel()
+
+	client := testmodel.New().Respond(model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "a chart"},
+	})
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	promptPart := model.ImageData("image/png", []byte{1, 2, 3})
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "describe",
+		golem.WithPromptParts(promptPart)); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Mutating the caller's part — after it was sent — must not rewrite
+	// the recorded evidence, and mutating the recording must not either.
+	promptPart.Data[0] = 99
+	requests := client.Requests()
+	sent := requests[0].Messages[len(requests[0].Messages)-1].Parts[0]
+	if !bytes.Equal(sent.Data, []byte{1, 2, 3}) {
+		t.Fatalf("recorded part data rewritten through caller alias: %v", sent.Data)
+	}
+	requests[0].Messages[len(requests[0].Messages)-1].Parts[0].Data[0] = 77
+	again := client.Requests()
+	still := again[0].Messages[len(again[0].Messages)-1].Parts[0]
+	if !bytes.Equal(still.Data, []byte{1, 2, 3}) {
+		t.Fatalf("recorded part data rewritten through returned slice: %v", still.Data)
 	}
 }

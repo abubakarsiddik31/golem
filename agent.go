@@ -230,6 +230,61 @@ type UsageLimit struct {
 	TotalTokens  int
 }
 
+// runOptions carries per-run input configuration.
+type runOptions struct {
+	promptParts []model.Part
+}
+
+// RunOption customizes a single run. Options are evaluated once, at run
+// start; invalid input fails the run before any model call.
+type RunOption func(*runOptions)
+
+// WithPromptParts appends non-text parts, such as images, after the prompt
+// text of this run's user message. Parts must be well-formed (see
+// model.Part.Validate); a malformed part, or parts on a history message
+// other than a user message, fails the run up front.
+func WithPromptParts(parts ...model.Part) RunOption {
+	return func(opts *runOptions) {
+		opts.promptParts = append(opts.promptParts, parts...)
+	}
+}
+
+// WithPromptImageURL attaches one image reachable at url; the provider
+// fetches it. See the multimodal support each adapter documents — not
+// every provider accepts image URLs.
+func WithPromptImageURL(url string) RunOption {
+	return WithPromptParts(model.ImageURL(url))
+}
+
+// WithPromptImageData attaches one inline image with its media type, such
+// as "image/png". Data is application-owned: treat it as immutable once
+// attached.
+func WithPromptImageData(mediaType string, data []byte) RunOption {
+	return WithPromptParts(model.ImageData(mediaType, data))
+}
+
+// validatePromptInput checks the parts this run attaches: every part is
+// well-formed, and history carries parts only on user messages. It runs
+// before any model call so invalid input never reaches a provider.
+func validatePromptInput(promptParts []model.Part, history []model.Message) error {
+	for i, part := range promptParts {
+		if err := part.Validate(); err != nil {
+			return fmt.Errorf("golem: prompt part %d: %w", i, err)
+		}
+	}
+	for i, message := range history {
+		if message.Role != model.RoleUser && len(message.Parts) > 0 {
+			return fmt.Errorf("golem: history message %d: parts are only supported on user messages", i)
+		}
+		for j, part := range message.Parts {
+			if err := part.Validate(); err != nil {
+				return fmt.Errorf("golem: history message %d part %d: %w", i, j, err)
+			}
+		}
+	}
+	return nil
+}
+
 // WithUsageLimit bounds the tokens a single run may consume, counted
 // across every model turn, retried call, and correction round. The check
 // runs after each model response against the run's cumulative usage: the
@@ -362,8 +417,8 @@ type Result[Output any] struct {
 // Errors are wrapped in RunError with the failing stage. Cancellation and
 // deadline errors are returned unwrapped so callers can match them
 // directly with errors.Is.
-func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string) (Result[Output], error) {
-	return a.execute(ctx, runCtx, nil, prompt, nil)
+func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string, opts ...RunOption) (Result[Output], error) {
+	return a.execute(ctx, runCtx, nil, prompt, nil, opts...)
 }
 
 // RunWithHistory continues a conversation. history — typically the
@@ -378,8 +433,8 @@ func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], 
 // result — from a crashed or cancelled run, or hand-built history — gets a
 // synthesized result stating no outcome was produced, and a result whose
 // call is absent is dropped.
-func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string) (Result[Output], error) {
-	return a.execute(ctx, runCtx, history, prompt, nil)
+func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, opts ...RunOption) (Result[Output], error) {
+	return a.execute(ctx, runCtx, history, prompt, nil, opts...)
 }
 
 // RunStream executes the agent like Run while streaming progress: every
@@ -397,23 +452,32 @@ func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunCont
 // the run and surfaces at the model stage with the original error
 // reachable via errors.Is. A nil onDelta is allowed and discards
 // fragments.
-func (a *Agent[Deps, Output]) RunStream(ctx context.Context, runCtx RunContext[Deps], prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
+func (a *Agent[Deps, Output]) RunStream(ctx context.Context, runCtx RunContext[Deps], prompt string, onDelta func(model.Delta) error, opts ...RunOption) (Result[Output], error) {
 	if _, ok := a.model.(model.StreamingModel); !ok {
 		return Result[Output]{}, fmt.Errorf("golem: model %T does not support streaming", a.model)
 	}
-	return a.execute(ctx, runCtx, nil, prompt, onDelta)
+	return a.execute(ctx, runCtx, nil, prompt, onDelta, opts...)
 }
 
 // RunStreamWithHistory continues a conversation like RunWithHistory while
 // streaming progress; see RunStream for the streaming contract.
-func (a *Agent[Deps, Output]) RunStreamWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
+func (a *Agent[Deps, Output]) RunStreamWithHistory(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error, opts ...RunOption) (Result[Output], error) {
 	if _, ok := a.model.(model.StreamingModel); !ok {
 		return Result[Output]{}, fmt.Errorf("golem: model %T does not support streaming", a.model)
 	}
-	return a.execute(ctx, runCtx, history, prompt, onDelta)
+	return a.execute(ctx, runCtx, history, prompt, onDelta, opts...)
 }
 
-func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error) (Result[Output], error) {
+func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error, opts ...RunOption) (Result[Output], error) {
+	var runOpts runOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&runOpts)
+		}
+	}
+	if err := validatePromptInput(runOpts.promptParts, history); err != nil {
+		return Result[Output]{}, err
+	}
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
 		if a.toolChoice != "" && t.Name != a.toolChoice {
@@ -433,7 +497,7 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		retry.Backoff = exponentialBackoff
 	}
 
-	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt)
+	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
 	var usage model.Usage
 
 	for attempt := 0; ; attempt++ {
@@ -553,9 +617,9 @@ func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx Ru
 
 // requestMessages builds the ordered request conversation: the run's
 // resolved instructions when set, the repaired history with system messages
-// removed (instructions govern every run), and the new user
-// prompt.
-func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string) []model.Message {
+// removed (instructions govern every run), and the new user prompt with
+// its attached parts.
+func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part) []model.Message {
 	repaired := runner.RepairHistory(history)
 	messages := make([]model.Message, 0, len(repaired)+2)
 	if instructions != "" {
@@ -570,7 +634,7 @@ func (a *Agent[Deps, Output]) requestMessages(instructions string, history []mod
 		}
 		messages = append(messages, message)
 	}
-	return append(messages, model.Message{Role: model.RoleUser, Content: prompt})
+	return append(messages, model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts})
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed

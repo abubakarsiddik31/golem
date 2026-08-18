@@ -1,8 +1,10 @@
 package golem_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abubakarsiddik31/golem"
@@ -131,5 +133,104 @@ func TestAgentRunClassifiesModelAndDecodeFailures(t *testing.T) {
 				t.Fatalf("Run() error = %v, want cause %v", err, test.cause)
 			}
 		})
+	}
+}
+
+func TestRunWithPromptPartsAttachesPartsToUserMessage(t *testing.T) {
+	t.Parallel()
+
+	png := []byte{1, 2, 3}
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "a red square"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{},
+		"describe these",
+		golem.WithPromptImageURL("https://example.com/a.png"),
+		golem.WithPromptImageData("image/png", png))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	last := client.request.Messages[len(client.request.Messages)-1]
+	if last.Role != model.RoleUser || last.Content != "describe these" {
+		t.Fatalf("prompt message malformed: %#v", last)
+	}
+	if len(last.Parts) != 2 {
+		t.Fatalf("prompt carries %d parts, want 2", len(last.Parts))
+	}
+	if last.Parts[0].Kind != model.PartImage || last.Parts[0].URL != "https://example.com/a.png" || len(last.Parts[0].Data) != 0 {
+		t.Fatalf("part[0] = %#v, want the URL image", last.Parts[0])
+	}
+	if last.Parts[1].MediaType != "image/png" || !bytes.Equal(last.Parts[1].Data, png) {
+		t.Fatalf("part[1] = %#v", last.Parts[1])
+	}
+	if result.Messages[len(result.Messages)-2].Parts == nil {
+		t.Fatal("result evidence lost the prompt parts")
+	}
+}
+
+func TestRunWithMalformedPromptPartFailsBeforeAnyModelCall(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "unused"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "hi",
+		golem.WithPromptParts(model.Part{Kind: model.PartImage}))
+	if err == nil {
+		t.Fatal("malformed part accepted")
+	}
+	if !strings.Contains(err.Error(), "prompt part 0") {
+		t.Fatalf("Run() error = %v, want it to name prompt part 0", err)
+	}
+	if client.request.Messages != nil {
+		t.Fatal("model was called despite an invalid part")
+	}
+}
+
+func TestRunWithHistoryRejectsPartsOutsideUserMessages(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "ok"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	history := []model.Message{{Role: model.RoleAssistant, Content: "hi",
+		Parts: []model.Part{model.ImageURL("https://example.com/a.png")}}}
+	_, err = agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "go on")
+	if err == nil || !strings.Contains(err.Error(), "user messages") {
+		t.Fatalf("RunWithHistory() error = %v, want rejection of non-user parts", err)
+	}
+	if client.request.Messages != nil {
+		t.Fatal("model was called despite invalid history parts")
 	}
 }

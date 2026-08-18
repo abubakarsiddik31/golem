@@ -123,5 +123,24 @@ func cloneMessage(message model.Message) model.Message {
 	for i := range message.ToolCalls {
 		message.ToolCalls[i].Args = append(json.RawMessage(nil), message.ToolCalls[i].Args...)
 	}
+	message.Parts = cloneParts(message.Parts)
 	return message
+}
+
+// cloneParts copies parts and their inline data so recorded evidence
+// cannot be rewritten through a mutated alias.
+func cloneParts(parts []model.Part) []model.Part {
+	if parts == nil {
+		return nil
+	}
+	copied := make([]model.Part, len(parts))
+	for i, part := range parts {
+		if len(part.Data) > 0 {
+			data := make([]byte, len(part.Data))
+			copy(data, part.Data)
+			part.Data = data
+		}
+		copied[i] = part
+	}
+	return copied
 }
