@@ -3,6 +3,8 @@ package golem_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abubakarsiddik31/golem"
@@ -195,5 +197,165 @@ func TestRunWithHistoryExecutesToolsMidConversation(t *testing.T) {
 	}
 	if result.Output != "Anne is the player" {
 		t.Fatalf("Output = %q", result.Output)
+	}
+}
+
+// trimHistory builds a history whose shape exercises TrimHistory's
+// boundary rules: a user turn, an assistant tool-call turn answered by a
+// result, then later plain turns.
+func trimHistoryFixture() []model.Message {
+	return []model.Message{
+		{Role: model.RoleUser, Content: "oldest"},
+		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "call-1", Name: "get_player_name"}}},
+		{Role: model.RoleTool, ToolCallID: "call-1", ToolName: "get_player_name", Content: "Ada"},
+		{Role: model.RoleUser, Content: "middle"},
+		{Role: model.RoleAssistant, Content: "middle answer"},
+		{Role: model.RoleUser, Content: "newest"},
+	}
+}
+
+func TestTrimHistoryKeepsNewestMessagesAtTurnBoundaries(t *testing.T) {
+	t.Parallel()
+
+	history := trimHistoryFixture()
+
+	// A budget of 4 keeps [tool, user, assistant, user]; the tool result
+	// whose call was trimmed cannot open the request, so the boundary
+	// rule advances to the user turn that can.
+	trimmed, err := golem.TrimHistory(4)(context.Background(), history)
+	if err != nil {
+		t.Fatalf("TrimHistory(4) error = %v", err)
+	}
+	if len(trimmed) != 3 {
+		t.Fatalf("trimmed length = %d, want 3 (user, assistant, user)", len(trimmed))
+	}
+	if trimmed[0].Content != "middle" || trimmed[1].Content != "middle answer" || trimmed[2].Content != "newest" {
+		t.Fatalf("trimmed = %#v, want the newest three-message turn span", trimmed)
+	}
+
+	// A budget at or above the history length changes nothing.
+	same, err := golem.TrimHistory(len(history))(context.Background(), history)
+	if err != nil {
+		t.Fatalf("TrimHistory(len) error = %v", err)
+	}
+	if len(same) != len(history) {
+		t.Fatalf("oversized budget trimmed %d to %d messages", len(history), len(same))
+	}
+
+	// The boundary rule also skips a leading assistant tool-call turn,
+	// whose results were trimmed: repair would otherwise synthesize them.
+	callFirst := []model.Message{
+		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "call-9", Name: "get_player_name"}}},
+		{Role: model.RoleUser, Content: "keep me"},
+	}
+	trimmed, err = golem.TrimHistory(1)(context.Background(), callFirst)
+	if err != nil {
+		t.Fatalf("TrimHistory(1) error = %v", err)
+	}
+	if len(trimmed) != 1 || trimmed[0].Content != "keep me" {
+		t.Fatalf("trimmed = %#v, want only the user message", trimmed)
+	}
+}
+
+func TestTrimHistoryRejectsDegenerateInput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	if _, err := golem.TrimHistory(0)(ctx, trimHistoryFixture()); err == nil {
+		t.Fatal("zero budget accepted")
+	}
+	toolOnly := []model.Message{
+		{Role: model.RoleTool, ToolCallID: "call-1", Content: "x"},
+		{Role: model.RoleTool, ToolCallID: "call-2", Content: "y"},
+		{Role: model.RoleTool, ToolCallID: "call-3", Content: "z"},
+	}
+	if _, err := golem.TrimHistory(2)(ctx, toolOnly); err == nil {
+		t.Fatal("all-tool-result cut accepted; nothing can open a conversation")
+	}
+}
+
+func TestRunWithHistoryProcessorSendsProcessedHistory(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "done"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(4)),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{},
+		trimHistoryFixture(), "next"); err != nil {
+		t.Fatalf("RunWithHistory() error = %v", err)
+	}
+
+	sent := client.request.Messages
+	// no instructions configured: trimmed history(3) + fresh prompt(1)
+	if len(sent) != 4 {
+		t.Fatalf("request carries %d messages, want 4: %#v", len(sent), sent)
+	}
+	if sent[0].Content != "middle" || sent[1].Content != "middle answer" || sent[2].Content != "newest" {
+		t.Fatalf("history not trimmed to the newest turn span: %#v", sent[:3])
+	}
+}
+
+func TestRunWithHistoryProcessorFailsBeforeModelCall(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithHistoryProcessor[struct{}, string](func(ctx context.Context, history []model.Message) ([]model.Message, error) {
+			return nil, errors.New("cannot compress")
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.Run(context.Background(), golem.RunContext[struct{}]{}, "hi")
+	if err == nil || !strings.Contains(err.Error(), "history processor") {
+		t.Fatalf("Run() error = %v, want the processor failure", err)
+	}
+	if client.request.Messages != nil {
+		t.Fatal("model was called despite the processor failing")
+	}
+}
+
+func TestHistoryProcessorRunsBeforePartValidation(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "ok"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(1)),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// The assistant parts would fail validation, but the processor trims
+	// them away first: only the newest user message survives.
+	history := []model.Message{
+		{Role: model.RoleAssistant, Content: "old", Parts: []model.Part{model.ImageURL("https://example.com/a.png")}},
+		{Role: model.RoleUser, Content: "keep"},
+	}
+	if _, err := agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "next"); err != nil {
+		t.Fatalf("RunWithHistory() error = %v; trimmed history should not be part-validated", err)
 	}
 }

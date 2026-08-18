@@ -47,6 +47,7 @@ type Agent[Deps any, Output any] struct {
 	decoder           OutputDecoder[Output]
 	instructions      string
 	instructionsFunc  func(ctx context.Context, runCtx RunContext[Deps]) string
+	historyProcessor  HistoryProcessor
 	tools             []tool.Tool[Deps]
 	maxIterations     int
 	maxAttempts       int
@@ -474,6 +475,16 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		if opt != nil {
 			opt(&runOpts)
 		}
+	}
+	if a.historyProcessor != nil {
+		processed, err := a.historyProcessor(ctx, history)
+		if err != nil {
+			return Result[Output]{}, fmt.Errorf("golem: history processor: %w", err)
+		}
+		if processed == nil {
+			processed = []model.Message{}
+		}
+		history = processed
 	}
 	if err := validatePromptInput(runOpts.promptParts, history); err != nil {
 		return Result[Output]{}, err
