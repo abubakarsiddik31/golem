@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Bound what one run can consume: input, output, and total tokens, counted
-across everything the run does.
+Bound what one run can consume: input, output, and total tokens, plus the
+model requests and tool executions it performs, counted across everything
+the run does.
 
 ## When to use
 
@@ -17,7 +18,7 @@ limits when the bound must be about tokens or spend, not turns.
 
 ## How it works
 
-`golem.UsageLimit` carries three independent bounds; each zero value
+`golem.UsageLimit` carries five independent bounds; each zero value
 means unbounded and the zero struct disables the limit entirely. Usage is
 counted cumulatively across every model turn, retried call, and
 correction round, and checked after each model response: the response
@@ -25,6 +26,12 @@ that crosses a bound fails the run at the `usage` stage — even when it
 would have decoded successfully. The failure wraps a typed
 `golem.UsageLimitError` naming the crossed dimension, its bound, and the
 run's actual usage.
+
+Tokens come from provider-reported usage. Requests and tool executions
+are counted by the run itself: a request is one provider call, retried
+attempts included, and a tool execution is one tool run — rejected calls
+count, because the tool ran; unknown-tool requests and interrupted
+output-tool co-emissions do not.
 
 ## Example
 
@@ -45,14 +52,15 @@ if errors.As(err, &usageErr) {
 ## API surface
 
 - `golem.WithUsageLimit[Deps, Output](limit UsageLimit)`
-- `golem.UsageLimit{InputTokens, OutputTokens, TotalTokens int}`
+- `golem.UsageLimit{InputTokens, OutputTokens, TotalTokens, Requests, ToolCalls int}`
 - `golem.UsageLimitError{Kind, Limit, Actual}` via `RunError{Stage: StageUsage}`
 - `golem.StageUsage`
 
 ## Gotchas
 
-- Providers that do not report usage count as zero tokens — a limit never
-  trips without provider-reported usage.
+- Providers that do not report usage count as zero tokens — a token limit
+  never trips without provider-reported usage. Request and tool-call
+  bounds count locally and always apply.
 - Negative values fail construction.
 - The check is post-response by design: one response may overshoot the
   bound before the run stops.

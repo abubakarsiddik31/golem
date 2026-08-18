@@ -25,6 +25,22 @@ jitter). Cancellation always wins over any retry. Exhausted retries fail
 at the `model` stage, preserving the provider cause for `errors.Is` and
 `errors.As` and reporting the attempt count in the message.
 
+### Falling back to another model
+
+Retrying waits out a failure; a fallback moves past it.
+`model.NewFallback(primary, alternates...)` composes models that try in
+order: the first success answers, a non-retryable failure returns
+immediately unchanged, and when every model fails the last error returns
+with its classification intact, so the run's own retry policy still
+applies. Cancellation always wins over moving on. Skipped failures are
+not surfaced — only the answer or the final error is.
+
+Streams follow one rule: a fallback happens only before the first
+forwarded fragment. After any fragment was delivered, falling back would
+replay what the caller already saw, so the error returns as-is. Every
+member must support streaming; one that does not is a configuration
+error, not a fallback candidate.
+
 ## Example
 
 See `ExampleWithOutputRetries` for budgeted correction; retries compose:
@@ -38,15 +54,26 @@ agent, _ := golem.New[struct{}, string](client, decoder,
 )
 ```
 
+`examples/fallback` chains a primary model with a backup and caps the
+run's requests; set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL` and
+`OPENAI_FALLBACK_MODEL`) to run it:
+
+```go
+fallback, _ := model.NewFallback(primary, backup)
+agent, _ := golem.New[struct{}, string](fallback, decoder)
+```
+
 ## API surface
 
 - `golem.WithMaxAttempts[Deps, Output](attempts int)`
 - `golem.WithRetryBackoff[Deps, Output](backoff func(attempt int) time.Duration)`
 - `model.IsRetryable(err) bool`
+- `model.NewFallback(primary model.Model, alternates ...model.Model) (*model.Fallback, error)`
 
 ## Gotchas
 
 - Values below 1 fail construction; the default is 1 (no retries).
 - Streamed model turns are single-attempt — replaying fragments a caller
-  already saw would be wrong; see [Streaming](streaming.md).
+  already saw would be wrong; see [Streaming](streaming.md). A
+  `model.Fallback` honors the same rule between its members.
 - Decisions live in `docs/adr/0004-runner-retry-policy.md`.

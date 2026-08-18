@@ -38,6 +38,9 @@ func main() {
 			return response.Message.Content, nil
 		}),
 		golem.WithInstructions[struct{}, string]("Answer in one short sentence."),
+		// Long chats stay bounded: every run sends at most the newest 20
+		// messages of history, cut at a turn that can open a request.
+		golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(20)),
 	)
 	if err != nil {
 		fmt.Println("golem.New:", err)

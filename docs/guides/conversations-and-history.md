@@ -45,6 +45,21 @@ timestamps, so repairing already-repaired history leaves it unchanged and
 repeated resumes stay prompt-cache friendly. Repaired messages become part
 of the run's canonical `result.Messages`.
 
+### History processing
+
+Long conversations outgrow every context window. `WithHistoryProcessor`
+installs a function that rewrites the supplied history once per run —
+before validation and repair — so its output, not its input, reaches the
+provider. A processor error fails the run before any model call.
+
+`golem.TrimHistory(maxMessages)` is the builtin: it keeps the newest
+messages, then advances past anything that cannot open a request — tool
+results whose requesting call was trimmed, and assistant tool-call turns
+whose results were trimmed. Repair would otherwise reattach synthesized
+results to those turns, paying tokens for evidence the trim meant to
+drop. The processor applies to the history only; the fresh prompt and
+resolved instructions always join in full.
+
 ## Example
 
 Run `examples/conversation` for an interactive chat loop:
@@ -63,12 +78,20 @@ golem.WithInstructionsFunc[MyDeps, string](
     })
 ```
 
+`examples/conversation` bounds every run to the newest 20 messages:
+
+```go
+golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(20))
+```
+
 ## API surface
 
 - `(*Agent).RunWithHistory(ctx, runCtx, history []model.Message, prompt) (Result[Output], error)`
 - `(*Agent).RunStreamWithHistory(ctx, runCtx, history, prompt, onDelta)`
 - `golem.WithInstructions[Deps, Output](string)`
 - `golem.WithInstructionsFunc[Deps, Output](InstructionsFunc[Deps])`
+- `golem.WithHistoryProcessor[Deps, Output](HistoryProcessor)`
+- `golem.TrimHistory(maxMessages int) HistoryProcessor`
 
 ## Gotchas
 
@@ -81,4 +104,11 @@ golem.WithInstructionsFunc[MyDeps, string](
 - Repair pairs calls and results by call ID; calls without an ID cannot
   be paired and pass through unrepaired. Duplicate results for one call
   keep the first and drop the rest.
+- The history processor runs on exactly what the caller supplies and
+  once per run: nothing re-runs it, so a summarizing processor cannot
+  build on its own earlier output within one run.
+- `TrimHistory` returns short histories unchanged — the boundary rule
+  applies only when a cut actually happens — and fails the run when a
+  cut leaves nothing that can open a request, such as a history of only
+  tool results.
 - Decisions live in `docs/adr/0005-message-history.md`.

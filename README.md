@@ -44,13 +44,13 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
-| [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, dynamic instructions |
+| [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
 | [Multimodal input](docs/guides/multimodal-input.md) | Images in prompts, per-provider mapping |
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
-| [Retries](docs/guides/retries.md) | Transient model failures, backoff, cancellation precedence |
+| [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
-| [Usage limits](docs/guides/usage-limits.md) | Bounding a run's token consumption |
+| [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
 
 Design decisions live in [docs/adr/](docs/adr/); each guide links the ADR that decided its behavior.
@@ -68,6 +68,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
+| [`fallback`](examples/fallback/main.go) | Primary model with a fallback and a request bound |
 | [`anthropic`](examples/anthropic/main.go) | Anthropic Messages API adapter |
 | [`gemini`](examples/gemini/main.go) | Google Gemini GenerateContent adapter |
 | [`azure`](examples/azure/main.go) | Azure OpenAI deployment adapter |
