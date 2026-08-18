@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 
@@ -59,6 +60,18 @@ type wireBlock struct {
 	// Result carries the outcome handed back to the model.
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Result    string `json:"content,omitempty"`
+	// Source carries an "image" block's payload: a provider-fetched URL
+	// or base64 inline data with its media type.
+	Source *wireSource `json:"source,omitempty"`
+}
+
+// wireSource is an image block source: a URL the provider fetches, or
+// base64 inline data with its media type.
+type wireSource struct {
+	Type      string `json:"type"`
+	URL       string `json:"url,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 // wireTool advertises one tool to the model.
@@ -105,7 +118,7 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage) 
 			}}
 		default:
 			role = "user"
-			blocks = []wireBlock{{Type: "text", Text: message.Content}}
+			blocks = userBlocks(message)
 		}
 		if len(turns) > 0 && turns[len(turns)-1].Role == role {
 			turns[len(turns)-1].Content = append(turns[len(turns)-1].Content, blocks...)
@@ -130,6 +143,37 @@ func assistantBlocks(message model.Message) []wireBlock {
 			Name:  call.Name,
 			Input: normalizeInput(call.Args),
 		})
+	}
+	return blocks
+}
+
+// userBlocks renders a user message: its text as a text block when
+// present, followed by one image block per attached part. URL parts send
+// a provider-fetched source; inline data sends base64.
+func userBlocks(message model.Message) []wireBlock {
+	var blocks []wireBlock
+	if message.Content != "" {
+		blocks = append(blocks, wireBlock{Type: "text", Text: message.Content})
+	}
+	for _, part := range message.Parts {
+		if part.URL != "" {
+			blocks = append(blocks, wireBlock{
+				Type:   "image",
+				Source: &wireSource{Type: "url", URL: part.URL},
+			})
+			continue
+		}
+		blocks = append(blocks, wireBlock{
+			Type: "image",
+			Source: &wireSource{
+				Type:      "base64",
+				MediaType: part.MediaType,
+				Data:      base64.StdEncoding.EncodeToString(part.Data),
+			},
+		})
+	}
+	if len(blocks) == 0 {
+		blocks = []wireBlock{{Type: "text", Text: message.Content}}
 	}
 	return blocks
 }

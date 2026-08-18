@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -338,5 +339,57 @@ func TestGenerateMapsOutputSchemaToOutputConfig(t *testing.T) {
 	}
 	if sent.OutputConfig != nil {
 		t.Fatalf("output_config = %#v, want nil without an output schema", sent.OutputConfig)
+	}
+}
+
+func TestGenerateMapsPromptPartsToImageBlocks(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"content": [{"type": "text", "text": "a red square"}],
+		"usage": {"input_tokens": 10, "output_tokens": 4}
+	}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{
+			Role:    model.RoleUser,
+			Content: "what is this",
+			Parts: []model.Part{
+				model.ImageURL("https://example.com/a.png"),
+				model.ImageData("image/png", []byte{1, 2}),
+			},
+		},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var sent struct {
+		Messages []struct {
+			Role    string           `json:"role"`
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("request body is not valid JSON: %v", err)
+	}
+
+	wantBlocks := []map[string]any{
+		{"type": "text", "text": "what is this"},
+		{"type": "image", "source": map[string]any{"type": "url", "url": "https://example.com/a.png"}},
+		{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "AQI="}},
+	}
+	if len(sent.Messages) != 1 || sent.Messages[0].Role != "user" {
+		t.Fatalf("wire messages = %#v", sent.Messages)
+	}
+	got := sent.Messages[0].Content
+	if len(got) != len(wantBlocks) {
+		t.Fatalf("user turn blocks = %#v, want %d blocks", got, len(wantBlocks))
+	}
+	for i, want := range wantBlocks {
+		if !reflect.DeepEqual(got[i], want) {
+			t.Fatalf("block[%d] = %#v, want %#v", i, got[i], want)
+		}
 	}
 }
