@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem smooth ribbon G mark">
+  <!-- the carved G as one smooth ribbon of clay -->
+  <path d="M 319 181 A 98 98 0 1 0 354 256" fill="none" stroke="#5B6678" stroke-width="50" stroke-linecap="round"/>
+  <!-- the arm: the word gliding into the bowl -->
+  <path d="M 354 256 C 344 242 316 240 284 248" fill="none" stroke="#00ADD8" stroke-width="50" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem brick G monogram on dark badge">
+  <rect width="512" height="512" rx="112" fill="#141A26"/>
+  <g fill="#7E899C">
+    <!-- top-left arc -->
+    <rect x="48" y="48" width="72" height="72" rx="20"/>
+    <rect x="134" y="48" width="72" height="72" rx="20"/>
+    <rect x="220" y="48" width="72" height="72" rx="20"/>
+    <!-- left wall -->
+    <rect x="48" y="134" width="72" height="72" rx="20"/>
+    <rect x="48" y="220" width="72" height="72" rx="20"/>
+    <rect x="48" y="306" width="72" height="72" rx="20"/>
+    <!-- right wall (aperture open at top-right) -->
+    <rect x="392" y="134" width="72" height="72" rx="20"/>
+    <rect x="392" y="220" width="72" height="72" rx="20"/>
+    <rect x="392" y="306" width="72" height="72" rx="20"/>
+    <!-- bottom arc -->
+    <rect x="48" y="392" width="72" height="72" rx="20"/>
+    <rect x="134" y="392" width="72" height="72" rx="20"/>
+    <rect x="220" y="392" width="72" height="72" rx="20"/>
+    <rect x="306" y="392" width="72" height="72" rx="20"/>
+    <rect x="392" y="392" width="72" height="72" rx="20"/>
+  </g>
+  <!-- the animating block: the arm of the G -->
+  <rect x="306" y="220" width="72" height="72" rx="20" fill="#00ADD8"/>
+</svg>

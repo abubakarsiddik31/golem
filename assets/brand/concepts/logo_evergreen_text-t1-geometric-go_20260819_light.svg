@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" role="img" aria-label="golem geometric wordmark, go in Go cyan">
+  <!-- g -->
+  <g stroke="#00ADD8" stroke-width="40" stroke-linecap="round" fill="none">
+    <circle cx="90" cy="180" r="40"/>
+    <path d="M 130 180 L 130 270 Q 130 306 94 306"/>
+  </g>
+  <!-- o -->
+  <circle cx="250" cy="180" r="40" fill="none" stroke="#00ADD8" stroke-width="40"/>
+  <!-- l, e, m -->
+  <g stroke="#232B38" stroke-width="40" stroke-linecap="round" fill="none">
+    <line x1="370" y1="60" x2="370" y2="220"/>
+    <path d="M 504 218 A 40 40 0 1 1 528 194"/>
+    <line x1="450" y1="180" x2="530" y2="180"/>
+    <line x1="610" y1="140" x2="610" y2="220"/>
+    <path d="M 610 200 A 60 60 0 0 1 730 200 L 730 220"/>
+    <path d="M 730 200 A 60 60 0 0 1 850 200 L 850 220"/>
+  </g>
+  <!-- e: the golem face — eyes set into the bowl, crossbar as mouth -->
+  <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
+  <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+</svg>

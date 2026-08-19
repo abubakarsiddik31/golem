@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="golem — Go-first framework for dependable AI agents">
+  <rect width="1280" height="640" fill="#141A26"/>
+  <g transform="translate(640,290) scale(0.85) translate(-450,-183)">
+    <g stroke="#00ADD8" stroke-width="40" stroke-linecap="round" fill="none">
+      <circle cx="90" cy="180" r="40"/>
+      <path d="M 130 180 L 130 270 Q 130 306 94 306"/>
+    </g>
+    <circle cx="250" cy="180" r="40" fill="none" stroke="#00ADD8" stroke-width="40"/>
+    <g stroke="#E8EDF4" stroke-width="40" stroke-linecap="round" fill="none">
+      <line x1="370" y1="60" x2="370" y2="220"/>
+      <path d="M 507 214 A 40 40 0 1 1 535 205"/>
+      <line x1="450" y1="180" x2="530" y2="180"/>
+      <line x1="610" y1="140" x2="610" y2="220"/>
+      <path d="M 610 200 A 60 60 0 0 1 730 200 L 730 220"/>
+      <path d="M 730 200 A 60 60 0 0 1 850 200 L 850 220"/>
+    </g>
+    <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
+    <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+  </g>
+  <text x="640" y="560" text-anchor="middle" font-family="ui-rounded, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="30" letter-spacing="3" fill="#7E899C">GO-FIRST FRAMEWORK FOR DEPENDABLE AI AGENTS</text>
+</svg>

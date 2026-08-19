@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="golem mark">
+  <title>golem</title>
+  <!-- the e of the wordmark, alone: stone bowl, cyan eyes, mouth crossbar -->
+  <g transform="translate(256,256) scale(2.6) translate(-493,-180)">
+    <g stroke="#5B6678" stroke-width="40" stroke-linecap="round" fill="none">
+      <path d="M 507 214 A 40 40 0 1 1 535 205"/>
+      <line x1="450" y1="180" x2="530" y2="180"/>
+    </g>
+    <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
+    <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+  </g>
+</svg>

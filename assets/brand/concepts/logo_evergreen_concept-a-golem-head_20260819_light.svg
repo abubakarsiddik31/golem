@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem head mark">
+  <!-- ear bolts -->
+  <rect x="88" y="232" width="30" height="52" rx="12" fill="#4B5566"/>
+  <rect x="394" y="232" width="30" height="52" rx="12" fill="#4B5566"/>
+  <!-- clay slabs: brow, eyes, jaw -->
+  <rect x="140" y="104" width="232" height="88" rx="30" fill="#6E798C"/>
+  <rect x="116" y="204" width="280" height="104" rx="30" fill="#5B6678"/>
+  <rect x="140" y="320" width="232" height="88" rx="30" fill="#4B5566"/>
+  <!-- forehead inscription: the word that animates it -->
+  <line x1="256" y1="122" x2="256" y2="174" stroke="#00ADD8" stroke-width="18" stroke-linecap="round"/>
+  <!-- eyes -->
+  <rect x="164" y="230" width="56" height="56" rx="16" fill="#00ADD8"/>
+  <rect x="292" y="230" width="56" height="56" rx="16" fill="#00ADD8"/>
+  <rect x="182" y="248" width="20" height="20" rx="6" fill="#5DC9E2"/>
+  <rect x="310" y="248" width="20" height="20" rx="6" fill="#5DC9E2"/>
+  <!-- mouth -->
+  <rect x="226" y="356" width="60" height="14" rx="7" fill="#343D4B"/>
+</svg>

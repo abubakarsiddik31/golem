@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem smooth ribbon G mark on dark badge">
+  <rect width="512" height="512" rx="112" fill="#141A26"/>
+  <path d="M 319 181 A 98 98 0 1 0 354 256" fill="none" stroke="#7E899C" stroke-width="50" stroke-linecap="round"/>
+  <path d="M 354 256 C 344 242 316 240 284 248" fill="none" stroke="#00ADD8" stroke-width="50" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 360" role="img" aria-label="Golem horizontal lockup on dark">
+  <g transform="translate(20,20) scale(0.625)">
+    <rect x="88" y="232" width="30" height="52" rx="12" fill="#414B5C"/>
+    <rect x="394" y="232" width="30" height="52" rx="12" fill="#414B5C"/>
+    <rect x="140" y="104" width="232" height="88" rx="30" fill="#7A8598"/>
+    <rect x="116" y="204" width="280" height="104" rx="30" fill="#677184"/>
+    <rect x="140" y="320" width="232" height="88" rx="30" fill="#525D6F"/>
+    <line x1="256" y1="122" x2="256" y2="174" stroke="#00ADD8" stroke-width="18" stroke-linecap="round"/>
+    <rect x="164" y="230" width="56" height="56" rx="16" fill="#00ADD8"/>
+    <rect x="292" y="230" width="56" height="56" rx="16" fill="#00ADD8"/>
+    <rect x="182" y="248" width="20" height="20" rx="6" fill="#6FD5EC"/>
+    <rect x="310" y="248" width="20" height="20" rx="6" fill="#6FD5EC"/>
+    <rect x="226" y="356" width="60" height="14" rx="7" fill="#2A3140"/>
+  </g>
+  <text x="382" y="244" font-family="ui-rounded, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="190" font-weight="800" letter-spacing="-4">
+    <tspan fill="#00ADD8">go</tspan><tspan fill="#E8EDF4">lem</tspan>
+  </text>
+</svg>

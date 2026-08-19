@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" role="img" aria-label="golem wordmark with the o as a stone eye">
+  <g stroke="#232B38" stroke-width="40" stroke-linecap="round" fill="none">
+    <!-- g -->
+    <circle cx="90" cy="180" r="40"/>
+    <path d="M 130 180 L 130 270 Q 130 306 94 306"/>
+    <!-- l -->
+    <line x1="370" y1="60" x2="370" y2="220"/>
+    <!-- e -->
+    <path d="M 504 218 A 40 40 0 1 1 528 194"/>
+    <line x1="450" y1="180" x2="530" y2="180"/>
+    <!-- m -->
+    <line x1="610" y1="140" x2="610" y2="220"/>
+    <path d="M 610 200 A 60 60 0 0 1 730 200 L 730 220"/>
+    <path d="M 730 200 A 60 60 0 0 1 850 200 L 850 220"/>
+  </g>
+  <!-- o: the golem's eye in the name -->
+  <circle cx="250" cy="180" r="40" fill="none" stroke="#232B38" stroke-width="40"/>
+  <circle cx="250" cy="180" r="13" fill="#00ADD8"/>
+  <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
+  <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+</svg>

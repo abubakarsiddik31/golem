@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem inscription G on dark">
+  <!-- clay tablet -->
+  <rect x="88" y="88" width="336" height="336" rx="96" fill="#232B38"/>
+  <!-- carved G -->
+  <path d="M 318 182 A 96 96 0 1 0 352 256 L 268 256" fill="none" stroke="#0E131C" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- the inscribed word glowing in the carve -->
+  <path d="M 352 256 L 268 256" fill="none" stroke="#00ADD8" stroke-width="42" stroke-linecap="round"/>
+</svg>

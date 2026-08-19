@@ -16,6 +16,8 @@ exclude_docs: |
 
 theme:
   name: material
+  favicon: assets/images/favicon.png
+  logo: assets/images/logo.svg
   features:
     - content.code.copy
     - navigation.footer

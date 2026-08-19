@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem pebble head mark">
+  <!-- ear pebbles tucked behind the head -->
+  <circle cx="106" cy="268" r="32" fill="#4B5566"/>
+  <circle cx="406" cy="268" r="32" fill="#4B5566"/>
+  <!-- river-stone head: one smooth monolithic form -->
+  <path d="M 256 92 C 322 92 366 120 382 178 C 396 228 398 292 376 340 C 352 392 306 420 256 420 C 206 420 160 392 136 340 C 114 292 116 228 130 178 C 146 120 190 92 256 92 Z" fill="#5B6678"/>
+  <!-- forehead inscription -->
+  <path d="M 256 130 C 261 148 261 170 256 188" fill="none" stroke="#00ADD8" stroke-width="18" stroke-linecap="round"/>
+  <!-- eyes -->
+  <circle cx="192" cy="258" r="30" fill="#00ADD8"/>
+  <circle cx="320" cy="258" r="30" fill="#00ADD8"/>
+  <!-- mouth -->
+  <rect x="224" y="344" width="64" height="16" rx="8" fill="#343D4B"/>
+</svg>

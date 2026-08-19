@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo/golem-wordmark-dark.svg">
+    <img src="assets/brand/logo/golem-wordmark.svg" width="380" alt="golem">
+  </picture>
+</p>
+
 # Golem
 
 Golem is a Go-first framework for building dependable AI agents: typed dependencies and outputs, explicit tools, composable models, and an observable execution loop.
@@ -100,4 +107,4 @@ go test ./...
 go vet ./...
 ```
 
-The guides double as the published documentation site; preview it with `mkdocs serve` — see [docs/website.md](docs/website.md).
+The guides double as the published documentation site; preview it with `mkdocs serve` — see [docs/website.md](docs/website.md). Logo usage guidelines and brand assets live in [assets/brand/](assets/brand/README.md).

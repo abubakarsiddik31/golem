@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Golem one-line head mark on dark badge">
+  <rect width="512" height="512" rx="112" fill="#141A26"/>
+  <path d="M 166 116 L 346 116 Q 406 116 406 176 L 406 336 Q 406 396 346 396 L 166 396 Q 106 396 106 336 L 106 176 Q 106 116 166 116 Z" fill="none" stroke="#7E899C" stroke-width="44" stroke-linejoin="round"/>
+  <path d="M 256 148 C 261 164 261 190 256 206" fill="none" stroke="#00ADD8" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="196" cy="264" r="28" fill="#00ADD8"/>
+  <circle cx="316" cy="264" r="28" fill="#00ADD8"/>
+  <rect x="228" y="336" width="56" height="14" rx="7" fill="#39455C"/>
+</svg>
