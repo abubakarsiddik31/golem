@@ -18,3 +18,6 @@ reference/pydantic-ai/
 # Local MkDocs build output and docs preview environment
 site/
 .venv-docs/
+
+# Local superpowers planning notes; never commit.
+docs/superpowers/
