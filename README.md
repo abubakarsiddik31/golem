@@ -24,6 +24,14 @@ v0.3.0 — the core execution contract includes typed agents, evidence-preservin
 
 Read [the foundation brief](docs/foundation.md) before proposing a new public abstraction. Contributor and coding-agent rules live in [AGENTS.md](AGENTS.md).
 
+## Installation
+
+```bash
+go get github.com/abubakarsiddik31/golem
+```
+
+Golem needs Go 1.26.5 or newer and depends only on the Go standard library.
+
 ## Quick start
 
 ```go
@@ -108,3 +116,13 @@ go vet ./...
 ```
 
 The guides double as the published documentation site; preview it with `mkdocs serve` — see [docs/website.md](docs/website.md). Logo usage guidelines and brand assets live in [assets/brand/](assets/brand/README.md).
+
+## Community
+
+- [Contributing guide](CONTRIBUTING.md) — setup, required checks, and how changes are reviewed
+- [Security policy](SECURITY.md) — reporting vulnerabilities privately
+- [Code of conduct](CODE_OF_CONDUCT.md) — standards for participation
+
+## License
+
+Released under the [MIT License](LICENSE).
