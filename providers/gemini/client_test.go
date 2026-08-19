@@ -62,6 +62,12 @@ type bodyAndHeaders struct {
 	path   string
 }
 
+func (r *recordedServer) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.bodies)
+}
+
 func newClient(t *testing.T, baseURL string) *gemini.Client {
 	t.Helper()
 	client, err := gemini.New(gemini.Config{
@@ -298,6 +304,57 @@ func TestGenerateMapsOutputSchemaToGenerationConfig(t *testing.T) {
 	if sent.GenerationConfig != nil {
 		t.Fatalf("generationConfig = %#v, want nil without an output schema", sent.GenerationConfig)
 	}
+}
+
+// TestGenerateRejectsOutputSchemaCombinedWithTools is a regression test:
+// the GenerateContent API rejects JSON response mode combined with
+// function calling, so the adapter must fail at request encoding — before
+// any network call — with guidance toward tool-mode output.
+func TestGenerateRejectsOutputSchemaCombinedWithTools(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{}`)
+	defer recorder.server.Close()
+	client := newClient(t, recorder.server.URL)
+
+	request := model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "report"}},
+		ToolSpecs: []model.ToolSpec{{
+			Name:        "lookup",
+			Description: "Look something up.",
+			Schema:      json.RawMessage(`{"type":"object"}`),
+		}},
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+	}
+
+	call := func(name string, run func() error) {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			var decodeErr *gemini.DecodeError
+			if !errors.As(err, &decodeErr) {
+				t.Fatalf("error = %v, want *gemini.DecodeError", err)
+			}
+			if decodeErr.Stage != "encode request" {
+				t.Fatalf("DecodeError stage = %q, want %q", decodeErr.Stage, "encode request")
+			}
+			for _, want := range []string{"output schema", "tool", "WithOutputTool"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not mention %q", err, want)
+				}
+			}
+			if got := recorder.requestCount(); got != 0 {
+				t.Fatalf("adapter sent %d HTTP request(s); the rejection must happen before any network call", got)
+			}
+		})
+	}
+	call("Generate", func() error {
+		_, err := client.Generate(context.Background(), request)
+		return err
+	})
+	call("GenerateStream", func() error {
+		_, err := client.GenerateStream(context.Background(), request, func(model.Delta) error { return nil })
+		return err
+	})
 }
 
 func TestGenerateClassifiesProviderErrors(t *testing.T) {

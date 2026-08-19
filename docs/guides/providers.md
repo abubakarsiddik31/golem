@@ -102,7 +102,10 @@ bedrockClient, _ := bedrock.New(bedrock.Config{
   needs one that supports `response_format`.
 - Gemini structured output maps to `generationConfig` JSON responses
   (`responseMimeType` + `responseSchema`); Gemini accepts a JSON-Schema
-  subset — no `additionalProperties`.
+  subset — no `additionalProperties` — and rejects JSON response mode
+  combined with function calling, so a request carrying both an output
+  schema and tool declarations fails at request encoding with a
+  `DecodeError` pointing at tool-mode output (`golem.WithOutputTool`).
 - The Gemini SSE stream has no terminal sentinel: it ends at EOF, so a
   truncated stream cannot be detected the way the OpenAI-compatible
   (`[DONE]`) and Anthropic (`message_stop`) adapters do.

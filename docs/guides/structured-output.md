@@ -79,9 +79,15 @@ agent, _ := golem.New[struct{}, City](client, golem.DecodeJSON[City](),
 
 ## Gotchas
 
-- Both shipped providers enforce strict schemas: `additionalProperties:
-  false` and every property listed in `required`. Non-conformant schemas
-  surface as provider `APIError`s, not silent relaxation.
+- The OpenAI-compatible, Anthropic, and Azure adapters enforce strict
+  schemas: `additionalProperties: false` and every property listed in
+  `required`. Gemini accepts a JSON-Schema subset instead and rejects
+  `additionalProperties` outright. Non-conformant schemas surface as
+  provider `APIError`s, not silent relaxation.
+- Gemini rejects JSON response mode combined with function calling, so
+  `WithOutputSchema` together with `WithTools` fails at request encoding
+  with a clear adapter error before any network call. Use tool mode
+  (`WithOutputTool`) for structured output on agents that carry tools.
 - An empty schema disables the behavior; invalid JSON fails construction.
 - The schema is decoupled from the decoder: applications can validate
   more strictly than the schema they advertise.

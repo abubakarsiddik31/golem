@@ -97,6 +97,13 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 // generateContent or streamGenerateContent endpoint. A request carrying
 // an output schema selects JSON responses shaped by that schema.
 func (c *Client) newGenerateContentHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
+	// The GenerateContent API rejects JSON response mode combined with
+	// function calling; reject the combination before any network call
+	// instead of letting the provider answer a cryptic 400 mid-run.
+	if len(request.OutputSchema) > 0 && len(request.ToolSpecs) > 0 {
+		return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+			"output schema cannot be combined with tool declarations: JSON response mode is unsupported with function calling; configure tool-mode output (golem.WithOutputTool) instead")}
+	}
 	system, contents := toWireContents(request.Messages)
 	var generationConfig *wireGenConfig
 	if len(request.OutputSchema) > 0 {
