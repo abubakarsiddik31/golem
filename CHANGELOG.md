@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Open-source community files.** MIT license, contributing guide, security
+  policy, code of conduct, and GitHub issue and pull-request templates.
+
 ## v0.3.0 — 2026-08-18
 
 This minor release makes conversations richer and longer-lived: images in
