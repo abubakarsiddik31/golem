@@ -1,8 +1,9 @@
-# ADR 0008: Per-tool retry and timeout policy
+# ADR 0012: Per-tool retry and timeout policy
 
 ## Status
 
-Accepted.
+Accepted. Renumbered from a colliding 0008 (the streaming-port decision keeps
+that number); content is unchanged.
 
 ## Context
 
