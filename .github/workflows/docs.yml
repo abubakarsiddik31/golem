@@ -37,11 +37,14 @@ jobs:
         with:
           path: ./site
 
-  # Pages cannot publish from a private repository on a free plan; this
-  # job starts running only once the repository is public and Pages is
-  # enabled with "GitHub Actions" as the source (see docs/website.md).
+  # Pages cannot publish from a private repository on a free plan, and
+  # deployments from pull_request events are rejected by the Pages
+  # environment; this job runs only on pushes to main and manual
+  # dispatches once the repository is public and Pages is enabled with
+  # "GitHub Actions" as the source (see docs/website.md). Pull requests
+  # get the strict build only.
   deploy:
-    if: github.repository_visibility == 'public'
+    if: github.event_name != 'pull_request' && github.repository_visibility == 'public'
     needs: build
     runs-on: ubuntu-latest
     permissions:
