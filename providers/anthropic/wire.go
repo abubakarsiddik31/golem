@@ -17,6 +17,9 @@ type messagesRequest struct {
 	System    string        `json:"system,omitempty"`
 	Messages  []wireMessage `json:"messages"`
 	Tools     []wireTool    `json:"tools,omitempty"`
+	// Sampling controls; unset fields stay off the wire.
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
 	// OutputConfig requests provider-enforced output structure; set for
 	// structured output.
 	OutputConfig *wireOutputConfig `json:"output_config,omitempty"`

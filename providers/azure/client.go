@@ -40,6 +40,16 @@ type Config struct {
 	// Structured output (response_format json_schema) requires a version
 	// that supports it.
 	APIVersion string
+	// Temperature controls sampling randomness in [0, 2]; nil leaves the
+	// provider default. Set it with providers.Ptr, including to 0.
+	Temperature *float64
+	// TopP restricts sampling to the nucleus probability mass in [0, 1];
+	// nil leaves the provider default.
+	TopP *float64
+	// MaxTokens bounds the tokens the model may generate per response.
+	// Zero omits the bound and lets the provider default apply; negative
+	// values fail New.
+	MaxTokens int
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -66,6 +76,12 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.APIVersion == "" {
 		return nil, fmt.Errorf("azure: API version is required")
+	}
+	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
+		return nil, err
+	}
+	if cfg.MaxTokens < 0 {
+		return nil, fmt.Errorf("azure: max tokens must not be negative, got %d", cfg.MaxTokens)
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -124,6 +140,9 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 	body, err := json.Marshal(chatRequest{
 		Messages:       toWireMessages(request.Messages),
 		Tools:          toWireTools(request.ToolSpecs),
+		Temperature:    c.cfg.Temperature,
+		TopP:           c.cfg.TopP,
+		MaxTokens:      c.cfg.MaxTokens,
 		Stream:         stream,
 		StreamOptions:  streamOptions,
 		ResponseFormat: responseFormat,
@@ -142,4 +161,16 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("api-key", c.cfg.APIKey)
 	return httpRequest, nil
+}
+
+// validateSampling checks the optional sampling controls against the
+// provider's documented ranges.
+func validateSampling(temperature, topP *float64) error {
+	if temperature != nil && (*temperature < 0 || *temperature > 2) {
+		return fmt.Errorf("azure: temperature must be in [0, 2], got %v", *temperature)
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return fmt.Errorf("azure: top P must be in [0, 1], got %v", *topP)
+	}
+	return nil
 }

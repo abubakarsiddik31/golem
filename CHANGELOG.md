@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Request tuning.** Every provider Config gains optional sampling and
+  length controls — `Temperature`, `TopP`, and `MaxTokens` (the latter
+  new on openai, azure, and gemini) — validated against each provider's
+  documented ranges at construction and mapped to its native encoding:
+  top-level fields on the chat-completions and Messages APIs,
+  `generationConfig` on Gemini, and `inferenceConfig` on Bedrock. Unset
+  controls stay off the wire; a nil sampling field leaves the provider
+  default, and the new `providers.Ptr` builds the optional values,
+  including a temperature of 0.
 - **Agent delegation.** `Agent.AsTool` exposes one agent as a tool of
   another: the delegating model passes a prompt, the sub-agent runs with
   the delegating run's dependency value, and its typed output is rendered

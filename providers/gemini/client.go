@@ -35,6 +35,16 @@ type Config struct {
 	// Model names the model to generate with, e.g.
 	// "gemini-2.5-flash".
 	Model string
+	// Temperature controls sampling randomness in [0, 2]; nil leaves the
+	// provider default. Set it with providers.Ptr, including to 0.
+	Temperature *float64
+	// TopP restricts sampling to the nucleus probability mass in [0, 1];
+	// nil leaves the provider default.
+	TopP *float64
+	// MaxTokens bounds the tokens the model may generate per response.
+	// Zero omits the bound and lets the provider default apply; negative
+	// values fail New.
+	MaxTokens int
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -55,6 +65,12 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("gemini: model is required")
+	}
+	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
+		return nil, err
+	}
+	if cfg.MaxTokens < 0 {
+		return nil, fmt.Errorf("gemini: max tokens must not be negative, got %d", cfg.MaxTokens)
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
@@ -106,10 +122,15 @@ func (c *Client) newGenerateContentHTTPRequest(ctx context.Context, request mode
 	}
 	system, contents := toWireContents(request.Messages)
 	var generationConfig *wireGenConfig
-	if len(request.OutputSchema) > 0 {
+	if len(request.OutputSchema) > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil || c.cfg.MaxTokens > 0 {
 		generationConfig = &wireGenConfig{
-			ResponseMimeType: "application/json",
-			ResponseSchema:   request.OutputSchema,
+			Temperature:     c.cfg.Temperature,
+			TopP:            c.cfg.TopP,
+			MaxOutputTokens: c.cfg.MaxTokens,
+		}
+		if len(request.OutputSchema) > 0 {
+			generationConfig.ResponseMimeType = "application/json"
+			generationConfig.ResponseSchema = request.OutputSchema
 		}
 	}
 	body, err := json.Marshal(generateContentRequest{
@@ -135,4 +156,16 @@ func (c *Client) newGenerateContentHTTPRequest(ctx context.Context, request mode
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("x-goog-api-key", c.cfg.APIKey)
 	return httpRequest, nil
+}
+
+// validateSampling checks the optional sampling controls against the
+// provider's documented ranges.
+func validateSampling(temperature, topP *float64) error {
+	if temperature != nil && (*temperature < 0 || *temperature > 2) {
+		return fmt.Errorf("gemini: temperature must be in [0, 2], got %v", *temperature)
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return fmt.Errorf("gemini: top P must be in [0, 1], got %v", *topP)
+	}
+	return nil
 }

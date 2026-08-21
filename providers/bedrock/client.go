@@ -43,6 +43,12 @@ type Config struct {
 	// Zero omits the bound and lets the provider default apply; negative
 	// values fail New.
 	MaxTokens int
+	// Temperature controls sampling randomness in [0, 1]; nil leaves the
+	// provider default. Set it with providers.Ptr, including to 0.
+	Temperature *float64
+	// TopP restricts sampling to the nucleus probability mass in [0, 1];
+	// nil leaves the provider default.
+	TopP *float64
 	// BaseURL overrides the regional endpoint prefix, which defaults to
 	// https://bedrock-runtime.{Region}.amazonaws.com. Point it at a
 	// proxy or LocalStack-style emulator when needed.
@@ -76,6 +82,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.MaxTokens < 0 {
 		return nil, fmt.Errorf("bedrock: max tokens must not be negative, got %d", cfg.MaxTokens)
+	}
+	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
+		return nil, err
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com", cfg.Region)
@@ -123,8 +132,12 @@ func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Reque
 		return nil, err
 	}
 	var inferenceConfig *wireInference
-	if c.cfg.MaxTokens > 0 {
-		inferenceConfig = &wireInference{MaxTokens: c.cfg.MaxTokens}
+	if c.cfg.MaxTokens > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil {
+		inferenceConfig = &wireInference{
+			MaxTokens:   c.cfg.MaxTokens,
+			Temperature: c.cfg.Temperature,
+			TopP:        c.cfg.TopP,
+		}
 	}
 	var outputConfig *wireOutputConfig
 	if len(request.OutputSchema) > 0 {
@@ -156,4 +169,16 @@ func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Reque
 	httpRequest.Header.Set("Content-Type", "application/json")
 	signV4(httpRequest, body, c.cfg.Credentials, c.cfg.Region, serviceName, time.Now())
 	return httpRequest, nil
+}
+
+// validateSampling checks the optional sampling controls against the
+// provider's documented ranges.
+func validateSampling(temperature, topP *float64) error {
+	if temperature != nil && (*temperature < 0 || *temperature > 1) {
+		return fmt.Errorf("bedrock: temperature must be in [0, 1], got %v", *temperature)
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return fmt.Errorf("bedrock: top P must be in [0, 1], got %v", *topP)
+	}
+	return nil
 }

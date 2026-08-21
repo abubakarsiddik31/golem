@@ -393,3 +393,66 @@ func TestGenerateMapsPromptPartsToImageBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredSamplingControlsOnWire(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{}`)
+	temperature, topP := 0.4, 0.9
+	client, err := anthropic.New(anthropic.Config{
+		APIKey:      "test-key",
+		BaseURL:     recorder.server.URL,
+		Model:       "claude-sonnet-4-5",
+		Temperature: &temperature,
+		TopP:        &topP,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// The response body is irrelevant here; the request is what is asserted.
+	_, _ = client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent["temperature"] != 0.4 || sent["top_p"] != 0.9 {
+		t.Fatalf("sampling controls = %v", sent)
+	}
+
+	// A default config keeps the controls off the wire; max_tokens keeps
+	// its required default.
+	defaultClient := newClient(t, recorder.server.URL)
+	_, _ = defaultClient.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	var plain map[string]any
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &plain); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	for _, key := range []string{"temperature", "top_p"} {
+		if _, present := plain[key]; present {
+			t.Fatalf("unset %q must stay off the wire, got %v", key, plain[key])
+		}
+	}
+	if plain["max_tokens"] != float64(anthropic.DefaultMaxTokens) {
+		t.Fatalf("max_tokens = %v, want the required default", plain["max_tokens"])
+	}
+}
+
+func TestNewRejectsInvalidSamplingControls(t *testing.T) {
+	t.Parallel()
+
+	invalid := func(v float64) *float64 { return &v }
+	for name, cfg := range map[string]anthropic.Config{
+		"negative temperature": {APIKey: "k", Model: "m", Temperature: invalid(-0.1)},
+		"hot temperature":      {APIKey: "k", Model: "m", Temperature: invalid(1.1)},
+		"top P above one":      {APIKey: "k", Model: "m", TopP: invalid(1.1)},
+	} {
+		if _, err := anthropic.New(cfg); err == nil {
+			t.Fatalf("%s: New() = nil error, want rejection", name)
+		}
+	}
+}

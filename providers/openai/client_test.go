@@ -527,3 +527,64 @@ func TestGenerateMapsPromptPartsToContentArray(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredSamplingControlsOnWire(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, "{}")
+	temperature, topP := 0.4, 0.9
+	client, err := openai.New(openai.Config{
+		APIKey:      "test-key",
+		BaseURL:     recorder.server.URL,
+		Model:       "gpt-4o",
+		Temperature: &temperature,
+		TopP:        &topP,
+		MaxTokens:   256,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// The response body is irrelevant here; the request is what is asserted.
+	_, _ = client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent["temperature"] != 0.4 || sent["top_p"] != 0.9 || sent["max_tokens"] != float64(256) {
+		t.Fatalf("sampling controls = %v", sent)
+	}
+
+	// A default config keeps the controls off the wire entirely.
+	defaultClient := newClient(t, recorder.server.URL)
+	_, _ = defaultClient.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	var plain map[string]any
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &plain); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	for _, key := range []string{"temperature", "top_p", "max_tokens"} {
+		if _, present := plain[key]; present {
+			t.Fatalf("unset %q must stay off the wire, got %v", key, plain[key])
+		}
+	}
+}
+
+func TestNewRejectsInvalidSamplingControls(t *testing.T) {
+	t.Parallel()
+
+	invalid := func(v float64) *float64 { return &v }
+	for name, cfg := range map[string]openai.Config{
+		"negative temperature": {APIKey: "k", Model: "m", Temperature: invalid(-0.1)},
+		"hot temperature":      {APIKey: "k", Model: "m", Temperature: invalid(2.1)},
+		"top P above one":      {APIKey: "k", Model: "m", TopP: invalid(1.1)},
+		"negative max tokens":  {APIKey: "k", Model: "m", MaxTokens: -1},
+	} {
+		if _, err := openai.New(cfg); err == nil {
+			t.Fatalf("%s: New() = nil error, want rejection", name)
+		}
+	}
+}
