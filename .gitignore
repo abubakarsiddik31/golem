@@ -21,3 +21,6 @@ site/
 
 # Local superpowers planning notes; never commit.
 docs/superpowers/
+
+# Local security-scanner workspace; never commit.
+.mimosa/
