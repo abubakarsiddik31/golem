@@ -1,11 +1,23 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 — 2026-08-21
+
+Patch release: the open-source launch essentials and a fail-fast
+provider fix.
 
 ### Added
 
 - **Open-source community files.** MIT license, contributing guide, security
   policy, code of conduct, and GitHub issue and pull-request templates.
+
+### Fixed
+
+- **Gemini rejects output schemas combined with tool declarations before
+  the request.** The GenerateContent API answers 400 INVALID_ARGUMENT when
+  JSON response mode is combined with function calling, so such runs always
+  failed mid-flight with a cryptic provider error. The adapter now fails
+  fast at the encode stage with a typed error pointing at
+  `golem.WithOutputTool`, before any network call.
 
 ## v0.3.0 — 2026-08-18
 
