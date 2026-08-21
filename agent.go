@@ -61,6 +61,7 @@ type Agent[Deps any, Output any] struct {
 	outputToolName    string
 	outputToolSpec    model.ToolSpec
 	usageLimit        UsageLimit
+	runEvents         func(RunEvent)
 }
 
 // Option configures an Agent during construction.
@@ -525,10 +526,10 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, onDelta)
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, a.runEvents, onDelta)
 		} else {
 			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName)
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, a.runEvents)
 		}
 		if err != nil {
 			return Result[Output]{}, classifyRunError(err)
@@ -551,6 +552,9 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
 			}
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
+		}
+		if a.runEvents != nil {
+			a.runEvents(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
 		}
 		// Correction round: keep the rejected response as
 		// evidence, tell the model why it was rejected, and run again.

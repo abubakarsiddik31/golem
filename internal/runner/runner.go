@@ -74,6 +74,66 @@ type ToolConfig struct {
 	Parallel       bool
 }
 
+// EventKind identifies one observable point of the execution loop.
+type EventKind string
+
+const (
+	// EventModelStart precedes one provider call attempt.
+	EventModelStart EventKind = "model_start"
+	// EventModelEnd follows one provider call attempt, carrying the
+	// attempt's usage and error.
+	EventModelEnd EventKind = "model_end"
+	// EventToolStart precedes one tool execution.
+	EventToolStart EventKind = "tool_start"
+	// EventToolEnd follows one tool execution, carrying the result or the
+	// error; a correction rejection carries a *model.ModelRetry error.
+	EventToolEnd EventKind = "tool_end"
+	// EventOutputRejected marks a decoder rejection starting a correction
+	// round. The agent emits it; the runner loop never does, because only
+	// the agent knows the decoder's verdict.
+	EventOutputRejected EventKind = "output_rejected"
+)
+
+// Event is one observation of an executing run. The fields a kind
+// carries are documented on the kind; the rest are zero. Kind, order,
+// and per-kind field meaning are a compatibility promise for observers.
+type Event struct {
+	// Kind identifies which fields carry meaning.
+	Kind EventKind
+	// Turn indexes the model turn within the current loop. Correction
+	// rounds restart the loop; EventOutputRejected marks the boundary.
+	Turn int
+	// Attempt is the 1-based provider call attempt within the turn.
+	Attempt int
+	// CallID and ToolName identify one requested tool execution.
+	CallID   string
+	ToolName string
+	// Args is the raw model-produced argument object of the call.
+	Args json.RawMessage
+	// Result is the tool result text of a successful execution.
+	Result string
+	// Err is the attempt or execution error. A correction rejection
+	// carries *model.ModelRetry.
+	Err error
+	// Usage is the provider-recorded consumption of one attempt.
+	Usage model.Usage
+}
+
+// Observer receives run events synchronously, in deterministic
+// execution order: model attempts in call order, tool starts before and
+// tool ends after execution, with parallel groups emitting starts in
+// model emission order before the group runs and ends in the same order
+// after it completes. Observers run inline with execution and must not
+// block; cancel the run context to stop the run from an observer.
+type Observer func(Event)
+
+// emitEvent forwards event to emit when one is registered.
+func emitEvent(emit Observer, event Event) {
+	if emit != nil {
+		emit(event)
+	}
+}
+
 // Execute runs the sequential loop: call the model,
 // execute any requested tool calls in order, append the evidence, and
 // repeat until the model responds without tool calls or a limit or error
@@ -96,10 +156,11 @@ func Execute[Deps any](
 	outputTool string,
 ) (Outcome, error) {
 	return ExecuteWithToolConfig(ctx, m, tools, deps, req, maxIterations, retry,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil)
 }
 
-// ExecuteWithToolConfig runs the loop with explicit tool policy.
+// ExecuteWithToolConfig runs the loop with explicit tool policy and an
+// optional event observer; see Observer for the ordering guarantees.
 func ExecuteWithToolConfig[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -110,13 +171,14 @@ func ExecuteWithToolConfig[Deps any](
 	retry RetryConfig,
 	toolConfig ToolConfig,
 	outputTool string,
+	emit Observer,
 ) (Outcome, error) {
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
-		func(ctx context.Context, request model.Request) (model.Response, int, error) {
-			return generate(ctx, m, request, retry)
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit,
+		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
+			return generate(ctx, m, request, retry, turn, emit)
 		})
 }
 
@@ -142,10 +204,12 @@ func ExecuteStream[Deps any](
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
 	return ExecuteStreamWithToolConfig(ctx, m, tools, deps, req, maxIterations,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool, onDelta)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, onDelta)
 }
 
-// ExecuteStreamWithToolConfig runs streamed turns with explicit tool policy.
+// ExecuteStreamWithToolConfig runs streamed turns with explicit tool
+// policy and an optional event observer; see Observer for the ordering
+// guarantees.
 func ExecuteStreamWithToolConfig[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -155,15 +219,22 @@ func ExecuteStreamWithToolConfig[Deps any](
 	maxIterations int,
 	toolConfig ToolConfig,
 	outputTool string,
+	emit Observer,
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
 	streamer, ok := m.(model.StreamingModel)
 	if !ok {
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool,
-		func(ctx context.Context, request model.Request) (model.Response, int, error) {
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit,
+		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
+			emitEvent(emit, Event{Kind: EventModelStart, Turn: turn, Attempt: 1})
 			response, err := streamer.GenerateStream(ctx, request, onDelta)
+			event := Event{Kind: EventModelEnd, Turn: turn, Attempt: 1, Usage: response.Usage}
+			if err != nil {
+				event.Err = err
+			}
+			emitEvent(emit, event)
 			return response, 1, err
 		})
 }
@@ -171,8 +242,9 @@ func ExecuteStreamWithToolConfig[Deps any](
 // turnCall produces one model response for a turn and reports how many
 // provider calls the turn consumed, retries included. Injecting it lets
 // the loop run over plain or streamed model calls without duplicating
-// policy.
-type turnCall func(ctx context.Context, request model.Request) (model.Response, int, error)
+// policy. turn is the 0-based index of the turn in this loop, for event
+// attribution.
+type turnCall func(ctx context.Context, request model.Request, turn int) (model.Response, int, error)
 
 // runCounts accumulates activity across the turns of one loop.
 type runCounts struct {
@@ -192,6 +264,7 @@ func execute[Deps any](
 	maxIterations int,
 	toolConfig ToolConfig,
 	outputTool string,
+	emit Observer,
 	call turnCall,
 ) (Outcome, error) {
 	var counts runCounts
@@ -224,7 +297,7 @@ func execute[Deps any](
 			return Outcome{}, fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
-		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema})
+		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}, turn)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -247,7 +320,7 @@ func execute[Deps any](
 			}
 		}
 
-		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts)
+		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -265,7 +338,7 @@ type toolCallResult[Deps any] struct {
 // runToolCalls validates every requested call, executes them either in
 // emission order or concurrent barrier-separated groups, then emits results
 // in emission order regardless of completion order.
-func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts) ([]model.Message, error) {
+func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, error) {
 	results := make([]toolCallResult[Deps], len(calls))
 	for i, call := range calls {
 		declared, ok := findTool(tools, call.Name)
@@ -281,7 +354,7 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 				end++
 			}
 		}
-		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1, counts)
+		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1, counts, turn, emit)
 		start = end
 	}
 	messages := make([]model.Message, 0, len(results))
@@ -309,7 +382,12 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 	return messages, nil
 }
 
-func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool, counts *runCounts) {
+// runToolGroup executes one sequential or barrier-separated group,
+// emitting tool events around each execution. Sequential groups emit
+// start and end per call; parallel groups emit every start in emission
+// order before any call runs and every end in the same order after the
+// group completes, so event order stays deterministic.
+func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool, counts *runCounts, turn int, emit Observer) {
 	if !parallel {
 		for i := range group {
 			if err := ctx.Err(); err != nil {
@@ -317,9 +395,18 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 				return
 			}
 			counts.toolExecutions++
+			emitEvent(emit, Event{Kind: EventToolStart, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Args: group[i].call.Args})
 			group[i].result, group[i].err = executeTool(ctx, group[i].declared, deps, group[i].call.Args, timeout)
+			event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
+			if group[i].err != nil {
+				event.Err = group[i].err
+			}
+			emitEvent(emit, event)
 		}
 		return
+	}
+	for i := range group {
+		emitEvent(emit, Event{Kind: EventToolStart, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Args: group[i].call.Args})
 	}
 	var wg sync.WaitGroup
 	for i := range group {
@@ -331,6 +418,13 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 		}(&group[i])
 	}
 	wg.Wait()
+	for i := range group {
+		event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
+		if group[i].err != nil {
+			event.Err = group[i].err
+		}
+		emitEvent(emit, event)
+	}
 }
 
 func findTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], bool) {
@@ -480,9 +574,15 @@ func RepairHistory(history []model.Message) []model.Message {
 // the provider calls consumed, attempts included. A context error always
 // wins over the model error: cancellation is returned raw, never retried
 // or wrapped.
-func generate(ctx context.Context, m model.Model, request model.Request, retry RetryConfig) (model.Response, int, error) {
+func generate(ctx context.Context, m model.Model, request model.Request, retry RetryConfig, turn int, emit Observer) (model.Response, int, error) {
 	for attempt := 1; ; attempt++ {
+		emitEvent(emit, Event{Kind: EventModelStart, Turn: turn, Attempt: attempt})
 		response, err := m.Generate(ctx, request)
+		event := Event{Kind: EventModelEnd, Turn: turn, Attempt: attempt, Usage: response.Usage}
+		if err != nil {
+			event.Err = err
+		}
+		emitEvent(emit, event)
 		if err == nil {
 			return response, attempt, nil
 		}
