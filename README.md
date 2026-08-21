@@ -58,6 +58,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Getting started](docs/guides/getting-started.md) | The smallest agent, result shape, error stages |
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
+| [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
 | [Multimodal input](docs/guides/multimodal-input.md) | Images in prompts, per-provider mapping |
@@ -78,6 +79,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | --- | --- |
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
+| [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |

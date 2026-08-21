@@ -14,12 +14,13 @@ example, and the README index agree.
 1. [Getting started](getting-started.md) — the smallest agent and where everything lives.
 2. [Providers](providers.md) — connecting OpenAI-compatible and Anthropic APIs.
 3. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
-4. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
-5. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
-6. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
-7. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
-8. [Self-correction](self-correction.md) — rejection budgets for output and tools.
-9. [Retries](retries.md) — surviving transient model failures and falling back to another model.
-10. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-11. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-12. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+4. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
+5. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
+6. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
+7. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
+8. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
+9. [Self-correction](self-correction.md) — rejection budgets for output and tools.
+10. [Retries](retries.md) — surviving transient model failures and falling back to another model.
+11. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
+12. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+13. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
