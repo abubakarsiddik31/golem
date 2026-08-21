@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/abubakarsiddik31/golem"
+	"github.com/abubakarsiddik31/golem/providers"
 	"github.com/abubakarsiddik31/golem/providers/openai"
 )
 
@@ -32,7 +33,13 @@ func main() {
 		modelName = "gpt-4o-mini"
 	}
 
-	client, err := openai.New(openai.Config{APIKey: apiKey, Model: modelName})
+	// Temperature 0 favors deterministic extraction; nil would leave the
+	// provider default. providers.Ptr sets the value, including 0.
+	client, err := openai.New(openai.Config{
+		APIKey:      apiKey,
+		Model:       modelName,
+		Temperature: providers.Ptr(0.0),
+	})
 	if err != nil {
 		fmt.Println("openai.New:", err)
 		return

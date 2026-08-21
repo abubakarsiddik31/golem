@@ -22,6 +22,13 @@ policy decides. All shipped adapters except Bedrock implement
 parts on user messages to its native multimodal form; the per-provider
 differences live in [Multimodal input](multimodal-input.md).
 
+Every adapter accepts optional sampling and length controls on its
+Config — `Temperature`, `TopP`, and `MaxTokens` — validated against the
+provider's documented ranges at construction. A nil sampling field
+leaves the provider default, and an unset `MaxTokens` omits the bound,
+so unset controls never appear on the wire. Temperature 0 is a meaningful
+value, not a default: set it with `providers.Ptr(0)`.
+
 ## Example
 
 - `examples/minimal` — OpenAI-compatible.
@@ -55,15 +62,23 @@ bedrockClient, _ := bedrock.New(bedrock.Config{
     Credentials: bedrock.Credentials{AccessKeyID: id, SecretAccessKey: secret},
     Region: "us-east-1", Model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 })
+
+// Optional sampling controls: nil leaves the provider default, and
+// providers.Ptr sets the value, including 0.
+focusedClient, _ := openai.New(openai.Config{
+    APIKey: key, Model: "gpt-4o-mini",
+    Temperature: providers.Ptr(0.2), TopP: providers.Ptr(0.9), MaxTokens: 512,
+})
 ```
 
 ## API surface
 
-- `openai.New(openai.Config{APIKey, BaseURL, Model, HTTPClient})`
-- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, HTTPClient})`
-- `gemini.New(gemini.Config{APIKey, BaseURL, Model, HTTPClient})`
-- `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, HTTPClient})`
-- `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, BaseURL, HTTPClient})`
+- `openai.New(openai.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
+- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, HTTPClient})`
+- `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
+- `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
+- `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, HTTPClient})`
+- `providers.Ptr(v)` builds the optional `*float64` sampling fields.
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas
@@ -119,4 +134,10 @@ bedrockClient, _ := bedrock.New(bedrock.Config{
   (ConverseStream uses AWS binary event-stream framing, not SSE), and
   `OutputSchema` maps to the Converse `outputConfig` json_schema format
   with the schema passed as a string.
+- Sampling ranges differ per provider and are validated at
+  construction: temperature is [0, 2] on OpenAI, Azure, and Gemini but
+  [0, 1] on Anthropic and Bedrock; top P is [0, 1] everywhere. Anthropic
+  requires `max_tokens` on every request, so its zero selects
+  `anthropic.DefaultMaxTokens`; on the other adapters zero omits the
+  bound.
 - Deciding conventions live in `docs/adr/0003-provider-adapter-conventions.md`.
