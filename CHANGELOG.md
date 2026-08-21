@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Agent delegation.** `Agent.AsTool` exposes one agent as a tool of
+  another: the delegating model passes a prompt, the sub-agent runs with
+  the delegating run's dependency value, and its typed output is rendered
+  to text — strings as-is, other types JSON-encoded, `WithAgentResult`
+  to replace the rendering. Missing or malformed prompt arguments
+  correct through the tool retry budget; every other sub-agent failure
+  surfaces at the tool stage with the inner `RunError` preserved, and
+  cancellation propagates unwrapped (ADR 0013).
+
 ## v0.3.1 — 2026-08-21
 
 Patch release: the open-source launch essentials and a fail-fast

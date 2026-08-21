@@ -434,3 +434,61 @@ func ExampleAgent() {
 	// winner: Anne
 	// 4 messages, 4 output tokens
 }
+
+// delegatingModel hands the question to the researcher tool, then answers
+// from its result. It stands in for the planner's provider.
+type delegatingModel struct{}
+
+func (m *delegatingModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	for _, message := range request.Messages {
+		if message.Role == model.RoleTool {
+			return model.Response{
+				Message: model.Message{Role: model.RoleAssistant,
+					Content: fmt.Sprintf("the researcher says: %s", message.Content)},
+			}, nil
+		}
+	}
+	return model.Response{
+		Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+			{ID: "call-1", Name: "researcher", Args: json.RawMessage(`{"prompt":"capital of France?"}`)},
+		}},
+	}, nil
+}
+
+// factModel stands in for the specialist's provider: one run, one fact.
+type factModel struct{}
+
+func (m *factModel) Generate(ctx context.Context, request model.Request) (model.Response, error) {
+	return model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Paris"}}, nil
+}
+
+func ExampleAgent_AsTool() {
+	specialist, err := golem.New[struct{}, string](&factModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	research, err := specialist.AsTool("researcher", "Answers one geography question.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	planner, err := golem.New[struct{}, string](&delegatingModel{},
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithTools[struct{}, string](research))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result, err := planner.Run(context.Background(), golem.RunContext[struct{}]{}, "I need the capital of France.")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(result.Output)
+	// Output:
+	// the researcher says: Paris
+}
