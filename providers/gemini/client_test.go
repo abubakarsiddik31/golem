@@ -468,3 +468,70 @@ func TestGenerateMapsPromptPartsToInlineDataAndFileData(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredSamplingControlsOnWire(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{}`)
+	temperature, topP := 0.4, 0.9
+	client, err := gemini.New(gemini.Config{
+		APIKey:      "test-key",
+		BaseURL:     recorder.server.URL,
+		Model:       "gemini-2.5-flash",
+		Temperature: &temperature,
+		TopP:        &topP,
+		MaxTokens:   256,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// The response body is irrelevant here; the request is what is asserted.
+	_, _ = client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+
+	var sent struct {
+		GenerationConfig struct {
+			Temperature     *float64 `json:"temperature"`
+			TopP            *float64 `json:"topP"`
+			MaxOutputTokens int      `json:"maxOutputTokens"`
+		} `json:"generationConfig"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent.GenerationConfig.Temperature == nil || *sent.GenerationConfig.Temperature != 0.4 ||
+		sent.GenerationConfig.TopP == nil || *sent.GenerationConfig.TopP != 0.9 ||
+		sent.GenerationConfig.MaxOutputTokens != 256 {
+		t.Fatalf("generation config = %+v", sent.GenerationConfig)
+	}
+
+	// A default config keeps generationConfig off the wire entirely.
+	var plain map[string]any
+	defaultClient := newClient(t, recorder.server.URL)
+	_, _ = defaultClient.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &plain); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if _, present := plain["generationConfig"]; present {
+		t.Fatalf("unset generationConfig must stay off the wire, got %v", plain["generationConfig"])
+	}
+}
+
+func TestNewRejectsInvalidSamplingControls(t *testing.T) {
+	t.Parallel()
+
+	invalid := func(v float64) *float64 { return &v }
+	for name, cfg := range map[string]gemini.Config{
+		"negative temperature": {APIKey: "k", Model: "m", Temperature: invalid(-0.1)},
+		"hot temperature":      {APIKey: "k", Model: "m", Temperature: invalid(2.1)},
+		"top P above one":      {APIKey: "k", Model: "m", TopP: invalid(1.1)},
+		"negative max tokens":  {APIKey: "k", Model: "m", MaxTokens: -1},
+	} {
+		if _, err := gemini.New(cfg); err == nil {
+			t.Fatalf("%s: New() = nil error, want rejection", name)
+		}
+	}
+}

@@ -35,6 +35,16 @@ type Config struct {
 	BaseURL string
 	// Model names the model to generate with, e.g. "gpt-4o".
 	Model string
+	// Temperature controls sampling randomness in [0, 2]; nil leaves the
+	// provider default. Set it with providers.Ptr, including to 0.
+	Temperature *float64
+	// TopP restricts sampling to the nucleus probability mass in [0, 1];
+	// nil leaves the provider default.
+	TopP *float64
+	// MaxTokens bounds the tokens the model may generate per response.
+	// Zero omits the bound and lets the provider default apply; negative
+	// values fail New.
+	MaxTokens int
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -56,6 +66,12 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("openai: model is required")
+	}
+	if err := validateSampling(cfg.Temperature, cfg.TopP, 2); err != nil {
+		return nil, err
+	}
+	if cfg.MaxTokens < 0 {
+		return nil, fmt.Errorf("openai: max tokens must not be negative, got %d", cfg.MaxTokens)
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
@@ -118,6 +134,9 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 		Model:          c.cfg.Model,
 		Messages:       toWireMessages(request.Messages),
 		Tools:          toWireTools(request.ToolSpecs),
+		Temperature:    c.cfg.Temperature,
+		TopP:           c.cfg.TopP,
+		MaxTokens:      c.cfg.MaxTokens,
 		Stream:         stream,
 		StreamOptions:  streamOptions,
 		ResponseFormat: responseFormat,
@@ -135,4 +154,17 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	return httpRequest, nil
+}
+
+// validateSampling checks the optional sampling controls against the
+// provider's documented ranges; maxTemperature is the upper bound the
+// provider accepts.
+func validateSampling(temperature, topP *float64, maxTemperature float64) error {
+	if temperature != nil && (*temperature < 0 || *temperature > maxTemperature) {
+		return fmt.Errorf("openai: temperature must be in [0, %g], got %v", maxTemperature, *temperature)
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return fmt.Errorf("openai: top P must be in [0, 1], got %v", *topP)
+	}
+	return nil
 }

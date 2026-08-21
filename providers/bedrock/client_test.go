@@ -419,3 +419,73 @@ func TestGenerateRejectsURLImagePartsWithoutSending(t *testing.T) {
 		t.Fatalf("adapter sent a request despite rejecting the content: %s", request)
 	}
 }
+
+func TestConfiguredSamplingControlsOnWire(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{}`, nil)
+	temperature, topP := 0.4, 0.9
+	client, err := bedrock.New(bedrock.Config{
+		Credentials: bedrock.Credentials{AccessKeyID: "AKIDEXAMPLE", SecretAccessKey: "secret"},
+		Region:      "us-east-1",
+		Model:       "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		BaseURL:     recorder.server.URL,
+		Temperature: &temperature,
+		TopP:        &topP,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// The response body is irrelevant here; the request is what is asserted.
+	_, _ = client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+
+	var sent struct {
+		InferenceConfig *struct {
+			Temperature *float64 `json:"temperature"`
+			TopP        *float64 `json:"topP"`
+		} `json:"inferenceConfig"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent.InferenceConfig == nil ||
+		sent.InferenceConfig.Temperature == nil || *sent.InferenceConfig.Temperature != 0.4 ||
+		sent.InferenceConfig.TopP == nil || *sent.InferenceConfig.TopP != 0.9 {
+		t.Fatalf("inference config = %+v", sent.InferenceConfig)
+	}
+
+	// A default config keeps inferenceConfig off the wire entirely.
+	var plain map[string]any
+	defaultClient := newClient(t, recorder.server.URL)
+	_, _ = defaultClient.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &plain); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if _, present := plain["inferenceConfig"]; present {
+		t.Fatalf("unset inferenceConfig must stay off the wire, got %v", plain["inferenceConfig"])
+	}
+}
+
+func TestNewRejectsInvalidSamplingControls(t *testing.T) {
+	t.Parallel()
+
+	invalid := func(v float64) *float64 { return &v }
+	base := bedrock.Config{
+		Credentials: bedrock.Credentials{AccessKeyID: "AKIDEXAMPLE", SecretAccessKey: "secret"},
+		Region:      "us-east-1",
+		Model:       "m",
+	}
+	for name, cfg := range map[string]bedrock.Config{
+		"negative temperature": {Credentials: base.Credentials, Region: base.Region, Model: base.Model, Temperature: invalid(-0.1)},
+		"hot temperature":      {Credentials: base.Credentials, Region: base.Region, Model: base.Model, Temperature: invalid(1.1)},
+		"top P above one":      {Credentials: base.Credentials, Region: base.Region, Model: base.Model, TopP: invalid(1.1)},
+	} {
+		if _, err := bedrock.New(cfg); err == nil {
+			t.Fatalf("%s: New() = nil error, want rejection", name)
+		}
+	}
+}

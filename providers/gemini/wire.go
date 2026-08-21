@@ -91,6 +91,10 @@ type wireFunctionDecl struct {
 type wireGenConfig struct {
 	ResponseMimeType string          `json:"responseMimeType,omitempty"`
 	ResponseSchema   json.RawMessage `json:"responseSchema,omitempty"`
+	// Sampling and length controls; unset fields stay off the wire.
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"topP,omitempty"`
+	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
 }
 
 // generateContentResponse is the GenerateContent API wire response.

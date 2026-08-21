@@ -44,6 +44,12 @@ type Config struct {
 	// The Messages API requires a positive value; zero selects
 	// DefaultMaxTokens and negative values fail New.
 	MaxTokens int
+	// Temperature controls sampling randomness in [0, 1]; nil leaves the
+	// provider default. Set it with providers.Ptr, including to 0.
+	Temperature *float64
+	// TopP restricts sampling to the nucleus probability mass in [0, 1];
+	// nil leaves the provider default.
+	TopP *float64
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -70,6 +76,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = DefaultMaxTokens
+	}
+	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
+		return nil, err
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
@@ -126,6 +135,8 @@ func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Reque
 		System:       system,
 		Messages:     turns,
 		Tools:        toWireTools(request.ToolSpecs),
+		Temperature:  c.cfg.Temperature,
+		TopP:         c.cfg.TopP,
 		OutputConfig: outputConfig,
 		Stream:       stream,
 	})
@@ -143,4 +154,16 @@ func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Reque
 	httpRequest.Header.Set("x-api-key", c.cfg.APIKey)
 	httpRequest.Header.Set("anthropic-version", apiVersion)
 	return httpRequest, nil
+}
+
+// validateSampling checks the optional sampling controls against the
+// provider's documented ranges.
+func validateSampling(temperature, topP *float64) error {
+	if temperature != nil && (*temperature < 0 || *temperature > 1) {
+		return fmt.Errorf("anthropic: temperature must be in [0, 1], got %v", *temperature)
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return fmt.Errorf("anthropic: top P must be in [0, 1], got %v", *topP)
+	}
+	return nil
 }

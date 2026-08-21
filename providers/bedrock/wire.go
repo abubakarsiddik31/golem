@@ -91,6 +91,9 @@ type wireInputSchema struct {
 
 type wireInference struct {
 	MaxTokens int `json:"maxTokens,omitempty"`
+	// Sampling controls; unset fields stay off the wire.
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"topP,omitempty"`
 }
 
 // wireOutputConfig requests provider-enforced output structure; set for
