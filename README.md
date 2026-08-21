@@ -13,7 +13,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-v0.3.0 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries with fallback models, streaming, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal image input, history processing with a trim builtin, token/request/tool-call usage bounds, deterministic test models, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
+v0.3.1 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries with fallback models, streaming, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal image input, history processing with a trim builtin, token/request/tool-call usage bounds, deterministic test models, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 
@@ -22,7 +22,7 @@ v0.3.0 — the core execution contract includes typed agents, evidence-preservin
 - Keep infrastructure replaceable: applications choose models, tracing, storage, and transport through narrow interfaces.
 - Prefer Go-native composition over ports of Python metaprogramming.
 
-Read [the foundation brief](docs/foundation.md) before proposing a new public abstraction. Contributor and coding-agent rules live in [AGENTS.md](AGENTS.md).
+Read [the foundation brief](docs/foundation.md) before proposing a new public abstraction. Contributor and coding-agent rules live in [AGENTS.md](AGENTS.md), and the development roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Installation
 
