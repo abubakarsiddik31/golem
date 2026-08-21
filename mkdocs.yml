@@ -57,5 +57,6 @@ nav:
   - Self-correction: self-correction.md
   - Retries: retries.md
   - Streaming: streaming.md
+  - Run events: run-events.md
   - Usage limits: usage-limits.md
   - Testing without a provider: testing.md
