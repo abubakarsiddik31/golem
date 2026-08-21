@@ -66,6 +66,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
 | [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
+| [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
 | [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
 
@@ -83,6 +84,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
+| [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
 | [`fallback`](examples/fallback/main.go) | Primary model with a fallback and a request bound |

@@ -22,5 +22,6 @@ example, and the README index agree.
 9. [Self-correction](self-correction.md) — rejection budgets for output and tools.
 10. [Retries](retries.md) — surviving transient model failures and falling back to another model.
 11. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-12. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-13. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+12. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
+13. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+14. [Testing without a provider](testing.md) — deterministic fakes and what to assert.

@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Run events.** `WithRunEvents` registers an observer invoked for every
+  observable point of each run: provider call attempts — retried attempts
+  included —, tool executions, and decoder correction boundaries. Events
+  are a typed struct delivered synchronously in deterministic execution
+  order (parallel tool groups emit starts in model emission order before
+  the group runs, ends in the same order after), the observer can never
+  fail a run, and `Run`, history, and streaming variants emit the same
+  events. `Result.Messages` remains the canonical record (ADR 0014).
 - **Request tuning.** Every provider Config gains optional sampling and
   length controls — `Temperature`, `TopP`, and `MaxTokens` (the latter
   new on openai, azure, and gemini) — validated against each provider's
