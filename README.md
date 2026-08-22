@@ -61,6 +61,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
 | [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
 | [Command execution](docs/guides/command-execution.md) | The `shell` common tool: one command, combined output |
+| [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
@@ -86,6 +87,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
 | [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
+| [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
 | [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
@@ -114,6 +116,7 @@ tool/         Tool declarations and execution contracts
 webfetch/     Common tool: fetch a URL as agent-readable text
 fileread/     Common tool: read a file as agent-readable text
 shell/        Common tool: run one command, return combined output
+mcp/          Model Context Protocol client bridging servers into tools
 providers/    Stdlib-only adapters implementing model.Model
 internal/     Execution loop and non-public mechanics
 examples/     Runnable programs per capability

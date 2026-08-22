@@ -4,6 +4,18 @@
 
 ### Added
 
+- **MCP client.** The new `mcp` package connects agents to Model
+  Context Protocol servers: `NewStdio` runs a server subprocess over
+  stdio, `Client.Initialize` performs the handshake, and
+  `AsTools[Deps]` returns every server tool as an ordinary
+  `tool.Tool` — name, description, and schema carried verbatim from
+  the server. Executing a bridged tool calls `tools/call` with the
+  model's raw arguments; `isError` results reject as correctable
+  `ModelRetry` while protocol failures surface as the typed
+  `ProtocolError` at the tool stage. The client is synchronous — one
+  in-flight request, no goroutines — with context cancellation
+  throughout, answering server pings inline (ADR 0016). Streamable
+  HTTP is the next transport behind the same interface.
 - **Command execution tool.** The `shell` package builds a `run_command`
   tool that executes one command through the platform shell and returns
   combined stdout and stderr capped by a byte budget. A non-zero exit
