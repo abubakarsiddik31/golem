@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Bedrock streaming.** The Bedrock adapter implements
+  `model.StreamingModel` over the ConverseStream endpoint: the AWS
+  binary event-stream framing (prelude, typed headers, CRC32 checks) is
+  decoded with the standard library — no AWS SDK — forwarding text and
+  tool-use fragments as deltas and assembling the same normalized
+  `Response` as `Generate`. Mid-stream exception frames
+  (`throttlingException`, `modelStreamErrorException`, …) classify
+  through the existing `APIError` retryability rules, and a stream that
+  ends without a `messageStop` event fails as a decode error rather
+  than yielding a silent partial response.
 - **MCP streamable HTTP transport.** `mcp.NewHTTP` reaches remote MCP
   endpoints behind the same transport interface as stdio: one POST per
   message, answered as a JSON body or a text/event-stream read event

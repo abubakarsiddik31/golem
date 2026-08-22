@@ -63,4 +63,19 @@ func main() {
 	fmt.Println(result.Output)
 	fmt.Printf("usage: %d input, %d output tokens\n",
 		result.Usage.InputTokens, result.Usage.OutputTokens)
+
+	// The client also implements model.StreamingModel: RunStream decodes
+	// ConverseStream's event-stream framing and forwards fragments.
+	streamed, err := agent.RunStream(context.Background(), golem.RunContext[struct{}]{},
+		"Answer with exactly the word: pong",
+		func(delta model.Delta) error {
+			fmt.Print(delta.Content)
+			return nil
+		})
+	if err != nil {
+		fmt.Println("\nRunStream:", err)
+		return
+	}
+	fmt.Printf("\nstreamed usage: %d input, %d output tokens\n",
+		streamed.Usage.InputTokens, streamed.Usage.OutputTokens)
 }

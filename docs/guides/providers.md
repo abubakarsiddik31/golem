@@ -17,8 +17,10 @@ Adapters translate the provider-neutral `model.Request` to their wire
 format and normalize responses back. They never retry on their own:
 failures are classified through `model.RetryableError` (408, 429, 5xx,
 transport faults — never context cancellation) and the runner's retry
-policy decides. All shipped adapters except Bedrock implement
-`model.StreamingModel` over SSE. Every adapter also translates image
+policy decides. All shipped adapters implement `model.StreamingModel`
+— over SSE everywhere except Bedrock, whose ConverseStream responses
+are AWS binary event-stream frames decoded with the standard library.
+Every adapter also translates image
 parts on user messages to its native multimodal form; the per-provider
 differences live in [Multimodal input](multimodal-input.md).
 
@@ -130,10 +132,13 @@ focusedClient, _ := openai.New(openai.Config{
   [Structured output](structured-output.md)).
 - Bedrock credentials are wired in explicitly — the adapter never reads
   the AWS environment or credential chain; requests are SigV4-signed
-  with the standard library. Bedrock streaming is not implemented yet
-  (ConverseStream uses AWS binary event-stream framing, not SSE), and
-  `OutputSchema` maps to the Converse `outputConfig` json_schema format
-  with the schema passed as a string.
+  with the standard library. Streaming decodes ConverseStream's AWS
+  binary event-stream framing with the standard library (no AWS SDK):
+  text and tool-use fragments stream as deltas, mid-stream exception
+  frames classify like their HTTP equivalents, and a stream that ends
+  without a `messageStop` event is a decode failure, not a silent
+  partial response. `OutputSchema` maps to the Converse `outputConfig`
+  json_schema format with the schema passed as a string.
 - Sampling ranges differ per provider and are validated at
   construction: temperature is [0, 2] on OpenAI, Azure, and Gemini but
   [0, 1] on Anthropic and Bedrock; top P is [0, 1] everywhere. Anthropic
