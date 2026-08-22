@@ -25,6 +25,8 @@ Compose agents, observe runs as they happen, and control generation.
 | Run event stream | M | Opt-in typed lifecycle events (model call, tool start and end, usage) alongside `RunStream`. ADR first: the event contract will be hard to change later. |
 | Request tuning | S | `Temperature`, `MaxTokens`, and `TopP` on provider configs, mapped per adapter. |
 | Web fetch tool | S | A stdlib-only HTTP fetch tool with text extraction — the first common tool, testable offline. |
+| File read tool | S | A read-only file tool confined to a configured root directory — the second common tool under ADR 0015. |
+| Command tool | S | A stdlib-only command execution tool with output caps — the third common tool; opt-in and loudly documented. |
 
 ## v0.5.0 — ecosystem interop
 

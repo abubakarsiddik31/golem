@@ -4,6 +4,13 @@
 
 ### Added
 
+- **File read tool.** The `fileread` package builds a `read_file` tool
+  confined to a configured root directory: relative paths only, `..`
+  segments and symlinks escaping the root reject as correctable
+  `ModelRetry`, missing paths and directories reject as correctable,
+  bodies are capped by a byte budget with a truncation marker, and
+  sniffed binary content fails as a typed error at the tool stage
+  (ADR 0015).
 - **Web fetch tool.** The new `webfetch` package is Golem's first common
   tool: `webfetch.New[Deps]`/`MustNew[Deps]` build an ordinary
   `tool.Tool` — name `web_fetch`, single `url` argument — that GETs an
