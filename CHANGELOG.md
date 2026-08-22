@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 — 2026-08-22
+
+This minor release lands the three post-v0.3 milestones together:
+composition and control (agent delegation, run events, request
+tuning, and the web fetch, file read, and command tools), ecosystem
+interop (the MCP client with stdio and streamable HTTP transports),
+and the last provider gap (Bedrock streaming). Every addition is
+opt-in and additive; existing call sites and persisted message JSON
+are unchanged.
 
 ### Added
 

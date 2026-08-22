@@ -13,7 +13,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-v0.3.1 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries with fallback models, streaming, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal image input, history processing with a trim builtin, token/request/tool-call usage bounds, deterministic test models, and provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
+v0.6.0 — the core execution contract includes typed agents, evidence-preserving runs, self-correction, retries with fallback models, streaming on every adapter including Bedrock, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal image input, bounded history, token/request/tool-call usage bounds, request tuning, run events, and agent delegation. The common tools (web fetch, file read, command execution) ship alongside an MCP client that bridges server tools over stdio or streamable HTTP, with provider adapters for OpenAI-compatible APIs (twelve services), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 
