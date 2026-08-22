@@ -88,6 +88,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
 | [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
 | [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
+| [`mcp-http`](examples/mcp-http/main.go) | MCP server bridged over streamable HTTP |
 | [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |

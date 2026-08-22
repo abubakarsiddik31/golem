@@ -3,24 +3,31 @@
 ## Purpose
 
 Connect Golem agents to the Model Context Protocol ecosystem: the
-`mcp` package speaks MCP to a server over stdio, discovers its tools,
-and returns them as ordinary `tool.Tool` values any agent can
-register.
+`mcp` package speaks MCP to a server over stdio or streamable HTTP,
+discovers its tools, and returns them as ordinary `tool.Tool` values
+any agent can register.
 
 ## When to use
 
 Reusing tool servers the ecosystem already ships — package-runner
-based tools, local daemons, anything speaking MCP over stdio — instead
-of re-implementing their capabilities as application tools. Not for
-capabilities that are one `tool.New` away: a typed Go tool with the
-process's own packages is simpler than a subprocess speaking JSON-RPC.
-Remote servers are not reachable yet: streamable HTTP is the next
-transport behind the same interface.
+based tools and local daemons over stdio, hosted services over
+streamable HTTP — instead of re-implementing their capabilities as
+application tools. Not for capabilities that are one `tool.New` away:
+a typed Go tool with the process's own packages is simpler than a
+subprocess or remote service speaking JSON-RPC.
 
 ## How it works
 
 `mcp.NewStdio(mcp.StdioConfig{Command, Args, Dir, Env})` starts the
 server as a subprocess and owns its lifecycle — `Close` terminates it.
+`mcp.NewHTTP(mcp.HTTPConfig{URL, HTTPClient, Header})` reaches a
+remote endpoint: every message is one POST, answered as a JSON body or
+a text/event-stream whose events arrive one by one; the session header
+a server assigns at initialize is captured and sent automatically, and
+extra headers (such as `Authorization`) ride along on every request.
+The server-to-client GET stream is not opened — pushes are not needed
+for tool use.
+
 `mcp.NewClient(transport)` wraps any Transport; `Initialize` performs
 the MCP handshake (announcing this client, recording the server's
 identity in `Server()`), and must run before anything else.
@@ -49,10 +56,13 @@ reply, and notifications are dropped.
 ## Example
 
 Run `examples/mcp-client` — offline: the example binary doubles as a
-minimal MCP stdio server and spawns itself.
+minimal MCP stdio server and spawns itself. Run `examples/mcp-http`
+for the streamable-HTTP transport against a local endpoint.
 
 ```go
 transport, _ := mcp.NewStdio(mcp.StdioConfig{Command: "npx", Args: []string{"-y", "some-mcp-server"}})
+// or remotely:
+// transport, _ := mcp.NewHTTP(mcp.HTTPConfig{URL: "https://example.com/mcp"})
 client := mcp.NewClient(transport)
 defer client.Close()
 
@@ -66,13 +76,14 @@ agent, _ := golem.New[struct{}, string](model, decoder,
 ## API surface
 
 - `mcp.NewStdio(mcp.StdioConfig) (*StdioTransport, error)` — `StdioConfig{Command, Args, Dir, Env}`
+- `mcp.NewHTTP(mcp.HTTPConfig) (*HTTPTransport, error)` — `HTTPConfig{URL, HTTPClient, Header}`
 - `mcp.Transport` — the `Send`/`Read`/`Close` boundary other transports implement
 - `mcp.NewClient(mcp.Transport) *Client`
 - `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).Close()`
 - `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Description, InputSchema}`
 - `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, IsError}`, `CallResult.Text()`
 - `mcp.AsTools[Deps](ctx, *Client) ([]tool.Tool[Deps], error)`
-- `mcp.ProtocolError{Code, Message, Data}`
+- `mcp.ProtocolError{Code, Message, Data}`, `mcp.HTTPStatusError{StatusCode, URL}`
 
 ## Gotchas
 
@@ -86,6 +97,11 @@ agent, _ := golem.New[struct{}, string](model, decoder,
   notification.
 - Only text content is carried; images and resources render as
   placeholders.
+- Over HTTP, the default client has no wall-clock timeout so event
+  streams are bounded only by the caller's context; supply
+  `HTTPClient` for a hard bound. A server that drops the session
+  answers 404, surfacing as `*mcp.HTTPStatusError` — re-initialize a
+  fresh client to recover.
 - On platforms where pipe reads cannot take deadlines (Windows),
   cancelling an in-flight stdio call is honored when the transport
   closes, not immediately.

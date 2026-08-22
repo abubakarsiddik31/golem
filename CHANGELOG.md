@@ -4,6 +4,13 @@
 
 ### Added
 
+- **MCP streamable HTTP transport.** `mcp.NewHTTP` reaches remote MCP
+  endpoints behind the same transport interface as stdio: one POST per
+  message, answered as a JSON body or a text/event-stream read event
+  by event; the server-assigned session header is captured and sent
+  automatically, extra headers (such as `Authorization`) ride on every
+  request, and non-2xx statuses surface as the typed
+  `HTTPStatusError`.
 - **MCP client.** The new `mcp` package connects agents to Model
   Context Protocol servers: `NewStdio` runs a server subprocess over
   stdio, `Client.Initialize` performs the handshake, and
@@ -14,8 +21,7 @@
   `ModelRetry` while protocol failures surface as the typed
   `ProtocolError` at the tool stage. The client is synchronous — one
   in-flight request, no goroutines — with context cancellation
-  throughout, answering server pings inline (ADR 0016). Streamable
-  HTTP is the next transport behind the same interface.
+  throughout, answering server pings inline (ADR 0016).
 - **Command execution tool.** The `shell` package builds a `run_command`
   tool that executes one command through the platform shell and returns
   combined stdout and stderr capped by a byte budget. A non-zero exit
