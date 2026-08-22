@@ -52,6 +52,7 @@ nav:
   - Web fetch: web-fetch.md
   - File read: file-read.md
   - Command execution: command-execution.md
+  - MCP client: mcp-client.md
   - Agent delegation: agent-delegation.md
   - Tool timeouts: tool-timeouts.md
   - Conversations and history: conversations-and-history.md
