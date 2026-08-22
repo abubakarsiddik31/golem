@@ -4,8 +4,8 @@
 // The package is stdlib-only transport, including AWS Signature Version 4
 // request signing, explicit configuration, typed error classification,
 // and normalization of provider encodings into the model contract.
-// Streaming is not implemented yet: ConverseStream uses AWS binary
-// event-stream framing rather than SSE.
+// GenerateStream speaks ConverseStream, whose responses are AWS binary
+// event-stream framed rather than SSE.
 //
 // Credentials are wired in explicitly — the adapter never reads the AWS
 // environment or credential chain. Request.OutputSchema maps to the
@@ -101,7 +101,7 @@ func New(cfg Config) (*Client, error) {
 // *APIError, network-level failures return *TransportError, and
 // unexpected response shapes return *DecodeError.
 func (c *Client) Generate(ctx context.Context, request model.Request) (model.Response, error) {
-	httpRequest, err := c.newConverseHTTPRequest(ctx, request)
+	httpRequest, err := c.newConverseHTTPRequest(ctx, request, "/converse")
 	if err != nil {
 		return model.Response{}, err
 	}
@@ -124,9 +124,10 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 }
 
 // newConverseHTTPRequest builds the signed POST request for the model's
-// converse endpoint. A request carrying an output schema maps to the
-// json_schema output format.
-func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Request) (*http.Request, error) {
+// converse endpoint — path selects the synchronous or streaming
+// variant. A request carrying an output schema maps to the json_schema
+// output format.
+func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Request, path string) (*http.Request, error) {
 	system, turns, err := toWireMessages(request.Messages)
 	if err != nil {
 		return nil, err
@@ -161,7 +162,7 @@ func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Reque
 	}
 
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.cfg.BaseURL+"/model/"+c.cfg.Model+"/converse",
+		c.cfg.BaseURL+"/model/"+c.cfg.Model+path,
 		bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("bedrock: build request: %w", err)
