@@ -49,6 +49,7 @@ nav:
   - Getting started: getting-started.md
   - Providers: providers.md
   - Tools and dependencies: tools-and-dependencies.md
+  - Web fetch: web-fetch.md
   - Agent delegation: agent-delegation.md
   - Tool timeouts: tool-timeouts.md
   - Conversations and history: conversations-and-history.md

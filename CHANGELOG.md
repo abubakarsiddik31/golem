@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Web fetch tool.** The new `webfetch` package is Golem's first common
+  tool: `webfetch.New[Deps]`/`MustNew[Deps]` build an ordinary
+  `tool.Tool` — name `web_fetch`, single `url` argument — that GETs an
+  http(s) URL and returns the body as model-readable text: HTML and
+  XHTML stripped to visible text with entities unescaped, other
+  text-like types passed through, bodies capped by a byte budget with a
+  truncation marker, and an injectable HTTP client and per-fetch
+  timeout keeping tests offline. Malformed or non-http url arguments
+  reject as correctable `ModelRetry`; non-2xx statuses and unsupported
+  media types surface as typed errors at the tool stage (ADR 0015).
 - **Run events.** `WithRunEvents` registers an observer invoked for every
   observable point of each run: provider call attempts — retried attempts
   included —, tool executions, and decoder correction boundaries. Events
