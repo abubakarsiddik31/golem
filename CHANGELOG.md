@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Command execution tool.** The `shell` package builds a `run_command`
+  tool that executes one command through the platform shell and returns
+  combined stdout and stderr capped by a byte budget. A non-zero exit
+  status is evidence for the model — the result ends with an exit
+  status line rather than failing — while the timeout (always on,
+  60s by default) and cancellation fail at the tool stage with the
+  context error preserved. Strictly opt-in: the command runs with the
+  registering process's privileges (ADR 0015).
 - **File read tool.** The `fileread` package builds a `read_file` tool
   confined to a configured root directory: relative paths only, `..`
   segments and symlinks escaping the root reject as correctable
