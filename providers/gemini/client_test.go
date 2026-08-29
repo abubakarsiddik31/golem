@@ -535,3 +535,157 @@ func TestNewRejectsInvalidSamplingControls(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateNormalizesThoughtParts(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"candidates":[{"content":{"role":"model","parts":[
+		{"text":"pondering","thought":true,"thoughtSignature":"sig-1"},
+		{"text":"The answer is 4."},
+		{"functionCall":{"name":"calc","args":{"op":"add"}},"thoughtSignature":"callsig"}
+	]}}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":4}}`)
+	client := newClient(t, recorder.server.URL)
+
+	response, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	thinking := response.Message.Thinking
+	if len(thinking) != 1 || thinking[0].Text != "pondering" || thinking[0].Signature != "sig-1" {
+		t.Fatalf("thinking blocks = %#v", thinking)
+	}
+	if response.Message.Content != "The answer is 4." {
+		t.Fatalf("content = %q", response.Message.Content)
+	}
+	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Signature != "callsig" {
+		t.Fatalf("tool calls = %#v, want the thought signature carried", response.Message.ToolCalls)
+	}
+
+	// History carrying reasoning replays thought parts first and attaches
+	// the signature to the function call part.
+	request := model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+		{Role: model.RoleAssistant, Content: "4", Thinking: thinking,
+			ToolCalls: []model.ToolCall{{
+				ID:        "call-1",
+				Name:      "calc",
+				Args:      json.RawMessage(`{"op":"add"}`),
+				Signature: "callsig",
+			}}},
+	}}
+	if _, err := client.Generate(context.Background(), request); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	var sent struct {
+		Contents []struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Text             string `json:"text"`
+				Thought          bool   `json:"thought"`
+				ThoughtSignature string `json:"thoughtSignature"`
+				FunctionCall     *struct {
+					Name string `json:"name"`
+				} `json:"functionCall"`
+			} `json:"parts"`
+		} `json:"contents"`
+	}
+	if err := json.Unmarshal([]byte(string(recorder.last(t).body)), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	parts := sent.Contents[1].Parts
+	if len(parts) != 3 || !parts[0].Thought || parts[0].Text != "pondering" ||
+		parts[0].ThoughtSignature != "sig-1" || parts[1].Thought {
+		t.Fatalf("model parts = %#v, want thought part, text part, then call", parts)
+	}
+	if parts[2].FunctionCall == nil || parts[2].ThoughtSignature != "callsig" {
+		t.Fatalf("function call part = %#v, want the signature attached", parts[2])
+	}
+}
+
+func TestThinkingConfigMapsToGenerationConfig(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		thinking *gemini.ThinkingConfig
+		want     string
+	}{
+		{
+			name:     "include thoughts with budget",
+			thinking: &gemini.ThinkingConfig{IncludeThoughts: true, Budget: 4096},
+			want:     `{"includeThoughts":true,"thinkingBudget":4096}`,
+		},
+		{
+			name:     "level",
+			thinking: &gemini.ThinkingConfig{IncludeThoughts: true, Level: "HIGH"},
+			want:     `{"includeThoughts":true,"thinkingLevel":"HIGH"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := newRecordedServer(http.StatusOK, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`)
+			client, err := gemini.New(gemini.Config{
+				APIKey:   "test-key",
+				BaseURL:  recorder.server.URL,
+				Model:    "gemini-2.5-flash",
+				Thinking: tc.thinking,
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+				{Role: model.RoleUser, Content: "hi"},
+			}}); err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			var sent struct {
+				GenerationConfig *struct {
+					ThinkingConfig *json.RawMessage `json:"thinkingConfig"`
+				} `json:"generationConfig"`
+			}
+			if err := json.Unmarshal([]byte(string(recorder.last(t).body)), &sent); err != nil {
+				t.Fatalf("decode sent body: %v", err)
+			}
+			if sent.GenerationConfig == nil || sent.GenerationConfig.ThinkingConfig == nil {
+				t.Fatalf("thinkingConfig missing from generationConfig: %s", string(recorder.last(t).body))
+			}
+			if got := strings.TrimSpace(string(*sent.GenerationConfig.ThinkingConfig)); got != tc.want {
+				t.Fatalf("thinkingConfig = %s, want %s", got, tc.want)
+			}
+		})
+	}
+
+	// A default config keeps thinkingConfig off the wire.
+	recorder := newRecordedServer(http.StatusOK, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`)
+	client := newClient(t, recorder.server.URL)
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if strings.Contains(string(recorder.last(t).body), "thinkingConfig") {
+		t.Fatalf("default config put thinkingConfig on the wire: %s", string(recorder.last(t).body))
+	}
+}
+
+func TestNewRejectsInvalidThinkingConfig(t *testing.T) {
+	t.Parallel()
+
+	base := gemini.Config{APIKey: "k", Model: "gemini-2.5-flash"}
+	for name, thinking := range map[string]*gemini.ThinkingConfig{
+		"empty":         {},
+		"both controls": {Budget: 1024, Level: "HIGH"},
+		"negative":      {Budget: -1},
+	} {
+		if _, err := gemini.New(gemini.Config{APIKey: "k", Model: "m", Thinking: thinking}); err == nil {
+			t.Fatalf("%s config: New() error = nil, want rejection", name)
+		}
+	}
+	_ = base
+}

@@ -26,11 +26,17 @@ type wireContent struct {
 	Parts []wirePart `json:"parts"`
 }
 
-// wirePart is one part of a turn: text, a model-requested function call,
-// or the outcome of one. Function calls carry no provider ID; the adapter
-// generates stable ones and correlates responses by tool name.
+// wirePart is one part of a turn: text, the model's reasoning, a
+// model-requested function call, or the outcome of one. Function calls
+// carry no provider ID; the adapter generates stable ones and correlates
+// responses by tool name.
 type wirePart struct {
 	Text string `json:"text,omitempty"`
+	// Thought marks reasoning text the model emitted before its answer.
+	Thought bool `json:"thought,omitempty"`
+	// ThoughtSignature is the provider's opaque verification token for the
+	// reasoning that led to this part; it must round-trip unchanged.
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 	// FunctionCall carries a model-requested execution on model turns.
 	FunctionCall *wireFunctionCall `json:"functionCall,omitempty"`
 	// FunctionResponse carries the outcome back on user turns. The
@@ -92,9 +98,19 @@ type wireGenConfig struct {
 	ResponseMimeType string          `json:"responseMimeType,omitempty"`
 	ResponseSchema   json.RawMessage `json:"responseSchema,omitempty"`
 	// Sampling and length controls; unset fields stay off the wire.
-	Temperature     *float64 `json:"temperature,omitempty"`
-	TopP            *float64 `json:"topP,omitempty"`
-	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	Temperature     *float64            `json:"temperature,omitempty"`
+	TopP            *float64            `json:"topP,omitempty"`
+	MaxOutputTokens int                 `json:"maxOutputTokens,omitempty"`
+	ThinkingConfig  *wireThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+// wireThinkingConfig requests reasoning. IncludeThoughts returns thought
+// summaries as parts; the budget bounds the tokens spent thinking, and
+// the level (Gemini 3 models) selects a qualitative effort instead.
+type wireThinkingConfig struct {
+	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
+	ThinkingBudget  int    `json:"thinkingBudget,omitempty"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
 }
 
 // generateContentResponse is the GenerateContent API wire response.
@@ -152,10 +168,25 @@ func toWireContents(messages []model.Message) (system *wireSystem, contents []wi
 	return system, contents
 }
 
-// modelParts renders an assistant message: its text as a text part, when
-// present, followed by one function call part per requested call.
+// modelParts renders an assistant message: its reasoning parts first —
+// signatures included, so the next turn verifies the thinking —, then the
+// text as a text part when present, then one function call part per
+// requested call, each carrying its stored thought signature.
 func modelParts(message model.Message) []wirePart {
 	var parts []wirePart
+	for _, block := range message.Thinking {
+		if block.Redacted != "" {
+			// Gemini has no redacted-reasoning part; the payload cannot be
+			// replayed on this wire, so it is skipped here and surfaced by
+			// the durable history instead.
+			continue
+		}
+		parts = append(parts, wirePart{
+			Text:             block.Text,
+			Thought:          true,
+			ThoughtSignature: block.Signature,
+		})
+	}
 	if message.Content != "" {
 		parts = append(parts, wirePart{Text: message.Content})
 	}
@@ -163,7 +194,7 @@ func modelParts(message model.Message) []wirePart {
 		parts = append(parts, wirePart{FunctionCall: &wireFunctionCall{
 			Name: call.Name,
 			Args: normalizeArgs(call.Args),
-		}})
+		}, ThoughtSignature: call.Signature})
 	}
 	return parts
 }
@@ -251,17 +282,21 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 	var texts []string
 	var calls []model.ToolCall
+	var thinking []model.ThinkingBlock
 	callSeq := 0
 	for _, part := range wire.Candidates[0].Content.Parts {
 		switch {
+		case part.Thought:
+			thinking = append(thinking, model.ThinkingBlock{Text: part.Text, Signature: part.ThoughtSignature})
 		case part.Text != "":
 			texts = append(texts, part.Text)
 		case part.FunctionCall != nil:
 			callSeq++
 			calls = append(calls, model.ToolCall{
-				ID:   fmt.Sprintf("call-%d", callSeq),
-				Name: part.FunctionCall.Name,
-				Args: normalizeArgs(part.FunctionCall.Args),
+				ID:        fmt.Sprintf("call-%d", callSeq),
+				Name:      part.FunctionCall.Name,
+				Args:      normalizeArgs(part.FunctionCall.Args),
+				Signature: part.ThoughtSignature,
 			})
 		}
 	}
@@ -270,6 +305,7 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 			Role:      model.RoleAssistant,
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: model.Usage{
 			InputTokens:  wire.Usage.PromptTokens,

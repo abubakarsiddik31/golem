@@ -175,3 +175,48 @@ func TestGenerateStreamPropagatesCancellation(t *testing.T) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
 	}
 }
+
+func TestGenerateStreamAssemblesThoughtParts(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		// Two contiguous thought parts join into one block; the signature
+		// rides the fragment that carries it.
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ponder","thought":true}]}}]}`+"\n\n",
+		`data: {"candidates":[{"content":{"parts":[{"text":"ing","thought":true,"thoughtSignature":"sig-1"}]}}]}`+"\n\n",
+		// The function call ends the thinking block and carries its own
+		// signature for the next turn.
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"calc","args":{"op":"add"}},"thoughtSignature":"callsig"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":6}}`+"\n\n",
+		`data: {"candidates":[{"content":{"parts":[{"text":"4"}]},"finishReason":"STOP"}]}`+"\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	var thinking []model.ThinkingDelta
+	var calls []model.ToolCallDelta
+	response, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
+		thinking = append(thinking, d.Thinking...)
+		calls = append(calls, d.ToolCalls...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	if len(thinking) != 2 || thinking[0].Text != "ponder" || thinking[1].Text != "ing" ||
+		thinking[1].Signature != "sig-1" || thinking[0].Index != 0 || thinking[1].Index != 0 {
+		t.Fatalf("thinking deltas = %#v, want two fragments of block 0", thinking)
+	}
+	if len(calls) != 1 || calls[0].Signature != "callsig" {
+		t.Fatalf("call deltas = %#v, want the thought signature carried", calls)
+	}
+	thinkingBlocks := response.Message.Thinking
+	if len(thinkingBlocks) != 1 || thinkingBlocks[0].Text != "pondering" || thinkingBlocks[0].Signature != "sig-1" {
+		t.Fatalf("assembled thinking = %#v", thinkingBlocks)
+	}
+	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Signature != "callsig" {
+		t.Fatalf("assembled calls = %#v", response.Message.ToolCalls)
+	}
+	if response.Message.Content != "4" {
+		t.Fatalf("assembled content = %q", response.Message.Content)
+	}
+}

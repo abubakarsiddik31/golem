@@ -45,10 +45,51 @@ type Config struct {
 	// Zero omits the bound and lets the provider default apply; negative
 	// values fail New.
 	MaxTokens int
+	// Thinking requests reasoning; nil leaves the provider default. See
+	// ThinkingConfig for the fields.
+	Thinking *ThinkingConfig
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+}
+
+// ThinkingConfig requests reasoning from Gemini models. IncludeThoughts
+// returns thought summaries as parts; Budget bounds the tokens spent
+// thinking (Gemini 2.5 models) and Level selects a qualitative effort
+// ("LOW", "MEDIUM", "HIGH"; Gemini 3 models). Budget and Level are
+// mutually exclusive; New rejects a config that sets both, a negative
+// budget, or none of them.
+type ThinkingConfig struct {
+	// IncludeThoughts returns thought summaries alongside the answer.
+	IncludeThoughts bool
+	// Budget bounds the thinking token count; it must be positive when
+	// set.
+	Budget int
+	// Level selects the thinking level instead of a budget.
+	Level string
+}
+
+// validate enforces the field rules on a ThinkingConfig.
+func (t *ThinkingConfig) validate() error {
+	switch {
+	case t.Budget < 0:
+		return fmt.Errorf("gemini: thinking budget must not be negative, got %d", t.Budget)
+	case t.Budget > 0 && t.Level != "":
+		return fmt.Errorf("gemini: thinking config must set Budget or Level, not both")
+	case t.Budget == 0 && t.Level == "" && !t.IncludeThoughts:
+		return fmt.Errorf("gemini: thinking config must set at least one of IncludeThoughts, Budget, or Level")
+	}
+	return nil
+}
+
+// wire converts the validated config to its request shape.
+func (t *ThinkingConfig) wire() wireThinkingConfig {
+	return wireThinkingConfig{
+		IncludeThoughts: t.IncludeThoughts,
+		ThinkingBudget:  t.Budget,
+		ThinkingLevel:   t.Level,
+	}
 }
 
 // Client generates responses through the Gemini GenerateContent API. It
@@ -71,6 +112,11 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.MaxTokens < 0 {
 		return nil, fmt.Errorf("gemini: max tokens must not be negative, got %d", cfg.MaxTokens)
+	}
+	if cfg.Thinking != nil {
+		if err := cfg.Thinking.validate(); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
@@ -122,11 +168,15 @@ func (c *Client) newGenerateContentHTTPRequest(ctx context.Context, request mode
 	}
 	system, contents := toWireContents(request.Messages)
 	var generationConfig *wireGenConfig
-	if len(request.OutputSchema) > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil || c.cfg.MaxTokens > 0 {
+	if len(request.OutputSchema) > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil || c.cfg.MaxTokens > 0 || c.cfg.Thinking != nil {
 		generationConfig = &wireGenConfig{
 			Temperature:     c.cfg.Temperature,
 			TopP:            c.cfg.TopP,
 			MaxOutputTokens: c.cfg.MaxTokens,
+		}
+		if c.cfg.Thinking != nil {
+			thinking := c.cfg.Thinking.wire()
+			generationConfig.ThinkingConfig = &thinking
 		}
 		if len(request.OutputSchema) > 0 {
 			generationConfig.ResponseMimeType = "application/json"
