@@ -125,5 +125,5 @@ for _, block := range last.Thinking {
   reasoning part; a block that somehow arrives redacted is skipped when
   the history is re-sent, while its evidence stays in the history.
 - Anthropic rejects forced tool choice while thinking is enabled; the
-  provider's error surfaces as an `*anthropic.APIError`. See
-  [ADR 0017](../adr/0017-thinking-content.md) for the deciding details.
+  provider's error surfaces as an `*anthropic.APIError`. Decisions live
+  in `docs/adr/0017-thinking-content.md`.
