@@ -359,3 +359,91 @@ func TestHistoryProcessorRunsBeforePartValidation(t *testing.T) {
 		t.Fatalf("RunWithHistory() error = %v; trimmed history should not be part-validated", err)
 	}
 }
+
+func TestRunWithHistoryRoundTripsThinking(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "42"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// A resumed conversation carries the previous turn's reasoning; the
+	// adapter replays it verbatim so the provider verifies the thinking.
+	history := []model.Message{
+		{Role: model.RoleUser, Content: "what is 2+2?"},
+		{Role: model.RoleAssistant, Content: "2+2 is 4",
+			Thinking:  []model.ThinkingBlock{model.ThinkingSigned("adding", "sig-1"), model.ThinkingRedacted("enc")},
+			ToolCalls: []model.ToolCall{{ID: "call-1", Name: "calc", Args: json.RawMessage(`{}`), Signature: "callsig"}},
+		},
+		{Role: model.RoleTool, ToolCallID: "call-1", ToolName: "calc", Content: "4"},
+	}
+	if _, err := agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "and 3 more?"); err != nil {
+		t.Fatalf("RunWithHistory() error = %v", err)
+	}
+
+	sent := client.request.Messages
+	if len(sent) != 4 {
+		t.Fatalf("sent %d messages, want 4 (history + prompt)", len(sent))
+	}
+	assistant := sent[1]
+	if len(assistant.Thinking) != 2 {
+		t.Fatalf("assistant thinking blocks = %d, want 2", len(assistant.Thinking))
+	}
+	if assistant.Thinking[0].Text != "adding" || assistant.Thinking[0].Signature != "sig-1" ||
+		assistant.Thinking[1].Redacted != "enc" {
+		t.Fatalf("thinking blocks did not round-trip: %#v", assistant.Thinking)
+	}
+	if assistant.ToolCalls[0].Signature != "callsig" {
+		t.Fatalf("tool call signature did not round-trip: %#v", assistant.ToolCalls[0])
+	}
+}
+
+func TestRunWithHistoryRejectsMisplacedThinking(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{response: model.Response{
+		Message: model.Message{Role: model.RoleAssistant, Content: "ok"},
+	}}
+	agent, err := golem.New[struct{}, string](
+		client,
+		golem.DecodeFunc[string](func(ctx context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Thinking belongs to assistant messages; anywhere else fails the run
+	// before any model call.
+	history := []model.Message{
+		{Role: model.RoleUser, Content: "hi", Thinking: []model.ThinkingBlock{model.ThinkingText("why")}},
+	}
+	_, err = agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "next")
+	if err == nil || !strings.Contains(err.Error(), "thinking is only supported on assistant messages") {
+		t.Fatalf("RunWithHistory() error = %v, want misplaced-thinking validation error", err)
+	}
+
+	// A malformed block inside an assistant turn also fails validation,
+	// and neither failure reaches the model.
+	history = []model.Message{
+		{Role: model.RoleAssistant, Content: "hi", Thinking: []model.ThinkingBlock{{}}},
+	}
+	_, err = agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "next")
+	if err == nil || !strings.Contains(err.Error(), "thinking block 0") {
+		t.Fatalf("RunWithHistory() error = %v, want malformed-block validation error", err)
+	}
+
+	if len(client.request.Messages) != 0 {
+		t.Fatalf("model received %d requests; validation must fail before any model call", len(client.request.Messages))
+	}
+}
