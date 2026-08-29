@@ -20,6 +20,18 @@
   capture-only handling of the non-standard `reasoning_content` field.
   Existing call sites and persisted message JSON are unchanged. See
   the [thinking guide](docs/guides/thinking.md) and ADR 0017.
+- **Deferred tools.** A tool can now pause the run instead of
+  producing a result: returning `*tool.Deferred` (approval or
+  external-result kind) ends the run cleanly with the call pending on
+  `Result.Pending`, while co-emitted calls still execute. The
+  application resumes with `RunWithDeferredResults` — approved calls
+  re-execute the tool with `tool.CallApproved` set so gated actions
+  happen only after sign-off, denials and external results become the
+  calls' tool results in emission order, and validation fails before
+  any model call. A `deferred` run event marks the pause point.
+  Providers need nothing: between pause and resume no model call
+  happens. See the [deferred tools
+  guide](docs/guides/deferred-tools.md) and ADR 0018.
 
 ## v0.6.0 — 2026-08-22
 
