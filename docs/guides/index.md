@@ -27,5 +27,6 @@ example, and the README index agree.
 14. [Retries](retries.md) — surviving transient model failures and falling back to another model.
 15. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
 16. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
-17. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-18. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+17. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
+18. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+19. [Testing without a provider](testing.md) — deterministic fakes and what to assert.

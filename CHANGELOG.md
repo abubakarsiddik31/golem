@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Thinking content.** Reasoning is now represented end to end.
+  Assistant messages carry ordered `model.ThinkingBlock`s (visible
+  text with the provider's verification `Signature`, or the encrypted
+  `Redacted` payload), `model.ToolCall` carries reasoning evidence
+  bound to a call, and stream deltas carry `model.ThinkingDelta`
+  fragments. The agent validates thinking placement on history before
+  any model call, `testmodel.Scripted` replays and clones it, and the
+  runner's evidence keeps blocks and signatures intact so multi-turn
+  conversations verify. Enablement stays per adapter:
+  `anthropic`/`bedrock` gain a `ThinkingConfig` (adaptive, budget, or
+  disabled) plus `Effort`, `gemini` gains a `ThinkingConfig`
+  (include-thoughts, budget, or level) with `thoughtSignature`
+  round-trip, and `openai`/`azure` gain `ReasoningEffort` with
+  capture-only handling of the non-standard `reasoning_content` field.
+  Existing call sites and persisted message JSON are unchanged. See
+  the [thinking guide](docs/guides/thinking.md) and ADR 0017.
+
 ## v0.6.0 — 2026-08-22
 
 This minor release lands the three post-v0.3 milestones together:

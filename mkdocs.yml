@@ -62,5 +62,6 @@ nav:
   - Retries: retries.md
   - Streaming: streaming.md
   - Run events: run-events.md
+  - Thinking: thinking.md
   - Usage limits: usage-limits.md
   - Testing without a provider: testing.md
