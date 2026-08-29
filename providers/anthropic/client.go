@@ -50,10 +50,46 @@ type Config struct {
 	// TopP restricts sampling to the nucleus probability mass in [0, 1];
 	// nil leaves the provider default.
 	TopP *float64
+	// Thinking requests reasoning; nil leaves the provider default, which
+	// on Claude Sonnet 5 and Opus 5 is adaptive thinking.
+	Thinking *ThinkingConfig
+	// Effort scales how much the model reasons and works, e.g. "low",
+	// "medium", "high", or "xhigh"; empty leaves the provider default. It
+	// applies with adaptive thinking and on its own.
+	Effort string
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+}
+
+// ThinkingConfig requests reasoning from Anthropic models. Exactly one
+// field is set; the zero config is invalid and New rejects it. Adaptive
+// thinking (Claude Opus 4.6 and later) lets the model decide when and how
+// much to think; older models require a BudgetTokens budget instead.
+// Thinking-by-default models need Disabled to turn thinking off, because
+// omitting the thinking field selects adaptive thinking on them.
+type ThinkingConfig struct {
+	// Adaptive enables adaptive thinking.
+	Adaptive bool
+	// BudgetTokens bounds extended thinking on models that take a fixed
+	// budget; it must be positive when set. Deprecated by the provider on
+	// Claude Opus 4.6 and later in favor of Adaptive.
+	BudgetTokens int
+	// Disabled turns thinking off explicitly.
+	Disabled bool
+}
+
+// wire converts the validated config to its request shape, choosing the
+// enabled form when a budget is set.
+func (t *ThinkingConfig) wire() wireThinking {
+	if t.BudgetTokens > 0 {
+		return wireThinking{Type: "enabled", BudgetTokens: t.BudgetTokens}
+	}
+	if t.Disabled {
+		return wireThinking{Type: "disabled"}
+	}
+	return wireThinking{Type: "adaptive"}
 }
 
 // Client generates responses through the Anthropic Messages API. It
@@ -79,6 +115,11 @@ func New(cfg Config) (*Client, error) {
 	}
 	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
 		return nil, err
+	}
+	if cfg.Thinking != nil {
+		if err := cfg.Thinking.validate(); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
@@ -137,6 +178,8 @@ func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Reque
 		Tools:        toWireTools(request.ToolSpecs),
 		Temperature:  c.cfg.Temperature,
 		TopP:         c.cfg.TopP,
+		Thinking:     thinkingOnWire(c.cfg.Thinking),
+		Effort:       c.cfg.Effort,
 		OutputConfig: outputConfig,
 		Stream:       stream,
 	})
@@ -166,4 +209,33 @@ func validateSampling(temperature, topP *float64) error {
 		return fmt.Errorf("anthropic: top P must be in [0, 1], got %v", *topP)
 	}
 	return nil
+}
+
+// validate enforces the exactly-one-field rule on a ThinkingConfig.
+func (t *ThinkingConfig) validate() error {
+	set := 0
+	for _, chosen := range []bool{t.Adaptive, t.BudgetTokens > 0, t.Disabled} {
+		if chosen {
+			set++
+		}
+	}
+	switch {
+	case set == 0:
+		return fmt.Errorf("anthropic: thinking config must set one of Adaptive, BudgetTokens, or Disabled")
+	case set > 1:
+		return fmt.Errorf("anthropic: thinking config must set exactly one of Adaptive, BudgetTokens, or Disabled")
+	case t.BudgetTokens < 0:
+		return fmt.Errorf("anthropic: thinking budget must not be negative, got %d", t.BudgetTokens)
+	}
+	return nil
+}
+
+// thinkingOnWire maps a validated config to its request shape; nil keeps
+// thinking off the wire entirely.
+func thinkingOnWire(config *ThinkingConfig) *wireThinking {
+	if config == nil {
+		return nil
+	}
+	wire := config.wire()
+	return &wire
 }

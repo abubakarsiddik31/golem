@@ -241,3 +241,58 @@ func TestGenerateStreamPropagatesCancellation(t *testing.T) {
 		t.Fatal("model.IsRetryable(err) = true, want false for cancellation")
 	}
 }
+
+func TestGenerateStreamAssemblesThinkingBlocks(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":30,"output_tokens":1}}}`+"\n\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`+"\n\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"2 plus 2"}}`+"\n\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is 4"}}`+"\n\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}`+"\n\n",
+		`data: {"type":"content_block_stop","index":0}`+"\n\n",
+		// Interleaved thinking: a second block follows the first.
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"enc"}}`+"\n\n",
+		`data: {"type":"content_block_stop","index":1}`+"\n\n",
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`+"\n\n",
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"4"}}`+"\n\n",
+		`data: {"type":"content_block_stop","index":2}`+"\n\n",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}`+"\n\n",
+		`data: {"type":"message_stop"}`+"\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	var thinking []model.ThinkingDelta
+	var text []string
+	response, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
+		thinking = append(thinking, d.Thinking...)
+		if d.Content != "" {
+			text = append(text, d.Content)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	if len(thinking) != 3 || thinking[0].Text != "2 plus 2" || thinking[1].Text != " is 4" ||
+		thinking[2].Signature != "sig-1" || thinking[0].Index != 0 {
+		t.Fatalf("thinking deltas = %#v", thinking)
+	}
+	if len(text) != 1 || text[0] != "4" {
+		t.Fatalf("content fragments = %#v", text)
+	}
+	thinkingBlocks := response.Message.Thinking
+	if len(thinkingBlocks) != 2 ||
+		thinkingBlocks[0].Text != "2 plus 2 is 4" || thinkingBlocks[0].Signature != "sig-1" ||
+		thinkingBlocks[1].Redacted != "enc" {
+		t.Fatalf("assembled thinking = %#v", thinkingBlocks)
+	}
+	if response.Message.Content != "4" {
+		t.Fatalf("assembled content = %q", response.Message.Content)
+	}
+	if response.Usage != (model.Usage{InputTokens: 30, OutputTokens: 20}) {
+		t.Fatalf("usage = %#v", response.Usage)
+	}
+}
