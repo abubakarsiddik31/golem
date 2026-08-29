@@ -29,6 +29,10 @@ const (
 	// round; its Attempt numbers the round that follows, and turn numbers
 	// restart with it.
 	EventOutputRejected = runner.EventOutputRejected
+	// EventDeferred marks a tool call that deferred instead of executing;
+	// the run pauses with the call pending on Result.Pending. It replaces
+	// the call's tool-end event.
+	EventDeferred = runner.EventDeferred
 )
 
 // WithRunEvents registers an observer invoked for every observable point
