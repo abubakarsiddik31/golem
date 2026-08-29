@@ -17,6 +17,9 @@ type converseRequest struct {
 	ToolConfig      *wireToolConfig   `json:"toolConfig,omitempty"`
 	InferenceConfig *wireInference    `json:"inferenceConfig,omitempty"`
 	OutputConfig    *wireOutputConfig `json:"outputConfig,omitempty"`
+	// AdditionalModelRequestFields passes model-specific request fields
+	// through Converse; the thinking configuration rides here.
+	AdditionalModelRequestFields json.RawMessage `json:"additionalModelRequestFields,omitempty"`
 }
 
 // wireMessage is one conversational turn. Roles alternate between "user"
@@ -27,10 +30,15 @@ type wireMessage struct {
 	Content []wireBlock `json:"content"`
 }
 
-// wireBlock is one content block of a turn: text, a model-requested tool
-// use on assistant turns, or the outcome of one on user turns.
+// wireBlock is one content block of a turn: text, the model's signed
+// reasoning, a model-requested tool use on assistant turns, or the
+// outcome of one on user turns.
 type wireBlock struct {
 	Text string `json:"text,omitempty"`
+	// ReasoningContent carries the model's reasoning on assistant turns:
+	// visible text with its verification signature, or the provider's
+	// encrypted payload.
+	ReasoningContent *wireReasoningContent `json:"reasoningContent,omitempty"`
 	// ToolUse carries a model-requested execution. ToolUseID is the
 	// provider's own call ID, passed through unmodified.
 	ToolUse *wireToolUse `json:"toolUse,omitempty"`
@@ -58,6 +66,19 @@ type wireToolUse struct {
 	ToolUseID string          `json:"toolUseId"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
+}
+
+// wireReasoningContent is one assistant reasoning block: visible reasoning
+// text with its verification signature, or the provider's encrypted
+// payload for reasoning it declined to show.
+type wireReasoningContent struct {
+	ReasoningText   *wireReasoningText `json:"reasoningText,omitempty"`
+	RedactedContent string             `json:"redactedContent,omitempty"`
+}
+
+type wireReasoningText struct {
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type wireToolResult struct {
@@ -97,9 +118,12 @@ type wireInference struct {
 }
 
 // wireOutputConfig requests provider-enforced output structure; set for
-// structured output. The provider receives the schema as a string.
+// structured output. The provider receives the schema as a string. Effort
+// scales how much the model reasons and works; it rides the same object
+// as a sibling of the format.
 type wireOutputConfig struct {
 	TextFormat *wireTextFormat `json:"textFormat,omitempty"`
+	Effort     string          `json:"effort,omitempty"`
 }
 
 type wireTextFormat struct {
@@ -169,10 +193,21 @@ func toWireMessages(messages []model.Message) (system []wireSystem, turns []wire
 	return system, turns, nil
 }
 
-// assistantBlocks renders an assistant message: its text as a text block,
-// when present, followed by one toolUse block per requested call.
+// assistantBlocks renders an assistant message: its reasoning blocks
+// first — the provider verifies them against the rest of the turn —,
+// then the text as a text block when present, then one toolUse block per
+// requested call.
 func assistantBlocks(message model.Message) []wireBlock {
 	var blocks []wireBlock
+	for _, block := range message.Thinking {
+		if block.Redacted != "" {
+			blocks = append(blocks, wireBlock{ReasoningContent: &wireReasoningContent{RedactedContent: block.Redacted}})
+			continue
+		}
+		blocks = append(blocks, wireBlock{ReasoningContent: &wireReasoningContent{
+			ReasoningText: &wireReasoningText{Text: block.Text, Signature: block.Signature},
+		}})
+	}
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Text: message.Content})
 	}
@@ -241,7 +276,8 @@ func normalizeInput(input json.RawMessage) json.RawMessage {
 }
 
 // fromWireResponse normalizes a Converse body: text blocks join into the
-// message content and toolUse blocks become requested calls with their
+// message content, reasoningContent blocks keep their order and
+// signatures, and toolUse blocks become requested calls with their
 // provider IDs. Tool calls decide the turn, so a response with both keeps
 // its calls and its text as evidence.
 func fromWireResponse(payload []byte) (model.Response, error) {
@@ -252,10 +288,18 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 
 	var texts []string
 	var calls []model.ToolCall
+	var thinking []model.ThinkingBlock
 	for _, block := range wire.Output.Message.Content {
 		switch {
 		case block.Text != "":
 			texts = append(texts, block.Text)
+		case block.ReasoningContent != nil:
+			if reasoning := block.ReasoningContent; reasoning.RedactedContent != "" {
+				thinking = append(thinking, model.ThinkingRedacted(reasoning.RedactedContent))
+			} else if reasoning.ReasoningText != nil {
+				thinking = append(thinking, model.ThinkingSigned(
+					reasoning.ReasoningText.Text, reasoning.ReasoningText.Signature))
+			}
 		case block.ToolUse != nil:
 			calls = append(calls, model.ToolCall{
 				ID:   block.ToolUse.ToolUseID,
@@ -270,6 +314,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Role:      model.RoleAssistant,
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: model.Usage{
 			InputTokens:  wire.Usage.InputTokens,

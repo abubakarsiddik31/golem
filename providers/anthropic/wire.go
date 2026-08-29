@@ -20,11 +20,27 @@ type messagesRequest struct {
 	// Sampling controls; unset fields stay off the wire.
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
+	// Thinking requests reasoning; nil leaves the provider default, which
+	// on thinking-by-default models is adaptive thinking.
+	Thinking *wireThinking `json:"thinking,omitempty"`
+	// Effort scales how much the model reasons and works; unset stays off
+	// the wire.
+	Effort string `json:"effort,omitempty"`
 	// OutputConfig requests provider-enforced output structure; set for
 	// structured output.
 	OutputConfig *wireOutputConfig `json:"output_config,omitempty"`
 	// Stream selects streaming mode.
 	Stream bool `json:"stream,omitempty"`
+}
+
+// wireThinking is the thinking configuration: adaptive lets the model
+// decide when and how much to think, enabled bounds extended thinking by
+// a token budget, disabled turns thinking off explicitly — which the
+// thinking-by-default models require, because omitting the field selects
+// adaptive thinking.
+type wireThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 // wireOutputConfig is the structured-output configuration of a request.
@@ -48,12 +64,20 @@ type wireMessage struct {
 }
 
 // wireBlock is one content block of a turn. Text blocks carry prose,
-// tool_use blocks carry a model-requested execution on assistant turns,
-// and tool_result blocks carry the execution outcome back on user turns.
+// thinking blocks carry the model's signed reasoning, tool_use blocks
+// carry a model-requested execution on assistant turns, and tool_result
+// blocks carry the execution outcome back on user turns.
 type wireBlock struct {
 	Type string `json:"type"`
 	// Text is the block text for type "text".
 	Text string `json:"text,omitempty"`
+	// Thinking and Signature are the reasoning text and its verification
+	// token for type "thinking".
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	// Redacted is the encrypted reasoning payload for type
+	// "redacted_thinking".
+	Redacted string `json:"data,omitempty"`
 	// ID, Name, and Input identify the requested execution for type
 	// "tool_use". Input is a JSON object.
 	ID    string          `json:"id,omitempty"`
@@ -132,10 +156,19 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage) 
 	return strings.Join(systemParts, "\n\n"), turns
 }
 
-// assistantBlocks renders an assistant message: its text as a text block,
-// when present, followed by one tool_use block per requested call.
+// assistantBlocks renders an assistant message: its reasoning blocks
+// first — the provider verifies them against the rest of the turn —,
+// then the text as a text block when present, then one tool_use block
+// per requested call.
 func assistantBlocks(message model.Message) []wireBlock {
 	var blocks []wireBlock
+	for _, block := range message.Thinking {
+		if block.Redacted != "" {
+			blocks = append(blocks, wireBlock{Type: "redacted_thinking", Redacted: block.Redacted})
+			continue
+		}
+		blocks = append(blocks, wireBlock{Type: "thinking", Thinking: block.Text, Signature: block.Signature})
+	}
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Type: "text", Text: message.Content})
 	}
@@ -207,9 +240,10 @@ func normalizeInput(input json.RawMessage) json.RawMessage {
 }
 
 // fromWireResponse normalizes a Messages API body: text blocks join into
-// the message content, tool_use blocks become requested calls, and
-// unknown block types are skipped. Tool calls decide the turn, so a
-// response with both keeps its calls and its text as evidence.
+// the message content, thinking blocks keep their order and signatures,
+// tool_use blocks become requested calls, and unknown block types are
+// skipped. Tool calls decide the turn, so a response with both keeps its
+// calls and its text as evidence.
 func fromWireResponse(payload []byte) (model.Response, error) {
 	var wire messagesResponse
 	if err := json.Unmarshal(payload, &wire); err != nil {
@@ -218,10 +252,15 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 
 	var texts []string
 	var calls []model.ToolCall
+	var thinking []model.ThinkingBlock
 	for _, block := range wire.Content {
 		switch block.Type {
 		case "text":
 			texts = append(texts, block.Text)
+		case "thinking":
+			thinking = append(thinking, model.ThinkingSigned(block.Thinking, block.Signature))
+		case "redacted_thinking":
+			thinking = append(thinking, model.ThinkingRedacted(block.Redacted))
 		case "tool_use":
 			calls = append(calls, model.ToolCall{
 				ID:   block.ID,
@@ -236,6 +275,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Role:      model.RoleAssistant,
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: model.Usage{
 			InputTokens:  wire.Usage.InputTokens,

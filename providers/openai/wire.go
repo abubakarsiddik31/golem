@@ -20,6 +20,9 @@ type chatRequest struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
 	MaxTokens   int      `json:"max_tokens,omitempty"`
+	// ReasoningEffort asks reasoning models how much to think before
+	// answering; empty stays off the wire.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Stream selects streaming mode; when set, StreamOptions
 	// asks the provider to report usage in the final chunk.
 	Stream        bool               `json:"stream,omitempty"`
@@ -54,6 +57,11 @@ type chatMessage struct {
 	Content    any            `json:"content,omitempty"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
+	// ReasoningContent is the non-standard reasoning field some
+	// OpenAI-compatible endpoints return on assistant messages. It is
+	// captured into the message's thinking and never sent back: endpoints
+	// disagree on replay, from ignoring it to rejecting it.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // chatContentPart is one entry of a multimodal content array: the text of
@@ -120,6 +128,9 @@ type chatDeltaMessage struct {
 	Role      string              `json:"role,omitempty"`
 	Content   string              `json:"content,omitempty"`
 	ToolCalls []chatToolCallDelta `json:"tool_calls,omitempty"`
+	// ReasoningContent carries a fragment of the model's reasoning on
+	// endpoints that stream it.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type chatToolCallDelta struct {
@@ -246,7 +257,10 @@ func contentText(content any) string {
 
 // fromWireResponse normalizes a chat-completions body. The first choice
 // wins; stringified arguments become raw JSON, with an empty
-// string mapped to an empty object.
+// string mapped to an empty object, and a reasoning_content field —
+// returned by some OpenAI-compatible endpoints — becomes the message's
+// thinking. Chat-completions reasoning is capture-only: it is never
+// replayed on later requests.
 func fromWireResponse(payload []byte) (model.Response, error) {
 	var wire chatResponse
 	if err := json.Unmarshal(payload, &wire); err != nil {
@@ -268,12 +282,17 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Args: normalizeArguments(call.Function.Arguments),
 		})
 	}
+	var thinking []model.ThinkingBlock
+	if choice.ReasoningContent != "" {
+		thinking = []model.ThinkingBlock{model.ThinkingText(choice.ReasoningContent)}
+	}
 
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
 			Content:   contentText(choice.Content),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: model.Usage{
 			InputTokens:  wire.Usage.PromptTokens,

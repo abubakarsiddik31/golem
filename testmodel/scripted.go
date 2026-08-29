@@ -68,13 +68,25 @@ func (m *Scripted) Generate(ctx context.Context, request model.Request) (model.R
 
 // GenerateStream draws from the same queue as Generate, records the
 // request the same way, and replays the response as fragments before
-// returning it: one content delta when the response carries text, then one
-// identifying fragment per tool call, indexed by position. A non-nil error
-// from onDelta stops the replay and is returned as-is.
+// returning it: one thinking fragment per visible thinking block, one
+// content delta when the response carries text, then one identifying
+// fragment per tool call, indexed by position — the order providers
+// stream them in. Redacted blocks have no stream representation and ride
+// only in the returned response, as on the wire. A non-nil error from
+// onDelta stops the replay and is returned as-is.
 func (m *Scripted) GenerateStream(ctx context.Context, request model.Request, onDelta func(model.Delta) error) (model.Response, error) {
 	response, err := m.Generate(ctx, request)
 	if err != nil {
 		return model.Response{}, err
+	}
+	for i, block := range response.Message.Thinking {
+		if block.Text == "" {
+			continue
+		}
+		delta := model.Delta{Thinking: []model.ThinkingDelta{{Index: i, Text: block.Text, Signature: block.Signature}}}
+		if err := Emit(onDelta, delta); err != nil {
+			return model.Response{}, err
+		}
 	}
 	if response.Message.Content != "" {
 		if err := Emit(onDelta, model.Delta{Content: response.Message.Content}); err != nil {
@@ -82,7 +94,7 @@ func (m *Scripted) GenerateStream(ctx context.Context, request model.Request, on
 		}
 	}
 	for i, call := range response.Message.ToolCalls {
-		delta := model.Delta{ToolCalls: []model.ToolCallDelta{{Index: i, ID: call.ID, Name: call.Name}}}
+		delta := model.Delta{ToolCalls: []model.ToolCallDelta{{Index: i, ID: call.ID, Name: call.Name, Signature: call.Signature}}}
 		if err := Emit(onDelta, delta); err != nil {
 			return model.Response{}, err
 		}
@@ -124,6 +136,7 @@ func cloneMessage(message model.Message) model.Message {
 		message.ToolCalls[i].Args = append(json.RawMessage(nil), message.ToolCalls[i].Args...)
 	}
 	message.Parts = cloneParts(message.Parts)
+	message.Thinking = append([]model.ThinkingBlock(nil), message.Thinking...)
 	return message
 }
 

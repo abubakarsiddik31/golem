@@ -263,3 +263,94 @@ func TestMessageJSONStaysAdditiveWithParts(t *testing.T) {
 		t.Fatalf("legacy message gained parts: %#v", legacy.Parts)
 	}
 }
+
+func TestThinkingBlocksValidateAtTheBoundary(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		block model.ThinkingBlock
+		want  string
+	}{
+		{"neither text nor redacted", model.ThinkingBlock{}, "neither"},
+		{"text and redacted", model.ThinkingBlock{Text: "why", Redacted: "enc"}, "exactly one"},
+		{"signature on redacted", model.ThinkingBlock{Redacted: "enc", Signature: "sig"}, "signature"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.block.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error mentioning %q", err, tc.want)
+			}
+		})
+	}
+
+	for name, block := range map[string]model.ThinkingBlock{
+		"text":     model.ThinkingText("reasoning"),
+		"signed":   model.ThinkingSigned("reasoning", "sig"),
+		"redacted": model.ThinkingRedacted("enc"),
+	} {
+		if err := block.Validate(); err != nil {
+			t.Fatalf("%s constructor produced invalid block: %v", name, err)
+		}
+	}
+}
+
+func TestMessageJSONStaysAdditiveWithThinking(t *testing.T) {
+	t.Parallel()
+
+	// Existing text-only encoding must stay byte-identical: the JSON
+	// shape is a durable, additive-only contract.
+	textOnly := model.Message{Role: model.RoleAssistant, Content: "hi"}
+	encoded, err := json.Marshal(textOnly)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if want := `{"role":"assistant","content":"hi"}`; string(encoded) != want {
+		t.Fatalf("text-only encoding changed:\n got %s\nwant %s", encoded, want)
+	}
+
+	// A thinking turn carries blocks in order and a signed tool call.
+	withThinking := model.Message{
+		Role:    model.RoleAssistant,
+		Content: "4",
+		Thinking: []model.ThinkingBlock{
+			model.ThinkingSigned("2+2", "sig-1"),
+			model.ThinkingRedacted("enc"),
+		},
+		ToolCalls: []model.ToolCall{
+			{ID: "call-1", Name: "roll_dice", Args: json.RawMessage(`{}`), Signature: "callsig"},
+		},
+	}
+	encoded, err = json.Marshal(withThinking)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	want := `{"role":"assistant","content":"4","toolCalls":[{"id":"call-1","name":"roll_dice","args":{},"signature":"callsig"}],` +
+		`"thinking":[{"text":"2+2","signature":"sig-1"},{"redacted":"enc"}]}`
+	if string(encoded) != want {
+		t.Fatalf("thinking encoding:\n got %s\nwant %s", encoded, want)
+	}
+
+	// History persisted before thinking exists decodes unchanged.
+	var legacy model.Message
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":"hi"}`), &legacy); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if legacy.Thinking != nil {
+		t.Fatalf("legacy message gained thinking: %#v", legacy.Thinking)
+	}
+	var decoded model.Message
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(decoded.Thinking) != 2 || decoded.Thinking[0].Text != "2+2" ||
+		decoded.Thinking[0].Signature != "sig-1" || decoded.Thinking[1].Redacted != "enc" {
+		t.Fatalf("thinking did not round-trip: %#v", decoded.Thinking)
+	}
+	if len(decoded.ToolCalls) != 1 || decoded.ToolCalls[0].Signature != "callsig" {
+		t.Fatalf("tool call signature did not round-trip: %#v", decoded.ToolCalls)
+	}
+}

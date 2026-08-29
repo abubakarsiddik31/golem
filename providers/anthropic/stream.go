@@ -122,8 +122,14 @@ type streamEvent struct {
 
 // streamEventDelta is one content fragment.
 type streamEventDelta struct {
-	Type string `json:"type"` // "text_delta" | "input_json_delta"
+	Type string `json:"type"` // "text_delta" | "thinking_delta" | "signature_delta" | "input_json_delta"
 	Text string `json:"text,omitempty"`
+	// Thinking is a fragment of the block's reasoning text on
+	// thinking_delta events.
+	Thinking string `json:"thinking,omitempty"`
+	// Signature is the block's verification token, which arrives whole in
+	// one event, on signature_delta events.
+	Signature string `json:"signature,omitempty"`
 	// PartialJSON is a fragment of the block's tool input.
 	PartialJSON string `json:"partial_json,omitempty"`
 }
@@ -140,7 +146,13 @@ type streamAssembler struct {
 	// identified marks calls whose first fragment — the one carrying ID
 	// and Name — has already been emitted.
 	identified []bool
-	usage      model.Usage
+	// thinkingOrdinals maps wire content-block indexes to thinking-block
+	// ordinals the same way; thinkingText accumulates each visible block's
+	// reasoning in stream order, including interleaved blocks.
+	thinkingOrdinals map[int]int
+	thinking         []model.ThinkingBlock
+	thinkingText     []strings.Builder
+	usage            model.Usage
 }
 
 // consume decodes one event payload, accumulates it, reports fragments to
@@ -157,7 +169,11 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		a.usage.InputTokens = event.Message.Usage.InputTokens
 		a.usage.OutputTokens = event.Message.Usage.OutputTokens
 	case "content_block_start":
-		if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
+		if event.ContentBlock == nil {
+			return false, nil
+		}
+		switch event.ContentBlock.Type {
+		case "tool_use":
 			if a.ordinals == nil {
 				a.ordinals = make(map[int]int)
 			}
@@ -168,6 +184,16 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 			})
 			a.args = append(a.args, strings.Builder{})
 			a.identified = append(a.identified, false)
+		case "thinking":
+			if a.thinkingOrdinals == nil {
+				a.thinkingOrdinals = make(map[int]int)
+			}
+			a.thinkingOrdinals[event.Index] = len(a.thinking)
+			a.thinking = append(a.thinking, model.ThinkingText(event.ContentBlock.Thinking))
+			a.thinkingText = append(a.thinkingText, strings.Builder{})
+		case "redacted_thinking":
+			// Redacted reasoning arrives whole; it has no deltas.
+			a.thinking = append(a.thinking, model.ThinkingRedacted(event.ContentBlock.Redacted))
 		}
 	case "content_block_delta":
 		if event.Delta == nil {
@@ -177,6 +203,36 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		case "text_delta":
 			a.content.WriteString(event.Delta.Text)
 			if err := emit(onDelta, model.Delta{Content: event.Delta.Text}); err != nil {
+				return false, err
+			}
+		case "thinking_delta":
+			ordinal, ok := a.thinkingOrdinals[event.Index]
+			if !ok {
+				return false, &DecodeError{
+					Stage: "decode stream event",
+					Err:   fmt.Errorf("thinking fragment for block %d, which is not a thinking block", event.Index),
+				}
+			}
+			a.thinkingText[ordinal].WriteString(event.Delta.Thinking)
+			if err := emit(onDelta, model.Delta{Thinking: []model.ThinkingDelta{{
+				Index: ordinal,
+				Text:  event.Delta.Thinking,
+			}}}); err != nil {
+				return false, err
+			}
+		case "signature_delta":
+			ordinal, ok := a.thinkingOrdinals[event.Index]
+			if !ok {
+				return false, &DecodeError{
+					Stage: "decode stream event",
+					Err:   fmt.Errorf("signature fragment for block %d, which is not a thinking block", event.Index),
+				}
+			}
+			a.thinking[ordinal].Signature = event.Delta.Signature
+			if err := emit(onDelta, model.Delta{Thinking: []model.ThinkingDelta{{
+				Index:     ordinal,
+				Signature: event.Delta.Signature,
+			}}}); err != nil {
 				return false, err
 			}
 		case "input_json_delta":
@@ -255,11 +311,22 @@ func (a *streamAssembler) response() (model.Response, error) {
 	if len(calls) == 0 {
 		calls = nil
 	}
+	thinking := a.thinking
+	for i := range thinking {
+		if thinking[i].Redacted != "" {
+			continue
+		}
+		thinking[i].Text = a.thinkingText[i].String()
+	}
+	if len(thinking) == 0 {
+		thinking = nil
+	}
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
 			Content:   a.content.String(),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: a.usage,
 	}, nil

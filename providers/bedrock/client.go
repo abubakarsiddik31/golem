@@ -49,6 +49,14 @@ type Config struct {
 	// TopP restricts sampling to the nucleus probability mass in [0, 1];
 	// nil leaves the provider default.
 	TopP *float64
+	// Thinking requests reasoning from Claude models via
+	// additionalModelRequestFields; nil leaves the provider default. See
+	// ThinkingConfig for the model-family constraints.
+	Thinking *ThinkingConfig
+	// Effort scales how much the model reasons and works, e.g. "low",
+	// "medium", "high", or "xhigh"; empty leaves the provider default. It
+	// rides outputConfig.effort and pairs with adaptive thinking.
+	Effort string
 	// BaseURL overrides the regional endpoint prefix, which defaults to
 	// https://bedrock-runtime.{Region}.amazonaws.com. Point it at a
 	// proxy or LocalStack-style emulator when needed.
@@ -85,6 +93,11 @@ func New(cfg Config) (*Client, error) {
 	}
 	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
 		return nil, err
+	}
+	if cfg.Thinking != nil {
+		if err := cfg.Thinking.validate(); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com", cfg.Region)
@@ -150,12 +163,19 @@ func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Reque
 			}},
 		}}
 	}
+	if c.cfg.Effort != "" {
+		if outputConfig == nil {
+			outputConfig = &wireOutputConfig{}
+		}
+		outputConfig.Effort = c.cfg.Effort
+	}
 	body, err := json.Marshal(converseRequest{
-		Messages:        turns,
-		System:          system,
-		ToolConfig:      toWireToolConfig(request.ToolSpecs),
-		InferenceConfig: inferenceConfig,
-		OutputConfig:    outputConfig,
+		Messages:                     turns,
+		System:                       system,
+		ToolConfig:                   toWireToolConfig(request.ToolSpecs),
+		InferenceConfig:              inferenceConfig,
+		OutputConfig:                 outputConfig,
+		AdditionalModelRequestFields: c.cfg.Thinking.wireFields(),
 	})
 	if err != nil {
 		return nil, &DecodeError{Stage: "encode request", Err: err}
@@ -182,4 +202,60 @@ func validateSampling(temperature, topP *float64) error {
 		return fmt.Errorf("bedrock: top P must be in [0, 1], got %v", *topP)
 	}
 	return nil
+}
+
+// ThinkingConfig requests reasoning from Claude models on Bedrock.
+// Exactly one field is set; the zero config is invalid and New rejects
+// it. Adaptive thinking (Claude Opus 4.6 and later, served through the
+// Anthropic messages shape inside Converse) lets the model decide when
+// and how much to think; older Claude models require a BudgetTokens
+// budget instead. Thinking-by-default models need Disabled to turn
+// thinking off, because omitting the thinking field selects adaptive
+// thinking on them.
+type ThinkingConfig struct {
+	// Adaptive enables adaptive thinking.
+	Adaptive bool
+	// BudgetTokens bounds extended thinking on models that take a fixed
+	// budget; it must be positive when set.
+	BudgetTokens int
+	// Disabled turns thinking off explicitly.
+	Disabled bool
+}
+
+// validate enforces the exactly-one-field rule on a ThinkingConfig.
+func (t *ThinkingConfig) validate() error {
+	set := 0
+	for _, chosen := range []bool{t.Adaptive, t.BudgetTokens > 0, t.Disabled} {
+		if chosen {
+			set++
+		}
+	}
+	switch {
+	case set == 0:
+		return fmt.Errorf("bedrock: thinking config must set one of Adaptive, BudgetTokens, or Disabled")
+	case set > 1:
+		return fmt.Errorf("bedrock: thinking config must set exactly one of Adaptive, BudgetTokens, or Disabled")
+	case t.BudgetTokens < 0:
+		return fmt.Errorf("bedrock: thinking budget must not be negative, got %d", t.BudgetTokens)
+	}
+	return nil
+}
+
+// wireFields renders the validated config as the
+// additionalModelRequestFields payload; nil keeps the field off the wire.
+func (t *ThinkingConfig) wireFields() json.RawMessage {
+	if t == nil {
+		return nil
+	}
+	thinking := map[string]any{"type": "adaptive"}
+	if t.BudgetTokens > 0 {
+		thinking = map[string]any{"type": "enabled", "budget_tokens": t.BudgetTokens}
+	} else if t.Disabled {
+		thinking = map[string]any{"type": "disabled"}
+	}
+	encoded, err := json.Marshal(map[string]any{"thinking": thinking})
+	if err != nil {
+		return nil
+	}
+	return encoded
 }

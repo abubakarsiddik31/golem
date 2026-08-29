@@ -300,3 +300,55 @@ func TestGenerateStreamPropagatesCancellation(t *testing.T) {
 func TestGenerateStreamImplementsStreamingModel(t *testing.T) {
 	var _ model.StreamingModel = newClient(t, "http://localhost:1")
 }
+
+func TestGenerateStreamReasoningFragments(t *testing.T) {
+	server := streamServer(t, http.StatusOK,
+		eventFrame("messageStart", `{"role":"assistant"}`),
+		eventFrame("contentBlockDelta", `{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":"step"}}}`),
+		eventFrame("contentBlockDelta", `{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":" by step"}}}`),
+		eventFrame("contentBlockDelta", `{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig-1"}}}`),
+		eventFrame("contentBlockDelta", `{"contentBlockIndex":1,"delta":{"reasoningContent":{"redactedContent":"enc"}}}`),
+		eventFrame("contentBlockDelta", `{"contentBlockIndex":2,"delta":{"text":"The answer is 4."}}`),
+		eventFrame("contentBlockStop", `{"contentBlockIndex":2}`),
+		eventFrame("messageStop", `{"stopReason":"end_turn"}`),
+		eventFrame("metadata", `{"usage":{"inputTokens":9,"outputTokens":12}}`),
+	)
+	defer server.server.Close()
+	client := newClient(t, server.server.URL)
+
+	var deltas []model.Delta
+	response, err := client.GenerateStream(context.Background(), model.Request{
+		Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}},
+	}, func(delta model.Delta) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream error = %v", err)
+	}
+
+	// Reasoning deltas arrive before the text fragment, signatures included;
+	// redacted payloads ride the assembled response only, as on the wire.
+	thinkingDeltas := 0
+	for _, delta := range deltas {
+		thinkingDeltas += len(delta.Thinking)
+	}
+	if thinkingDeltas != 3 {
+		t.Errorf("thinking deltas = %d, want 3 (two text fragments, one signature)", thinkingDeltas)
+	}
+	if deltas[0].Thinking[0].Text != "step" || deltas[1].Thinking[0].Text != " by step" ||
+		deltas[2].Thinking[0].Signature != "sig-1" || deltas[0].Thinking[0].Index != 0 {
+		t.Errorf("thinking deltas = %+v", deltas[:3])
+	}
+	thinking := response.Message.Thinking
+	if len(thinking) != 2 || thinking[0].Text != "step by step" || thinking[0].Signature != "sig-1" ||
+		thinking[1].Redacted != "enc" {
+		t.Errorf("assembled thinking = %+v, want signed block plus redacted block", thinking)
+	}
+	if response.Message.Content != "The answer is 4." {
+		t.Errorf("content = %q", response.Message.Content)
+	}
+	if response.Usage.InputTokens != 9 || response.Usage.OutputTokens != 12 {
+		t.Errorf("usage = %+v", response.Usage)
+	}
+}

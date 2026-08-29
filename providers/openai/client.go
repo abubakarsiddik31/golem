@@ -45,6 +45,14 @@ type Config struct {
 	// Zero omits the bound and lets the provider default apply; negative
 	// values fail New.
 	MaxTokens int
+	// ReasoningEffort asks reasoning models how much to think before
+	// answering, e.g. "low", "medium", or "high"; empty leaves the
+	// provider default. Reasoning content itself is captured when an
+	// endpoint returns it and never replayed. Note that OpenAI's own
+	// chat-completions surface rejects reasoning models combined with
+	// tools; use an endpoint that accepts the combination or leave
+	// reasoning off.
+	ReasoningEffort string
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -131,15 +139,16 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 		}
 	}
 	body, err := json.Marshal(chatRequest{
-		Model:          c.cfg.Model,
-		Messages:       toWireMessages(request.Messages),
-		Tools:          toWireTools(request.ToolSpecs),
-		Temperature:    c.cfg.Temperature,
-		TopP:           c.cfg.TopP,
-		MaxTokens:      c.cfg.MaxTokens,
-		Stream:         stream,
-		StreamOptions:  streamOptions,
-		ResponseFormat: responseFormat,
+		Model:           c.cfg.Model,
+		Messages:        toWireMessages(request.Messages),
+		Tools:           toWireTools(request.ToolSpecs),
+		Temperature:     c.cfg.Temperature,
+		TopP:            c.cfg.TopP,
+		MaxTokens:       c.cfg.MaxTokens,
+		ReasoningEffort: c.cfg.ReasoningEffort,
+		Stream:          stream,
+		StreamOptions:   streamOptions,
+		ResponseFormat:  responseFormat,
 	})
 	if err != nil {
 		return nil, &DecodeError{Stage: "encode request", Err: err}

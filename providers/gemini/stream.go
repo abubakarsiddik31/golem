@@ -60,7 +60,7 @@ func readStream(body io.Reader, onDelta func(model.Delta) error) (model.Response
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELine)
 
-	var assembler streamAssembler
+	assembler := streamAssembler{currentThinking: -1}
 	for scanner.Scan() {
 		data, ok := sseData(scanner.Text())
 		if !ok {
@@ -73,7 +73,7 @@ func readStream(body io.Reader, onDelta func(model.Delta) error) (model.Response
 	if err := scanner.Err(); err != nil {
 		return model.Response{}, &TransportError{Err: err}
 	}
-	return assembler.response()
+	return assembler.response(), nil
 }
 
 // sseData returns the payload of a data: line. Every other line —
@@ -87,11 +87,19 @@ func sseData(line string) (string, bool) {
 }
 
 // streamAssembler accumulates chunks into the final response. Call IDs
-// are generated across the whole stream so they stay unique.
+// are generated across the whole stream so they stay unique. Contiguous
+// thought parts join into one thinking block; a non-thought part starts a
+// fresh block, mirroring how the provider interleaves reasoning with
+// content.
 type streamAssembler struct {
 	content strings.Builder
 	calls   []model.ToolCall
 	usage   model.Usage
+	// thinking holds assembled reasoning blocks; currentThinking is the
+	// index of the block that continues thought text, -1 when the next
+	// thought part opens a new block.
+	thinking        []model.ThinkingBlock
+	currentThinking int
 }
 
 // consume decodes one chunk payload, accumulates it, and reports its
@@ -112,14 +120,30 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	var delta model.Delta
 	for _, part := range chunk.Candidates[0].Content.Parts {
 		switch {
+		case part.Thought:
+			if a.currentThinking < 0 {
+				a.currentThinking = len(a.thinking)
+				a.thinking = append(a.thinking, model.ThinkingText(""))
+			}
+			a.thinking[a.currentThinking].Text += part.Text
+			if part.ThoughtSignature != "" {
+				a.thinking[a.currentThinking].Signature = part.ThoughtSignature
+			}
+			delta.Thinking = append(delta.Thinking, model.ThinkingDelta{
+				Index:     a.currentThinking,
+				Text:      part.Text,
+				Signature: part.ThoughtSignature,
+			})
 		case part.Text != "":
 			a.content.WriteString(part.Text)
 			delta.Content = part.Text
+			a.currentThinking = -1
 		case part.FunctionCall != nil:
 			call := model.ToolCall{
-				ID:   fmt.Sprintf("call-%d", len(a.calls)+1),
-				Name: part.FunctionCall.Name,
-				Args: normalizeArgs(part.FunctionCall.Args),
+				ID:        fmt.Sprintf("call-%d", len(a.calls)+1),
+				Name:      part.FunctionCall.Name,
+				Args:      normalizeArgs(part.FunctionCall.Args),
+				Signature: part.ThoughtSignature,
 			}
 			a.calls = append(a.calls, call)
 			delta.ToolCalls = append(delta.ToolCalls, model.ToolCallDelta{
@@ -127,10 +151,12 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 				ID:           call.ID,
 				Name:         call.Name,
 				ArgsFragment: string(call.Args),
+				Signature:    part.ThoughtSignature,
 			})
+			a.currentThinking = -1
 		}
 	}
-	if onDelta != nil && (delta.Content != "" || len(delta.ToolCalls) > 0) {
+	if onDelta != nil && (delta.Content != "" || len(delta.ToolCalls) > 0 || len(delta.Thinking) > 0) {
 		if err := onDelta(delta); err != nil {
 			return err
 		}
@@ -139,17 +165,22 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 }
 
 // response assembles the final normalized response.
-func (a *streamAssembler) response() (model.Response, error) {
+func (a *streamAssembler) response() model.Response {
 	calls := a.calls
 	if len(calls) == 0 {
 		calls = nil
+	}
+	thinking := a.thinking
+	if len(thinking) == 0 {
+		thinking = nil
 	}
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
 			Content:   a.content.String(),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: a.usage,
-	}, nil
+	}
 }

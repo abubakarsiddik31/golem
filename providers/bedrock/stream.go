@@ -31,7 +31,8 @@ var streamStatuses = map[string]int{
 // request translation and signing, the same error classification, and
 // the same normalized Response — with progress reported as fragments
 // arrive. The response body is AWS event-stream framed; readStreamMessage
-// decodes it.
+// decodes it. Reasoning blocks stream as reasoningContent deltas with
+// their signatures.
 func (c *Client) GenerateStream(ctx context.Context, request model.Request, onDelta func(model.Delta) error) (model.Response, error) {
 	httpRequest, err := c.newConverseHTTPRequest(ctx, request, "/converse-stream")
 	if err != nil {
@@ -55,7 +56,7 @@ func (c *Client) GenerateStream(ctx context.Context, request model.Request, onDe
 }
 
 // wire event payloads; union members the adapter does not carry
-// (reasoning, citations, images) stay unknown fields and are skipped.
+// (citations, images) stay unknown fields and are skipped.
 type streamContentBlockStart struct {
 	ContentBlockIndex int `json:"contentBlockIndex"`
 	Start             struct {
@@ -73,6 +74,14 @@ type streamContentBlockDelta struct {
 		ToolUse *struct {
 			Input string `json:"input"`
 		} `json:"toolUse"`
+		// ReasoningContent carries a fragment of one reasoning block: a
+		// piece of the visible text, the block's whole signature, or the
+		// encrypted payload.
+		ReasoningContent *struct {
+			Text            string `json:"text"`
+			Signature       string `json:"signature"`
+			RedactedContent string `json:"redactedContent"`
+		} `json:"reasoningContent"`
 	} `json:"delta"`
 }
 
@@ -87,7 +96,8 @@ type streamMetadata struct {
 // fragments through onDelta and assembling the Response Generate would
 // return: text fragments join into content — separate text blocks
 // separated by newlines, matching the non-streaming normalization —,
-// toolUse blocks accumulate their JSON arguments, and the metadata
+// toolUse blocks accumulate their JSON arguments, reasoningContent deltas
+// assemble thinking blocks with signatures, and the metadata
 // event carries usage. A stream that ends without messageStop is a
 // truncated response, not a silent partial one.
 func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.Response, error) {
@@ -97,6 +107,8 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 	var calls []model.ToolCall
 	blockCall := map[int]int{}         // content block index → ToolCalls ordinal
 	args := map[int]*strings.Builder{} // ToolCalls ordinal → accumulated arguments
+	thinkingBlock := map[int]int{}     // content block index → Thinking ordinal
+	var thinking []model.ThinkingBlock
 	lastTextBlock := -1
 	sawMessageStop := false
 	var usage model.Usage
@@ -150,6 +162,31 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 				if err := onDelta(model.Delta{Content: event.Delta.Text}); err != nil {
 					return model.Response{}, err
 				}
+			case event.Delta.ReasoningContent != nil:
+				reasoning := event.Delta.ReasoningContent
+				ordinal, ok := thinkingBlock[event.ContentBlockIndex]
+				if !ok {
+					ordinal = len(thinking)
+					thinkingBlock[event.ContentBlockIndex] = ordinal
+					thinking = append(thinking, model.ThinkingText(""))
+				}
+				switch {
+				case reasoning.RedactedContent != "":
+					thinking[ordinal] = model.ThinkingRedacted(reasoning.RedactedContent)
+				case reasoning.Signature != "":
+					thinking[ordinal].Signature = reasoning.Signature
+				case reasoning.Text != "":
+					thinking[ordinal].Text += reasoning.Text
+				}
+				if reasoning.Text != "" || reasoning.Signature != "" {
+					if err := onDelta(model.Delta{Thinking: []model.ThinkingDelta{{
+						Index:     ordinal,
+						Text:      reasoning.Text,
+						Signature: reasoning.Signature,
+					}}}); err != nil {
+						return model.Response{}, err
+					}
+				}
 			case event.Delta.ToolUse != nil:
 				ordinal, ok := blockCall[event.ContentBlockIndex]
 				if !ok {
@@ -189,11 +226,15 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 	for ordinal := range calls {
 		calls[ordinal].Args = normalizeInput(json.RawMessage(args[ordinal].String()))
 	}
+	if len(thinking) == 0 {
+		thinking = nil
+	}
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
 			Content:   content.String(),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: usage,
 	}, nil

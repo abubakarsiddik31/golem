@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -454,5 +455,177 @@ func TestNewRejectsInvalidSamplingControls(t *testing.T) {
 		if _, err := anthropic.New(cfg); err == nil {
 			t.Fatalf("%s: New() = nil error, want rejection", name)
 		}
+	}
+}
+
+func TestThinkingConfigMapsToWire(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		thinking *anthropic.ThinkingConfig
+		effort   string
+		want     string // the thinking JSON the wire must carry
+		wantEff  string
+	}{
+		{
+			name:     "adaptive",
+			thinking: &anthropic.ThinkingConfig{Adaptive: true},
+			want:     `{"type":"adaptive"}`,
+		},
+		{
+			name:     "budget",
+			thinking: &anthropic.ThinkingConfig{BudgetTokens: 4096},
+			want:     `{"type":"enabled","budget_tokens":4096}`,
+		},
+		{
+			name:     "disabled",
+			thinking: &anthropic.ThinkingConfig{Disabled: true},
+			want:     `{"type":"disabled"}`,
+		},
+		{
+			name:     "adaptive with effort",
+			thinking: &anthropic.ThinkingConfig{Adaptive: true},
+			effort:   "high",
+			want:     `{"type":"adaptive"}`,
+			wantEff:  "high",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := newRecordedServer(http.StatusOK, `{}`)
+			client, err := anthropic.New(anthropic.Config{
+				APIKey:   "test-key",
+				BaseURL:  recorder.server.URL,
+				Model:    "claude-sonnet-4-5",
+				Thinking: tc.thinking,
+				Effort:   tc.effort,
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			_, _ = client.Generate(context.Background(), model.Request{Messages: []model.Message{
+				{Role: model.RoleUser, Content: "hi"},
+			}})
+
+			var sent struct {
+				Thinking *json.RawMessage `json:"thinking"`
+				Effort   string           `json:"effort"`
+			}
+			if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+				t.Fatalf("decode sent body: %v", err)
+			}
+			if tc.want == "" {
+				if sent.Thinking != nil {
+					t.Fatalf("thinking = %s, want absent", *sent.Thinking)
+				}
+			} else {
+				if sent.Thinking == nil || string(*sent.Thinking) != tc.want {
+					t.Fatalf("thinking = %v, want %s", sent.Thinking, tc.want)
+				}
+			}
+			if sent.Effort != tc.wantEff {
+				t.Fatalf("effort = %q, want %q", sent.Effort, tc.wantEff)
+			}
+		})
+	}
+
+	// A default config keeps both off the wire.
+	recorder := newRecordedServer(http.StatusOK, `{}`)
+	defaultClient := newClient(t, recorder.server.URL)
+	_, _ = defaultClient.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if strings.Contains(recorder.lastBody(t), `"thinking"`) || strings.Contains(recorder.lastBody(t), `"effort"`) {
+		t.Fatalf("default config put thinking controls on the wire: %s", recorder.lastBody(t))
+	}
+}
+
+func TestNewRejectsInvalidThinkingConfig(t *testing.T) {
+	t.Parallel()
+
+	base := anthropic.Config{APIKey: "k", Model: "claude-sonnet-4-5"}
+
+	// Exactly one field must be set.
+	for name, thinking := range map[string]*anthropic.ThinkingConfig{
+		"empty":     {},
+		"conflict":  {Adaptive: true, Disabled: true},
+		"negative":  {BudgetTokens: -1},
+		"two modes": {Adaptive: true, BudgetTokens: 100},
+	} {
+		if _, err := anthropic.New(anthropic.Config{APIKey: "k", Model: "m", Thinking: thinking}); err == nil {
+			t.Fatalf("%s config: New() error = nil, want rejection", name)
+		}
+	}
+	_ = base
+
+	if _, err := anthropic.New(anthropic.Config{APIKey: "k", Model: "m", Thinking: &anthropic.ThinkingConfig{BudgetTokens: 0}}); err == nil {
+		t.Fatal("zero-budget config: New() error = nil, want rejection")
+	}
+}
+
+func TestGenerateNormalizesThinkingBlocks(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"content":[
+		{"type":"thinking","thinking":"2+2 is 4","signature":"sig-1"},
+		{"type":"redacted_thinking","data":"enc"},
+		{"type":"text","text":"The answer is 4."},
+		{"type":"tool_use","id":"toolu_1","name":"calc","input":{"op":"add"}}
+	],"usage":{"input_tokens":10,"output_tokens":5}}`)
+	client := newClient(t, recorder.server.URL)
+
+	response, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	thinking := response.Message.Thinking
+	if len(thinking) != 2 {
+		t.Fatalf("thinking blocks = %d, want 2", len(thinking))
+	}
+	if thinking[0].Text != "2+2 is 4" || thinking[0].Signature != "sig-1" {
+		t.Fatalf("signed block = %#v, want text with signature", thinking[0])
+	}
+	if thinking[1].Redacted != "enc" || thinking[1].Text != "" {
+		t.Fatalf("redacted block = %#v", thinking[1])
+	}
+	if response.Message.Content != "The answer is 4." || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("message = %#v", response.Message)
+	}
+
+	// History carrying thinking replays the blocks before text and calls.
+	history := model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+		{Role: model.RoleAssistant, Content: "4", Thinking: thinking,
+			ToolCalls: []model.ToolCall{{ID: "toolu_1", Name: "calc", Args: json.RawMessage(`{}`)}}},
+	}}
+	_, _ = client.Generate(context.Background(), history)
+	var sent struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type      string `json:"type"`
+				Thinking  string `json:"thinking"`
+				Signature string `json:"signature"`
+				Data      string `json:"data"`
+				Text      string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.lastBody(t)), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	blocks := sent.Messages[1].Content
+	if len(blocks) != 4 || blocks[0].Type != "thinking" || blocks[1].Type != "redacted_thinking" ||
+		blocks[2].Type != "text" || blocks[3].Type != "tool_use" {
+		t.Fatalf("assistant blocks = %#v, want thinking, redacted, text, tool_use", blocks)
+	}
+	if blocks[0].Thinking != "2+2 is 4" || blocks[0].Signature != "sig-1" || blocks[1].Data != "enc" {
+		t.Fatalf("replayed reasoning = %#v, want signatures preserved", blocks[:2])
 	}
 }
