@@ -98,12 +98,15 @@ func sseData(line string) (string, bool) {
 
 // streamAssembler accumulates chunk fragments into the final response.
 // Index-based tool-call merging is wire-specific and stays in
-// the adapter.
+// the adapter. Reasoning fragments join into a single thinking block.
 type streamAssembler struct {
 	content strings.Builder
 	calls   []model.ToolCall
 	args    []strings.Builder
 	usage   model.Usage
+	// thinking accumulates reasoning fragments from endpoints that return
+	// a reasoning_content field on deltas.
+	thinking strings.Builder
 }
 
 // consume decodes one data payload, accumulates it, and reports the
@@ -130,10 +133,14 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		a.content.WriteString(message.Content)
 		delta.Content = message.Content
 	}
+	if message.ReasoningContent != "" {
+		a.thinking.WriteString(message.ReasoningContent)
+		delta.Thinking = []model.ThinkingDelta{{Index: 0, Text: message.ReasoningContent}}
+	}
 	for _, call := range message.ToolCalls {
 		delta.ToolCalls = append(delta.ToolCalls, a.toolCallFragment(call))
 	}
-	if onDelta != nil && (delta.Content != "" || len(delta.ToolCalls) > 0) {
+	if onDelta != nil && (delta.Content != "" || len(delta.ToolCalls) > 0 || len(delta.Thinking) > 0) {
 		if err := onDelta(delta); err != nil {
 			return err
 		}
@@ -175,11 +182,16 @@ func (a *streamAssembler) response() model.Response {
 	if len(calls) == 0 {
 		calls = nil
 	}
+	var thinking []model.ThinkingBlock
+	if a.thinking.Len() > 0 {
+		thinking = []model.ThinkingBlock{model.ThinkingText(a.thinking.String())}
+	}
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
 			Content:   a.content.String(),
 			ToolCalls: calls,
+			Thinking:  thinking,
 		},
 		Usage: a.usage,
 	}

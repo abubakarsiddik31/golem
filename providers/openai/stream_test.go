@@ -68,7 +68,9 @@ func TestGenerateStreamEmitsContentDeltas(t *testing.T) {
 
 	var fragments []string
 	response, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
-		fragments = append(fragments, d.Content)
+		if d.Content != "" {
+			fragments = append(fragments, d.Content)
+		}
 		return nil
 	})
 	if err != nil {
@@ -162,7 +164,9 @@ func TestGenerateStreamRequiresDoneSentinel(t *testing.T) {
 
 	var fragments []string
 	_, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
-		fragments = append(fragments, d.Content)
+		if d.Content != "" {
+			fragments = append(fragments, d.Content)
+		}
 		return nil
 	})
 	var decodeErr *openai.DecodeError
@@ -260,5 +264,47 @@ func TestGenerateStreamPropagatesCancellation(t *testing.T) {
 	}
 	if fragments != 1 {
 		t.Fatalf("fragments = %d, want 1 before cancellation", fragments)
+	}
+}
+
+func TestGenerateStreamCapturesReasoningDeltas(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		`data: {"choices":[{"delta":{"reasoning_content":"adding"}}]}`+"\n\n",
+		`data: {"choices":[{"delta":{"reasoning_content":" 2 and 2"}}]}`+"\n\n",
+		`data: {"choices":[{"delta":{"content":"4"}}]}`+"\n\n",
+		`data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2}}`+"\n\n",
+		"data: [DONE]\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	var thinking []model.ThinkingDelta
+	var fragments []string
+	response, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
+		thinking = append(thinking, d.Thinking...)
+		if d.Content != "" {
+			fragments = append(fragments, d.Content)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	// Reasoning precedes the answer, and only the content fragment is
+	// non-empty in its own delta.
+	if len(thinking) != 2 || thinking[0].Text != "adding" || thinking[1].Text != " 2 and 2" {
+		t.Fatalf("thinking deltas = %#v", thinking)
+	}
+	if len(fragments) != 1 || fragments[0] != "4" {
+		t.Fatalf("content fragments = %#v", fragments)
+	}
+	thinkingBlocks := response.Message.Thinking
+	if len(thinkingBlocks) != 1 || thinkingBlocks[0].Text != "adding 2 and 2" {
+		t.Fatalf("assembled thinking = %#v", thinkingBlocks)
+	}
+	if response.Message.Content != "4" {
+		t.Fatalf("assembled content = %q", response.Message.Content)
 	}
 }

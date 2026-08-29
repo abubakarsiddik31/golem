@@ -588,3 +588,67 @@ func TestNewRejectsInvalidSamplingControls(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateCapturesReasoningContent(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"choices":[{"message":{
+		"role":"assistant",
+		"content":"The answer is 4.",
+		"reasoning_content":"adding 2 and 2"
+	}}],"usage":{"prompt_tokens":8,"completion_tokens":4}}`)
+	client, err := openai.New(openai.Config{
+		APIKey:          "test-key",
+		BaseURL:         recorder.server.URL,
+		Model:           "gpt-5.2",
+		ReasoningEffort: "low",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	thinking := response.Message.Thinking
+	if len(thinking) != 1 || thinking[0].Text != "adding 2 and 2" {
+		t.Fatalf("thinking blocks = %#v", thinking)
+	}
+	if response.Message.Content != "The answer is 4." {
+		t.Fatalf("content = %q", response.Message.Content)
+	}
+
+	// The effort control rides the request; captured reasoning never does:
+	// chat-completions endpoints disagree on replay, from ignoring it to
+	// rejecting it.
+	request := model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+		response.Message,
+	}}
+	if _, err := client.Generate(context.Background(), request); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	body := recorder.lastBody(t)
+	if !strings.Contains(body, `"reasoning_effort":"low"`) {
+		t.Fatalf("wire body = %s, want reasoning_effort", body)
+	}
+	assistant := body[strings.Index(body, `"role":"assistant"`):]
+	if strings.Contains(assistant[:min(len(assistant), 400)], `"reasoning_content"`) {
+		t.Fatalf("captured reasoning was replayed on the wire: %s", body)
+	}
+
+	// A default config keeps the effort control off the wire.
+	plain := newClient(t, recorder.server.URL)
+	if _, err := plain.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if strings.Contains(recorder.lastBody(t), "reasoning_effort") {
+		t.Fatalf("default config put reasoning_effort on the wire: %s", recorder.lastBody(t))
+	}
+}
