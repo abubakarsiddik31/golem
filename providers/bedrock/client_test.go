@@ -489,3 +489,176 @@ func TestNewRejectsInvalidSamplingControls(t *testing.T) {
 		}
 	}
 }
+
+func TestThinkingConfigMapsToConverseFields(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		thinking     *bedrock.ThinkingConfig
+		effort       string
+		wantThinking string // substring expected in additionalModelRequestFields
+		wantEffort   bool
+	}{
+		{"adaptive", &bedrock.ThinkingConfig{Adaptive: true}, "", `"thinking":{"type":"adaptive"}`, false},
+		{"budget", &bedrock.ThinkingConfig{BudgetTokens: 4096}, "", `"budget_tokens":4096`, false},
+		{"disabled", &bedrock.ThinkingConfig{Disabled: true}, "", `"type":"disabled"`, false},
+		{"adaptive with effort", &bedrock.ThinkingConfig{Adaptive: true}, "high", `"type":"adaptive"`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := newRecordedServer(http.StatusOK,
+				`{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1}}`,
+				nil)
+			client, err := bedrock.New(bedrock.Config{
+				Credentials: bedrock.Credentials{AccessKeyID: "a", SecretAccessKey: "s"},
+				Region:      "us-east-1",
+				Model:       "anthropic.claude-sonnet-4-5-20250929-v1:0",
+				BaseURL:     recorder.server.URL,
+				Thinking:    tc.thinking,
+				Effort:      tc.effort,
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+				{Role: model.RoleUser, Content: "hi"},
+			}}); err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			body := recorder.last(t).body
+			var sent struct {
+				AdditionalModelRequestFields *json.RawMessage `json:"additionalModelRequestFields"`
+				OutputConfig                 *struct {
+					Effort string `json:"effort"`
+				} `json:"outputConfig"`
+			}
+			if err := json.Unmarshal([]byte(body), &sent); err != nil {
+				t.Fatalf("decode sent body: %v", err)
+			}
+			if tc.wantThinking == "" {
+				if sent.AdditionalModelRequestFields != nil {
+					t.Fatalf("additionalModelRequestFields = %s, want absent", *sent.AdditionalModelRequestFields)
+				}
+			} else {
+				if sent.AdditionalModelRequestFields == nil || !strings.Contains(string(*sent.AdditionalModelRequestFields), tc.wantThinking) {
+					t.Fatalf("additionalModelRequestFields = %v, want containing %s", sent.AdditionalModelRequestFields, tc.wantThinking)
+				}
+			}
+			if tc.wantEffort && (sent.OutputConfig == nil || sent.OutputConfig.Effort != "high") {
+				t.Fatalf("outputConfig effort missing: %v", sent.OutputConfig)
+			}
+			if !tc.wantEffort && sent.OutputConfig != nil {
+				t.Fatalf("outputConfig = %v, want absent", sent.OutputConfig)
+			}
+		})
+	}
+
+	// A default config keeps both off the wire.
+	recorder := newRecordedServer(http.StatusOK,
+		`{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1}}`, nil)
+	client := newClient(t, recorder.server.URL)
+	if _, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}}); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	body := recorder.last(t).body
+	if strings.Contains(body, "additionalModelRequestFields") || strings.Contains(body, `"outputConfig"`) {
+		t.Fatalf("default config put thinking controls on the wire: %s", body)
+	}
+}
+
+func TestNewRejectsInvalidThinkingConfig(t *testing.T) {
+	t.Parallel()
+
+	base := bedrock.Config{
+		Credentials: bedrock.Credentials{AccessKeyID: "a", SecretAccessKey: "s"},
+		Region:      "us-east-1",
+		Model:       "m",
+	}
+	for name, thinking := range map[string]*bedrock.ThinkingConfig{
+		"empty":     {},
+		"conflict":  {Adaptive: true, Disabled: true},
+		"negative":  {BudgetTokens: -1},
+		"two modes": {Adaptive: true, BudgetTokens: 100},
+	} {
+		cfg := base
+		cfg.Thinking = thinking
+		if _, err := bedrock.New(cfg); err == nil {
+			t.Fatalf("%s config: New() error = nil, want rejection", name)
+		}
+	}
+}
+
+func TestGenerateNormalizesReasoningContent(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"output":{"message":{"role":"assistant","content":[
+		{"reasoningContent":{"reasoningText":{"text":"step by step","signature":"sig-1"}}},
+		{"reasoningContent":{"redactedContent":"enc"}},
+		{"text":"The answer is 4."},
+		{"toolUse":{"toolUseId":"call-1","name":"calc","input":{"op":"add"}}}
+	]}},"stopReason":"tool_use","usage":{"inputTokens":10,"outputTokens":5}}`, nil)
+	client := newClient(t, recorder.server.URL)
+
+	response, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	thinking := response.Message.Thinking
+	if len(thinking) != 2 || thinking[0].Text != "step by step" || thinking[0].Signature != "sig-1" ||
+		thinking[1].Redacted != "enc" {
+		t.Fatalf("thinking blocks = %#v", thinking)
+	}
+	if response.Message.Content != "The answer is 4." || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("message = %#v", response.Message)
+	}
+
+	// History carrying reasoning replays the blocks before text and calls.
+	request := model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "hi"},
+		{Role: model.RoleAssistant, Content: "4", Thinking: thinking,
+			ToolCalls: []model.ToolCall{{ID: "call-1", Name: "calc", Args: json.RawMessage(`{}`)}}},
+	}}
+	if _, err := client.Generate(context.Background(), request); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	var sent struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Text             string `json:"text"`
+				ReasoningContent *struct {
+					ReasoningText *struct {
+						Text      string `json:"text"`
+						Signature string `json:"signature"`
+					} `json:"reasoningText"`
+					RedactedContent string `json:"redactedContent"`
+				} `json:"reasoningContent"`
+				ToolUse *struct {
+					ToolUseID string `json:"toolUseId"`
+				} `json:"toolUse"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(recorder.last(t).body), &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	blocks := sent.Messages[1].Content
+	if len(blocks) != 4 || blocks[0].ReasoningContent == nil || blocks[1].ReasoningContent == nil ||
+		blocks[2].Text != "4" || blocks[3].ToolUse == nil {
+		t.Fatalf("assistant blocks = %#v, want reasoning, redacted, text, toolUse", blocks)
+	}
+	if blocks[0].ReasoningContent.ReasoningText.Text != "step by step" ||
+		blocks[0].ReasoningContent.ReasoningText.Signature != "sig-1" ||
+		blocks[1].ReasoningContent.RedactedContent != "enc" {
+		t.Fatalf("replayed reasoning = %#v, want signatures preserved", blocks[:2])
+	}
+}
