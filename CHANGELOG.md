@@ -32,6 +32,16 @@
   Providers need nothing: between pause and resume no model call
   happens. See the [deferred tools
   guide](docs/guides/deferred-tools.md) and ADR 0018.
+- **Local models documented: Ollama and LM Studio.** Local
+  OpenAI-compatible runtimes now have first-class coverage: the
+  providers guide lists LM Studio's endpoint, explains the
+  placeholder-API-key convention, and summarizes what holds over each
+  runtime — streaming with `include_usage`, tool calling (including
+  the single-chunk complete-call shape these servers emit, now pinned
+  by an adapter test), `json_schema` structured output, image parts,
+  and `ReasoningEffort` — plus the model-dependent caveats. The new
+  `examples/local-models` runs the same agent against either runtime,
+  printing setup instructions when `GOLEM_LOCAL_BASE_URL` is unset.
 
 ## v0.6.0 — 2026-08-22
 

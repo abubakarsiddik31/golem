@@ -104,10 +104,12 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`gemini`](examples/gemini/main.go) | Google Gemini GenerateContent adapter |
 | [`azure`](examples/azure/main.go) | Azure OpenAI deployment adapter |
 | [`bedrock`](examples/bedrock/main.go) | AWS Bedrock Converse adapter with SigV4 |
+| [`local-models`](examples/local-models/main.go) | Ollama or LM Studio through the OpenAI-compatible adapter |
 | [`testing-without-a-provider`](examples/testing-without-a-provider/main.go) | Scripted fake model, offline and deterministic |
 
 ```bash
 OPENAI_API_KEY=sk-... go run ./examples/minimal
+GOLEM_LOCAL_BASE_URL=http://localhost:11434/v1 go run ./examples/local-models   # Ollama or LM Studio
 go run ./examples/testing-without-a-provider   # no credentials needed
 ```
 

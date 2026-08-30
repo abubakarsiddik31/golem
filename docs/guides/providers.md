@@ -38,6 +38,8 @@ value, not a default: set it with `providers.Ptr(0)`.
 - `examples/gemini` — Google Gemini GenerateContent API.
 - `examples/azure` — Azure OpenAI deployments.
 - `examples/bedrock` — AWS Bedrock Converse with SigV4.
+- `examples/local-models` — Ollama or LM Studio through the OpenAI
+  adapter.
 
 ```bash
 OPENAI_API_KEY=sk-... go run ./examples/minimal
@@ -48,6 +50,7 @@ AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.
     go run ./examples/azure
 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1 \
     go run ./examples/bedrock
+GOLEM_LOCAL_BASE_URL=http://localhost:11434/v1 go run ./examples/local-models
 ```
 
 ```go
@@ -101,11 +104,32 @@ focusedClient, _ := openai.New(openai.Config{
   | Together | `https://api.together.xyz/v1` |
   | Cohere (compatibility) | `https://api.cohere.com/compatibility/v1` |
   | Ollama (local) | `http://localhost:11434/v1` |
+  | LM Studio (local) | `http://localhost:1234/v1` |
   | vLLM (local) | `http://localhost:8000/v1` |
 
   Compatibility is the providers' own promise — verify structured output
   and streaming support against their docs; some gate `json_schema`
   responses or `stream_options` behind specific model versions.
+- Local runtimes work with zero code differences — point `BaseURL` at
+  the server and pick a model it has loaded. Ollama serves after
+  `ollama pull <model>`; LM Studio serves with `lms server start`
+  (or the Developer tab). Local servers ignore the Authorization
+  header, but the adapter still requires a non-empty `APIKey`, so pass
+  any placeholder. With a capable model loaded, the full core contract
+  holds over both: streaming (Ollama supports the `include_usage`
+  stream option golem always sends), tool calling (each call may arrive
+  complete in one chunk instead of argument fragments — the adapter
+  accepts both shapes), structured output via `response_format`
+  `json_schema`, image parts (Ollama), and `ReasoningEffort` (Ollama).
+  Tool support and quality depend on the loaded model, not on golem;
+  check the runtime's own capability matrix for the model you pull.
+  Reasoning text is best-effort on these surfaces: golem captures the
+  `reasoning_content` field some endpoints return, while Ollama exposes
+  its trace under a different name, so runs work but `Thinking` blocks
+  may stay empty. `WithToolChoice` is honored only by servers that
+  support `tool_choice` (Ollama's published docs list it; older
+  releases ignore it). Ollama has no API for context length — raise it
+  in the model's Modelfile, not per request.
 - Anthropic requires a positive `max_tokens`; zero selects
   `anthropic.DefaultMaxTokens` (1024).
 - `anthropic` merges consecutive user-side messages (tool results plus a
