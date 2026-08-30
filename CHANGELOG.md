@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 — 2026-08-30
+
+This minor release adds three capabilities: reasoning as first-class
+evidence across every adapter, runs that can pause for human approval
+or external results and resume in-process or across processes, and
+first-class coverage for local runtimes — Ollama and LM Studio. Every
+addition is opt-in and additive; existing call sites and persisted
+message JSON are unchanged.
 
 ### Added
 
