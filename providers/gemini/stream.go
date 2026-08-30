@@ -25,9 +25,11 @@ var _ model.StreamingModel = (*Client)(nil)
 // Generate would produce. Error classification is identical to Generate.
 // A non-nil return from onDelta stops the stream and is returned as-is.
 //
-// The Gemini stream carries no terminal sentinel: it ends at EOF, so a
-// truncated stream cannot be distinguished from a short complete one the
-// way the OpenAI-compatible and Anthropic adapters do.
+// The Gemini stream carries no protocol-level sentinel such as the
+// OpenAI-compatible [DONE] line or Anthropic's message_stop event: the
+// terminal signal is the final chunk's finishReason. A stream that ends
+// without one was truncated in transit, which fails as a decode error
+// rather than passing as a short complete answer.
 func (c *Client) GenerateStream(ctx context.Context, request model.Request, onDelta func(model.Delta) error) (model.Response, error) {
 	httpRequest, err := c.newGenerateContentHTTPRequest(ctx, request, true)
 	if err != nil {
@@ -55,7 +57,9 @@ func (c *Client) GenerateStream(ctx context.Context, request model.Request, onDe
 // returns the assembled response. Each data line is a complete
 // GenerateContentResponse chunk; text parts are forwarded as they arrive,
 // and function calls — which arrive whole — are forwarded as single
-// fragments with their complete arguments.
+// fragments with their complete arguments. A terminal finishReason on any
+// candidate chunk is required: EOF without one means the stream was
+// truncated in transit, which is a decode error, not a short success.
 func readStream(body io.Reader, onDelta func(model.Delta) error) (model.Response, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELine)
@@ -72,6 +76,12 @@ func readStream(body io.Reader, onDelta func(model.Delta) error) (model.Response
 	}
 	if err := scanner.Err(); err != nil {
 		return model.Response{}, &TransportError{Err: err}
+	}
+	if !assembler.finished {
+		return model.Response{}, &DecodeError{
+			Stage: "decode stream",
+			Err:   fmt.Errorf("stream ended without a terminal finishReason"),
+		}
 	}
 	return assembler.response(), nil
 }
@@ -95,6 +105,9 @@ type streamAssembler struct {
 	content strings.Builder
 	calls   []model.ToolCall
 	usage   model.Usage
+	// finished records that a candidate chunk carried a finishReason —
+	// the stream's only terminal signal.
+	finished bool
 	// thinking holds assembled reasoning blocks; currentThinking is the
 	// index of the block that continues thought text, -1 when the next
 	// thought part opens a new block.
@@ -115,6 +128,9 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	}
 	if len(chunk.Candidates) == 0 {
 		return nil
+	}
+	if chunk.Candidates[0].FinishReason != "" {
+		a.finished = true
 	}
 
 	var delta model.Delta

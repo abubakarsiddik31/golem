@@ -155,6 +155,51 @@ func TestGenerateStreamReturnsCallerStopErrorAsIs(t *testing.T) {
 	}
 }
 
+// A stream that ends without a finishReason-bearing chunk was truncated
+// in transit; it must fail rather than pass as a short complete answer.
+func TestGenerateStreamFailsStreamEndingWithoutFinishReason(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial an"}]}}],"usageMetadata":{"promptTokenCount":25,"candidatesTokenCount":3}}`+"\n\n",
+		`data: {"candidates":[{"content":{"parts":[{"text":"swer"}]}}],"usageMetadata":{"promptTokenCount":25,"candidatesTokenCount":9}}`+"\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	response, err := client.GenerateStream(context.Background(), userPrompt(), nil)
+	if err == nil {
+		t.Fatalf("GenerateStream() = %+v, want an error for a stream with no terminal finishReason", response)
+	}
+	var decodeError *gemini.DecodeError
+	if !errors.As(err, &decodeError) {
+		t.Fatalf("GenerateStream() error = %v, want DecodeError", err)
+	}
+	if model.IsRetryable(err) {
+		t.Fatal("model.IsRetryable(err) = true, want false for a truncated stream")
+	}
+}
+
+// The terminal finishReason may share its chunk with content; any chunk
+// carrying one satisfies the terminal requirement, including non-STOP
+// reasons such as MAX_TOKENS.
+func TestGenerateStreamAcceptsNonStopFinishReason(t *testing.T) {
+	t.Parallel()
+
+	server := newSSEServer(t,
+		`data: {"candidates":[{"content":{"parts":[{"text":"cut sh"}]}}]}`+"\n\n",
+		`data: {"candidates":[{"content":{"parts":[{"text":"ort"}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":25,"candidatesTokenCount":9}}`+"\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	response, err := client.GenerateStream(context.Background(), userPrompt(), nil)
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+	if response.Message.Content != "cut short" {
+		t.Fatalf("assembled content = %q, want %q", response.Message.Content, "cut short")
+	}
+}
+
 func TestGenerateStreamPropagatesCancellation(t *testing.T) {
 	t.Parallel()
 
