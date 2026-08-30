@@ -20,8 +20,10 @@ instructions, tools, budgets, schemas — is an option function.
 
 A run returns a `Result[Output]` carrying the typed output, the full
 normalized conversation in `Messages`, and cumulative `Usage`. Errors are
-`RunError` values with an inspectable stage (`model`, `tool`, `decode`,
-`loop`, `usage`) that preserve the cause for `errors.Is` and `errors.As`.
+`RunError` values with an inspectable stage — compare against
+`golem.StageModel`, `golem.StageTool`, `golem.StageDecode`,
+`golem.StageLoop`, or `golem.StageUsage` — that preserve the cause for
+`errors.Is` and `errors.As`.
 
 ## Example
 

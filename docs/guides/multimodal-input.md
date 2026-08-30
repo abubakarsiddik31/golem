@@ -33,7 +33,16 @@ Parts ride on `model.Message.Parts` in the normalized conversation, so
 they appear in `Result.Messages` and persist with the same additive-only
 JSON contract as every other message field: history written before this
 feature exists decodes unchanged, and text-only messages encode
-byte-identically. Inline data is base64 in JSON.
+byte-identically. Inline data is base64 in JSON. To read a part back
+from evidence, switch on its kind:
+
+```go
+for _, part := range message.Parts {
+    if part.Kind == model.PartImage {
+        fmt.Println(part.MediaType, part.URL, len(part.Data))
+    }
+}
+```
 
 Each adapter translates parts to its provider's native form:
 
