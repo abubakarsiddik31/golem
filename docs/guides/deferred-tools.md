@@ -100,6 +100,7 @@ resumed, err := agent.RunWithDeferredResults(ctx, runCtx, result.Messages,
 - `tool.Deferred{Kind DeferKind, Reason string}` — the sentinel a tool returns to pause the run.
 - `tool.DeferApproval`, `tool.DeferExternal` — the deferral kinds.
 - `tool.CallApproved(ctx context.Context) bool` — true on the approved re-run of a deferred call.
+- `tool.WithApprovedCall(ctx context.Context) context.Context` — mark a context as the approved re-run; execute a pending call's tool yourself, outside `RunWithDeferredResults`, under your own timeout or retry policy.
 - `golem.Result.Pending *DeferredRequests` — the pending calls of a paused run, or nil.
 - `golem.DeferredRequests{Approvals, External []PendingToolCall}` — pending calls grouped by resolution kind.
 - `golem.PendingToolCall{CallID, ToolName string, Args json.RawMessage, Reason string}` — one pending call.
