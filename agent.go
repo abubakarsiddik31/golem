@@ -240,6 +240,7 @@ type UsageLimit struct {
 // runOptions carries per-run input configuration.
 type runOptions struct {
 	promptParts []model.Part
+	runObserver func(RunEvent)
 }
 
 // RunOption customizes a single run. Options are evaluated once, at run
@@ -503,15 +504,35 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		return Result[Output]{}, err
 	}
 	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
-	return a.runLoop(ctx, runCtx, messages, onDelta)
+	return a.runLoop(ctx, runCtx, messages, onDelta, a.observerFor(runOpts))
+}
+
+// observerFor composes the run's event observers: the agent's
+// construction-scoped observer first, then the run option's, so a
+// shared agent keeps its global observation while a single run routes
+// its own. Either may be nil.
+func (a *Agent[Deps, Output]) observerFor(opts runOptions) func(RunEvent) {
+	switch {
+	case a.runEvents == nil:
+		return opts.runObserver
+	case opts.runObserver == nil:
+		return a.runEvents
+	default:
+		agentObserver, runObserver := a.runEvents, opts.runObserver
+		return func(event RunEvent) {
+			agentObserver(event)
+			runObserver(event)
+		}
+	}
 }
 
 // runLoop drives the shared tail of every run variant: the runner loop
 // over the prepared request conversation, the usage bound, and the
 // decode-or-correct boundary. It also returns a paused run: an outcome
 // carrying pending deferred calls skips decoding — a pause has no final
-// answer to validate — and surfaces them on Result.Pending.
-func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error) (Result[Output], error) {
+// answer to validate — and surfaces them on Result.Pending. emit is the
+// run's composed event observer; see observerFor.
+func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error, emit func(RunEvent)) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
 		if a.toolChoice != "" && t.Name != a.toolChoice {
@@ -540,10 +561,10 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, a.runEvents, onDelta)
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta)
 		} else {
 			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, a.runEvents)
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit)
 		}
 		if err != nil {
 			usage.InputTokens += outcome.Usage.InputTokens
@@ -576,8 +597,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
 				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
 		}
-		if a.runEvents != nil {
-			a.runEvents(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
+		if emit != nil {
+			emit(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
 		}
 		// Correction round: keep the rejected response as
 		// evidence, tell the model why it was rejected, and run again.

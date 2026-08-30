@@ -22,6 +22,26 @@ so observation can never fail a run; an observer that must stop the run
 cancels the run context. `Run`, `RunWithHistory`, and both streaming
 variants emit the same events.
 
+### Run-scoped observers
+
+`WithRunObserver` registers the same observation for a single run, as a
+run option — the routing a shared agent needs, where one agent serves
+many requests and each request's events belong to that request:
+
+```go
+result, err := agent.Run(ctx, runCtx, prompt,
+    golem.WithRunObserver(func(event golem.RunEvent) {
+        logger.Trace(requestID, event.Kind, event.ToolName)
+    }),
+)
+```
+
+A run's observer composes with the agent's: the construction-scoped
+observer fires first, then the run's, per event — global metering and
+per-request tracing coexist. Accepted by `Run` and its history,
+streaming, and deferred-resume variants; a nil observer observes
+nothing.
+
 Events arrive in deterministic execution order, and that order is a
 compatibility promise:
 
@@ -64,6 +84,7 @@ agent, err := golem.New[string, string](client,
 ## API surface
 
 - `golem.WithRunEvents[Deps, Output](onEvent func(RunEvent)) Option[Deps, Output]`
+- `golem.WithRunObserver(onEvent func(RunEvent)) RunOption`
 - `golem.RunEvent{Kind, Turn, Attempt, CallID, ToolName, Args, Result, Err, Usage}`
 - `golem.EventKind` — `golem.EventModelStart`, `golem.EventModelEnd`,
   `golem.EventToolStart`, `golem.EventToolEnd`, `golem.EventOutputRejected`

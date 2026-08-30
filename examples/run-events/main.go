@@ -30,6 +30,8 @@ func main() {
 			{ID: "call-1", Name: "get_player_name", Args: json.RawMessage(`{}`)},
 		}}},
 		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Anne wins"}},
+		// The second run below needs one more scripted response.
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Anne wins again"}},
 	)
 	agent, err := golem.New[string, string](client,
 		golem.DecodeFunc[string](func(_ context.Context, response model.Response) (string, error) {
@@ -44,6 +46,19 @@ func main() {
 	}
 
 	result, err := agent.Run(context.Background(), golem.RunContext[string]{Deps: "Anne"}, "who wins?")
+	if err != nil {
+		fmt.Println("Run:", err)
+		return
+	}
+	fmt.Println("output:", result.Output)
+
+	// A shared agent serves many requests; WithRunObserver routes one
+	// run's events to that run alone, composing with the agent-level
+	// observer above — agent first, then the run's, per event.
+	result, err = agent.Run(context.Background(), golem.RunContext[string]{Deps: "Anne"}, "who wins again?",
+		golem.WithRunObserver(func(event golem.RunEvent) {
+			fmt.Printf("request-2   %-16s turn=%d\n", event.Kind, event.Turn)
+		}))
 	if err != nil {
 		fmt.Println("Run:", err)
 		return

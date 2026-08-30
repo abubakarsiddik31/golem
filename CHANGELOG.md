@@ -2,14 +2,25 @@
 
 ## v0.7.1 — 2026-08-30
 
-This patch makes failures preserve their evidence and closes a Gemini
-streaming gap. Runs that fail mid-flight — cancellation and client
-disconnects included — keep their partial transcript, usage, and
-activity counts on `RunError.Partial`, and a Gemini stream truncated in
-transit fails instead of billing as a short answer.
+This patch makes failures preserve their evidence, adds run-scoped
+event observers, and closes a Gemini streaming gap. Runs that fail
+mid-flight — cancellation and client disconnects included — keep their
+partial transcript, usage, and activity counts on `RunError.Partial`;
+a shared agent can route each request's events separately; and a
+Gemini stream truncated in transit fails instead of billing as a short
+answer.
 
 ### Added
 
+- **Run-scoped run events.** `WithRunObserver` registers a run option
+  that delivers the same events `WithRunEvents` does — provider call
+  attempts, tool executions, correction boundaries — for a single run,
+  so a shared agent (a server handling many requests) routes each
+  request's events without rebuilding the agent. The run's observer
+  composes with the agent's: construction-scoped first, then the
+  run's, per event. Accepted by `Run` and its history, streaming, and
+  deferred-resume variants. See the
+  [run events guide](docs/guides/run-events.md).
 - **Partial run evidence.** A run that fails after it began producing
   evidence now carries it on `RunError.Partial`: the conversation
   through the last completed model turn, the usage those turns

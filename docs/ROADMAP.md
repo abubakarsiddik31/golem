@@ -11,6 +11,8 @@ v0.7.1 — failures keep their evidence: a run that errors after it began
 producing carries its partial transcript, usage, and activity counts as
 `RunError.Partial`, resume-ready through `RunWithHistory`, and
 cancellation rides `RunError` so a client disconnect loses nothing.
+Run events are run-scopable: `WithRunObserver` routes one request's
+events through a shared agent, composing with the agent-level observer.
 Gemini streams detect truncation: ending without a terminal
 finishReason fails instead of billing as a short answer. On the v0.7.0
 foundations — reasoning as first-class evidence with provider
@@ -26,11 +28,8 @@ Verified against real usage — a RAG application built on Golem. Each
 item lands as its own PR and is dogfooded before the freeze.
 
 - **Run activity counts.** The run counts model requests and tool
-  executions for the usage limit and drops them. Surface them on the
-  result so cost ledgers need no inference.
-- **Run-scoped run events.** WithRunEvents binds one observer per
-  agent; add a run option so a shared agent can route events per
-  request.
+  executions for the usage limit and drops them on success. Surface
+  them on the result so cost ledgers need no inference.
 - **Embeddings.** A provider-neutral Embedder port — the
   query/documents split is the task-type encoding — with adapters
   where the provider offers one (Gemini; OpenAI-compatible, which
