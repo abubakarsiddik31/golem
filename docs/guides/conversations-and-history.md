@@ -45,6 +45,33 @@ timestamps, so repairing already-repaired history leaves it unchanged and
 repeated resumes stay prompt-cache friendly. Repaired messages become part
 of the run's canonical `result.Messages`.
 
+### Resuming a failed run
+
+A failed run does not have to be a dead end. When a run errors after it
+began producing evidence — completed model turns, reported usage,
+executed tools — the `RunError` carries it as `Partial`: the
+conversation through the last completed model turn, the usage those
+turns reported, and the counts of model requests and tool executions.
+Cancellation and disconnects are included, which is why they ride a
+`RunError` too.
+
+`Partial.Messages` is resume-ready history: pass it to `RunWithHistory`
+to continue the conversation. A failure inside a tool batch leaves the
+evidence ending at the assistant turn that requested the batch — repair
+synthesizes results for its unanswered calls, exactly as for a crashed
+run. `Partial` is nil when the run failed before completing anything,
+so a first-call failure needs no recovery path.
+
+```go
+result, err := agent.Run(ctx, runCtx, "go")
+var runErr *golem.RunError
+if errors.As(err, &runErr) && runErr.Partial != nil {
+    log.Printf("run failed at %s after %d requests, %d input tokens — resuming",
+        runErr.Stage, runErr.Partial.Requests, runErr.Partial.Usage.InputTokens)
+    result, err = agent.RunWithHistory(ctx, runCtx, runErr.Partial.Messages, "continue")
+}
+```
+
 ### History processing
 
 Long conversations outgrow every context window. `WithHistoryProcessor`

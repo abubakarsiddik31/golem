@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Partial run evidence.** A run that fails after it began producing
+  evidence now carries it on `RunError.Partial`: the conversation
+  through the last completed model turn, the usage those turns
+  reported, and the counts of model requests (failed attempts
+  included) and tool executions attempted. `Partial` is nil when the
+  run failed before completing a model turn, reporting usage, or
+  executing a tool. `Partial.Messages` is resume-ready history for
+  `RunWithHistory` — repair synthesizes results for calls a mid-batch
+  failure left unanswered. See the
+  [conversations guide](docs/guides/conversations-and-history.md) and
+  the offline `partial-evidence` example.
+
+### Fixed
+
+- **Gemini stream truncation.** A Gemini SSE stream that ended without
+  a chunk carrying a terminal `finishReason` — a network truncation —
+  assembled the partial text and returned it as a complete answer. It
+  now fails with the adapter's `DecodeError`, matching the
+  `[DONE]`/message-stop sentinel checks of the OpenAI-compatible,
+  Azure, Anthropic, and Bedrock adapters, so a truncated stream no
+  longer bills as a short success.
+
+### Changed
+
+- **Cancellation and deadline errors ride `RunError`.** They were
+  previously returned unwrapped, which discarded their partial
+  evidence; they now wrap like every other failure and stay matchable
+  with `errors.Is(err, context.Canceled)` through `RunError.Unwrap`.
+  A tool timeout or a run cancelled inside a tool now reports the
+  `tool` stage instead of no stage at all.
+
 ## v0.7.0 — 2026-08-30
 
 This minor release adds three capabilities: reasoning as first-class

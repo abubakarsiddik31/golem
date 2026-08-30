@@ -96,6 +96,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
+| [`partial-evidence`](examples/partial-evidence/main.go) | A failed run's `RunError.Partial` evidence resumed with history, offline |
 | [`thinking`](examples/thinking/main.go) | Adaptive thinking with reasoning blocks and signatures |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
@@ -111,6 +112,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 OPENAI_API_KEY=sk-... go run ./examples/minimal
 GOLEM_LOCAL_BASE_URL=http://localhost:11434/v1 go run ./examples/local-models   # Ollama or LM Studio
 go run ./examples/testing-without-a-provider   # no credentials needed
+go run ./examples/partial-evidence             # no credentials needed
 ```
 
 ## Package shape
