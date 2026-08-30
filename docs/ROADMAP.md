@@ -7,33 +7,18 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.7.0 — reasoning is first-class evidence: thinking blocks with
-provider signatures are captured, validated, and replayed across
-turns on every adapter. Tools can pause a run for human approval or
-external results, resuming in-process or across processes. Local
-runtimes — Ollama and LM Studio — serve the same adapter through a
-base URL. Composition and control are in (agent delegation, run
-events, request tuning), the common tool trio ships (web fetch, file
-read, command execution), the MCP client bridges server tools over
-stdio and streamable HTTP, and every adapter streams — Bedrock
-included, over its AWS binary event-stream framing. The core
-execution contract underneath is unchanged and complete for
-single-agent applications.
-
-## Next patch — v0.7.1
-
-- **Gemini stream terminal integrity.** A Gemini SSE stream that ends
-  without a terminal finishReason chunk — a network truncation —
-  currently assembles the partial text and returns it as a complete
-  answer. Fail it as a transport truncation, the way the OpenAI,
-  Azure, Anthropic, and Bedrock adapters fail a missing `[DONE]` or
-  message-stop sentinel.
-- **Evidence-preserving failures.** Every error path discards the
-  partial transcript and the usage already spent; the runner and the
-  agent both return zero values today. Carry partial messages and
-  usage through RunError so cancelled and mid-run-failed runs keep
-  their evidence, deciding how partials ride unwrapped cancellation
-  errors.
+v0.7.1 — failures keep their evidence: a run that errors after it began
+producing carries its partial transcript, usage, and activity counts as
+`RunError.Partial`, resume-ready through `RunWithHistory`, and
+cancellation rides `RunError` so a client disconnect loses nothing.
+Gemini streams detect truncation: ending without a terminal
+finishReason fails instead of billing as a short answer. On the v0.7.0
+foundations — reasoning as first-class evidence with provider
+signatures, tools that pause for human approval or external results,
+local runtimes through a base URL, composition and control (agent
+delegation, run events, request tuning), the common tool trio, the MCP
+client over stdio and streamable HTTP, and streaming on every adapter —
+the core execution contract is complete for single-agent applications.
 
 ## Toward v0.8.0 — run evidence and embeddings
 

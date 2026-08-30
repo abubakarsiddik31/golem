@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.7.1 — 2026-08-30
+
+This patch makes failures preserve their evidence and closes a Gemini
+streaming gap. Runs that fail mid-flight — cancellation and client
+disconnects included — keep their partial transcript, usage, and
+activity counts on `RunError.Partial`, and a Gemini stream truncated in
+transit fails instead of billing as a short answer.
 
 ### Added
 
