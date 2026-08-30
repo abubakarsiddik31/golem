@@ -85,7 +85,7 @@ func (a *Agent[Deps, Output]) RunWithDeferredResults(ctx context.Context, runCtx
 	}
 	messages := a.resumeMessages(a.resolveInstructions(ctx, runCtx),
 		mergeResolutions(history, resolutions), prompt, runOpts.promptParts)
-	return a.runLoop(ctx, runCtx, messages, nil)
+	return a.runLoop(ctx, runCtx, messages, nil, a.observerFor(runOpts))
 }
 
 // prepareRun applies run options and the history processor, then

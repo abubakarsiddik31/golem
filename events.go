@@ -47,3 +47,18 @@ func WithRunEvents[Deps any, Output any](onEvent func(RunEvent)) Option[Deps, Ou
 		agent.runEvents = onEvent
 	}
 }
+
+// WithRunObserver registers a run-scoped event observer for a single
+// run: the same events WithRunEvents delivers, under the same
+// contract, but bound to one run instead of the agent. It is how a
+// shared agent — a server handling many requests — routes each
+// request's events separately without rebuilding the agent. A run's
+// observer composes with the agent's: the construction-scoped observer
+// fires first, then the run's. Accepted by Run and its history,
+// streaming, and deferred-resume variants; a nil observer observes
+// nothing.
+func WithRunObserver(onEvent func(RunEvent)) RunOption {
+	return func(opts *runOptions) {
+		opts.runObserver = onEvent
+	}
+}

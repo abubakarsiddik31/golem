@@ -317,3 +317,183 @@ func TestRunStreamEmitsTheSameEvents(t *testing.T) {
 		t.Fatalf("model_end usage = %v", events[1].Usage)
 	}
 }
+
+// A run-scoped observer routes one run's events without rebuilding the
+// agent: two runs through a shared agent each see only their own.
+func TestRunObserverRoutesEventsPerRun(t *testing.T) {
+	t.Parallel()
+
+	m := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "first"}, Usage: model.Usage{InputTokens: 3}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "second"}, Usage: model.Usage{InputTokens: 7}},
+	)
+	agent, err := golem.New[struct{}, string](m, golem.DecodeFunc[string](decodeContent))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var first, second []golem.RunEvent
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "one",
+		golem.WithRunObserver(func(event golem.RunEvent) { first = append(first, event) })); err != nil {
+		t.Fatalf("Run(one) error = %v", err)
+	}
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "two",
+		golem.WithRunObserver(func(event golem.RunEvent) { second = append(second, event) })); err != nil {
+		t.Fatalf("Run(two) error = %v", err)
+	}
+
+	wantOneTurn := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	if got := summarize(first); !equalStrings(got, wantOneTurn) {
+		t.Fatalf("first run events = %v, want %v", got, wantOneTurn)
+	}
+	if got := summarize(second); !equalStrings(got, wantOneTurn) {
+		t.Fatalf("second run events = %v, want %v", got, wantOneTurn)
+	}
+	if first[1].Usage.InputTokens != 3 || second[1].Usage.InputTokens != 7 {
+		t.Fatalf("model_end usage = %d, %d; each observer must see its own run's usage",
+			first[1].Usage.InputTokens, second[1].Usage.InputTokens)
+	}
+}
+
+// The run observer composes with the agent's: the construction-scoped
+// observer fires first, then the run's, per event.
+func TestRunObserverComposesWithAgentObserver(t *testing.T) {
+	t.Parallel()
+
+	m := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}},
+	)
+	var order []string
+	agent, err := golem.New[struct{}, string](m, golem.DecodeFunc[string](decodeContent),
+		golem.WithRunEvents[struct{}, string](func(event golem.RunEvent) {
+			order = append(order, "agent:"+string(event.Kind))
+		}))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go",
+		golem.WithRunObserver(func(event golem.RunEvent) {
+			order = append(order, "run:"+string(event.Kind))
+		})); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{
+		"agent:model_start", "run:model_start",
+		"agent:model_end", "run:model_end",
+	}
+	if !equalStrings(order, want) {
+		t.Fatalf("observer order = %v, want %v", order, want)
+	}
+}
+
+// A nil run observer is a no-op, matching a nil onDelta.
+func TestRunObserverNilIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	m := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}},
+	)
+	agent, err := golem.New[struct{}, string](m, golem.DecodeFunc[string](decodeContent))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go",
+		golem.WithRunObserver(nil)); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+// Streamed runs route events to the run observer like unstreamed ones.
+func TestRunObserverWorksOnStreamRuns(t *testing.T) {
+	t.Parallel()
+
+	m := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, Usage: model.Usage{InputTokens: 4, OutputTokens: 2}},
+	)
+	agent, err := golem.New[struct{}, string](m, golem.DecodeFunc[string](decodeContent))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var events []golem.RunEvent
+	if _, err := agent.RunStream(context.Background(), golem.RunContext[struct{}]{}, "go", nil,
+		golem.WithRunObserver(func(event golem.RunEvent) { events = append(events, event) })); err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+
+	want := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	if got := summarize(events); !equalStrings(got, want) {
+		t.Fatalf("streamed run events = %v, want %v", got, want)
+	}
+	if events[1].Usage != (model.Usage{InputTokens: 4, OutputTokens: 2}) {
+		t.Fatalf("model_end usage = %v", events[1].Usage)
+	}
+}
+
+// A deferred resume routes its events to the run observer too: the
+// pause emits to the pausing run's observer, the resume to the
+// resuming run's.
+func TestRunObserverWorksOnDeferredResume(t *testing.T) {
+	t.Parallel()
+
+	gated := tool.MustNew(tool.Tool[struct{}]{
+		Name: "gated", Description: "Needs sign-off.", Schema: json.RawMessage(`{"type":"object"}`),
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+			if tool.CallApproved(ctx) {
+				return "signed off", nil
+			}
+			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+		},
+	})
+	m := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+			{ID: "c1", Name: "gated", Args: json.RawMessage(`{}`)},
+		}}},
+	)
+	agent, err := golem.New[struct{}, string](m, golem.DecodeFunc[string](decodeContent),
+		golem.WithTools[struct{}, string](gated))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var pauseEvents []golem.RunEvent
+	paused, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "go",
+		golem.WithRunObserver(func(event golem.RunEvent) { pauseEvents = append(pauseEvents, event) }))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if paused.Pending == nil {
+		t.Fatal("run did not pause for approval")
+	}
+	wantPause := []string{
+		"model_start t0 a1 ", "model_end t0 a1 ",
+		"tool_start t0 a0 c1", "deferred t0 a0 c1",
+	}
+	if got := summarize(pauseEvents); !equalStrings(got, wantPause) {
+		t.Fatalf("pause events = %v, want %v", got, wantPause)
+	}
+
+	resumed := testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "approved and done"}},
+	)
+	resumeAgent, err := golem.New[struct{}, string](resumed, golem.DecodeFunc[string](decodeContent),
+		golem.WithTools[struct{}, string](gated))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	var resumeEvents []golem.RunEvent
+	_, err = resumeAgent.RunWithDeferredResults(context.Background(), golem.RunContext[struct{}]{},
+		paused.Messages, golem.DeferredResults{Approvals: map[string]golem.Approval{
+			"c1": {Approved: true},
+		}}, "",
+		golem.WithRunObserver(func(event golem.RunEvent) { resumeEvents = append(resumeEvents, event) }))
+	if err != nil {
+		t.Fatalf("RunWithDeferredResults() error = %v", err)
+	}
+	wantResume := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	if got := summarize(resumeEvents); !equalStrings(got, wantResume) {
+		t.Fatalf("resume events = %v, want %v", got, wantResume)
+	}
+}
