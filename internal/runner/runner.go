@@ -40,9 +40,15 @@ func (e *ToolError) Unwrap() error {
 	return e.Err
 }
 
-// Outcome is the terminal state of a completed loop: the final response,
-// the full ordered conversation evidence, usage summed across turns, and
-// activity counts for usage bounds.
+// Outcome is the terminal state of a loop: the final response, the full
+// ordered conversation evidence, usage summed across turns, and activity
+// counts for usage bounds. An error return keeps the evidence the loop
+// accumulated: Messages runs through the last completed model turn — a
+// failed provider call contributes nothing, and a tool batch that fails
+// contributes none of its results — Usage sums the completed turns, and
+// the counts include the failed provider attempt. Callers surface that
+// partial evidence; a run that failed before any activity returns the
+// zero Outcome.
 type Outcome struct {
 	Response model.Response
 	Messages []model.Message
@@ -311,15 +317,16 @@ func execute[Deps any](
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
-			return Outcome{}, err
+			return partialOutcome(messages, usage, counts), err
 		}
 		if turn >= maxIterations {
-			return Outcome{}, fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
+			return partialOutcome(messages, usage, counts), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
 		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}, turn)
 		if err != nil {
-			return Outcome{}, err
+			counts.modelCalls += providerCalls
+			return partialOutcome(messages, usage, counts), err
 		}
 		counts.modelCalls += providerCalls
 		messages = append(messages, response.Message)
@@ -342,7 +349,7 @@ func execute[Deps any](
 
 		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
-			return Outcome{}, err
+			return partialOutcome(messages, usage, counts), err
 		}
 		messages = append(messages, toolMessages...)
 		if len(pending) > 0 {
@@ -350,6 +357,13 @@ func execute[Deps any](
 				ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
 		}
 	}
+}
+
+// partialOutcome packages the evidence a failed loop accumulated, so a
+// run that errors keeps its transcript, usage, and activity counts.
+func partialOutcome(messages []model.Message, usage model.Usage, counts runCounts) Outcome {
+	return Outcome{Messages: messages, Usage: usage,
+		ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions}
 }
 
 type toolCallResult[Deps any] struct {
@@ -401,8 +415,12 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID, ToolName: item.call.Name, Content: item.result})
 			continue
 		}
+		// Cancellation and deadlines keep their identity through the
+		// ToolError chain — errors.Is still matches them — while gaining
+		// the tool stage, so a run stopped inside a tool reports where it
+		// stopped.
 		if errors.Is(item.err, context.Canceled) || errors.Is(item.err, context.DeadlineExceeded) {
-			return nil, nil, item.err
+			return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: item.err}
 		}
 		var rejection *model.ModelRetry
 		limit := config.DefaultRetries
