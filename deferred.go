@@ -217,10 +217,10 @@ func (a *Agent[Deps, Output]) resolvePending(ctx context.Context, runCtx RunCont
 			result, err := runner.ExecuteApprovedTool(ctx, declared, runCtx.Deps, call.Args, a.toolTimeout)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return nil, err
+					return nil, classifyRunError(err, nil)
 				}
 				return nil, classifyRunError(&runner.ToolError{ToolName: call.Name, CallID: call.ID,
-					Err: fmt.Errorf("approved re-run failed: %w", err)})
+					Err: fmt.Errorf("approved re-run failed: %w", err)}, nil)
 			}
 			resolutions[call.ID] = model.Message{
 				Role: model.RoleTool, ToolCallID: call.ID, ToolName: call.Name, Content: result,

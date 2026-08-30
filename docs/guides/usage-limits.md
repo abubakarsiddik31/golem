@@ -25,7 +25,9 @@ correction round, and checked after each model response: the response
 that crosses a bound fails the run at the `usage` stage — even when it
 would have decoded successfully. The failure wraps a typed
 `golem.UsageLimitError` naming the crossed dimension, its bound, and the
-run's actual usage.
+run's actual usage, and `RunError.Partial` preserves the conversation
+including the crossing response, the usage it reported, and the run's
+request and tool counts.
 
 Tokens come from provider-reported usage. Requests and tool executions
 are counted by the run itself: a request is one provider call, retried

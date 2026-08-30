@@ -161,7 +161,7 @@ func TestAgentRunClassifiesToolAndLoopFailures(t *testing.T) {
 	})
 }
 
-func TestAgentRunReturnsCancellationUnwrapped(t *testing.T) {
+func TestAgentRunWrapsCancellationWithStage(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -174,11 +174,17 @@ func TestAgentRunReturnsCancellationUnwrapped(t *testing.T) {
 
 	_, err = agent.Run(ctx, golem.RunContext[struct{}]{}, "hello")
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run() error = %v, want context.Canceled", err)
+		t.Fatalf("Run() error = %v, want context.Canceled through the chain", err)
 	}
 	var runErr *golem.RunError
-	if errors.As(err, &runErr) {
-		t.Fatalf("Run() error = %v, cancellation must not be wrapped in RunError", err)
+	if !errors.As(err, &runErr) {
+		t.Fatalf("Run() error = %v, cancellation must ride a RunError to carry its stage", err)
+	}
+	if runErr.Stage != golem.StageModel {
+		t.Fatalf("RunError stage = %s, want model", runErr.Stage)
+	}
+	if runErr.Partial != nil {
+		t.Fatalf("RunError partial = %+v, want nil: the run died before any activity", runErr.Partial)
 	}
 }
 

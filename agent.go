@@ -440,9 +440,12 @@ type Result[Output any] struct {
 // to the configured output retry budget, and tool calls a tool rejects
 // with *model.ModelRetry are fed back up to the tool retry budget.
 //
-// Errors are wrapped in RunError with the failing stage. Cancellation and
-// deadline errors are returned unwrapped so callers can match them
-// directly with errors.Is.
+// Errors are wrapped in RunError with the failing stage. A run that had
+// begun producing evidence — completed model turns, reported usage,
+// executed tools — carries it as RunError.Partial; a failure before any
+// activity leaves Partial nil. Cancellation and deadline errors are
+// wrapped like every other failure and remain matchable with errors.Is
+// through RunError.Unwrap.
 func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string, opts ...RunOption) (Result[Output], error) {
 	return a.execute(ctx, runCtx, nil, prompt, nil, opts...)
 }
@@ -477,7 +480,7 @@ func (a *Agent[Deps, Output]) RunWithHistory(ctx context.Context, runCtx RunCont
 // fragments the caller already saw. An error returned from onDelta stops
 // the run and surfaces at the model stage with the original error
 // reachable via errors.Is. A nil onDelta is allowed and discards
-// fragments.
+// fragments. Failures carry RunError.Partial evidence like Run's.
 func (a *Agent[Deps, Output]) RunStream(ctx context.Context, runCtx RunContext[Deps], prompt string, onDelta func(model.Delta) error, opts ...RunOption) (Result[Output], error) {
 	if _, ok := a.model.(model.StreamingModel); !ok {
 		return Result[Output]{}, fmt.Errorf("golem: model %T does not support streaming", a.model)
@@ -543,14 +546,19 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, a.runEvents)
 		}
 		if err != nil {
-			return Result[Output]{}, classifyRunError(err)
+			usage.InputTokens += outcome.Usage.InputTokens
+			usage.OutputTokens += outcome.Usage.OutputTokens
+			modelCalls += outcome.ModelCalls
+			toolExecutions += outcome.ToolExecutions
+			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions))
 		}
 		usage.InputTokens += outcome.Usage.InputTokens
 		usage.OutputTokens += outcome.Usage.OutputTokens
 		modelCalls += outcome.ModelCalls
 		toolExecutions += outcome.ToolExecutions
 		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
-			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err}
+			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err,
+				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
 		}
 		if len(outcome.Pending) > 0 {
 			return Result[Output]{Messages: outcome.Messages, Usage: usage, Pending: deferredRequests(outcome.Pending)}, nil
@@ -565,7 +573,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			if attempt > 0 {
 				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
 			}
-			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err}
+			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
+				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
 		}
 		if a.runEvents != nil {
 			a.runEvents(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
@@ -689,18 +698,40 @@ func exponentialBackoff(attempt int) time.Duration {
 	return delay
 }
 
-// classifyRunError maps runner outcomes to public stages. Cancellation and
-// deadline errors stay unwrapped so callers can match them with errors.Is.
-func classifyRunError(err error) error {
+// classifyRunError maps runner outcomes to public stages, attaching the
+// run's partial evidence. Cancellation and deadline errors ride a RunError
+// like every other failure — Unwrap keeps them matchable with errors.Is —
+// because wrapping is the only way their evidence survives.
+func classifyRunError(err error, partial *PartialResult) error {
 	var toolErr *runner.ToolError
 	switch {
 	case errors.As(err, &toolErr):
-		return &RunError{Stage: StageTool, Err: err}
+		return &RunError{Stage: StageTool, Err: err, Partial: partial}
 	case errors.Is(err, runner.ErrLoopLimit):
-		return &RunError{Stage: StageLoop, Err: err}
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return err
+		return &RunError{Stage: StageLoop, Err: err, Partial: partial}
 	default:
-		return &RunError{Stage: StageModel, Err: err}
+		return &RunError{Stage: StageModel, Err: err, Partial: partial}
 	}
+}
+
+// partialEvidence builds the failed run's evidence record, or nil when
+// the run produced nothing worth preserving: no model turn completed,
+// no usage was reported, and no tool executed — a lone failed provider
+// attempt is not evidence.
+func partialEvidence(messages []model.Message, usage model.Usage, requests, toolCalls int) *PartialResult {
+	if toolCalls == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && !hasAssistantTurn(messages) {
+		return nil
+	}
+	return &PartialResult{Messages: messages, Usage: usage, Requests: requests, ToolCalls: toolCalls}
+}
+
+// hasAssistantTurn reports whether any completed model turn is in the
+// evidence.
+func hasAssistantTurn(messages []model.Message) bool {
+	for _, message := range messages {
+		if message.Role == model.RoleAssistant {
+			return true
+		}
+	}
+	return false
 }

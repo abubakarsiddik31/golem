@@ -28,6 +28,11 @@ const (
 type RunError struct {
 	Stage Stage
 	Err   error
+	// Partial preserves the evidence the run accumulated before the
+	// error ended it; see PartialResult. It is nil when the run failed
+	// before producing any: no model turn completed, no usage was
+	// reported, and no tool executed.
+	Partial *PartialResult
 }
 
 func (e *RunError) Error() string {
@@ -37,6 +42,26 @@ func (e *RunError) Error() string {
 // Unwrap exposes the originating model or decoder error.
 func (e *RunError) Unwrap() error {
 	return e.Err
+}
+
+// PartialResult is the evidence of a failed run: the conversation through
+// its last completed model turn, the usage completed turns reported, and
+// the run's activity counts. A failure inside a tool batch leaves
+// Messages ending at the assistant turn that requested the batch — its
+// executed results are observable through run events — and any tool call
+// left without a result is repaired on resume, exactly as for a crashed
+// run. Feed Partial.Messages to RunWithHistory to continue a failed
+// conversation.
+type PartialResult struct {
+	// Messages is the ordered conversation evidence, ending at the last
+	// completed model turn.
+	Messages []model.Message
+	// Usage sums the provider-reported consumption of completed turns.
+	Usage model.Usage
+	// Requests counts model calls the run made, failed attempts included.
+	Requests int
+	// ToolCalls counts tool executions the run attempted.
+	ToolCalls int
 }
 
 // check reports whether cumulative usage crossed any configured bound.

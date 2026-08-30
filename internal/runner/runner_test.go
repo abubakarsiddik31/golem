@@ -12,6 +12,7 @@ import (
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/testmodel"
 	"github.com/abubakarsiddik31/golem/tool"
 )
 
@@ -814,5 +815,113 @@ func TestExecuteCountsRetriedAttemptsAsModelCalls(t *testing.T) {
 	}
 	if outcome.ModelCalls != 2 {
 		t.Fatalf("ModelCalls = %d, want 2 (failed attempt + successful retry)", outcome.ModelCalls)
+	}
+}
+
+// A failed loop keeps its evidence: the conversation through the last
+// completed model turn, usage of completed turns, and counts including
+// the failed provider attempt.
+func TestExecuteReturnsPartialOutcomeOnModelError(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	client := testmodel.Func(func(ctx context.Context, request model.Request) (model.Response, error) {
+		calls++
+		if calls == 1 {
+			return toolResponse(model.ToolCall{ID: "call-1", Name: "echo", Args: json.RawMessage(`{}`)}), nil
+		}
+		return model.Response{}, errors.New("provider gone")
+	})
+	request := model.Request{
+		Messages:  []model.Message{{Role: model.RoleUser, Content: "go"}},
+		ToolSpecs: specsFor(t, echoTool(t)),
+	}
+
+	outcome, err := runner.Execute(context.Background(), client, []tool.Tool[deps]{echoTool(t)}, deps{}, request, 10, noRetries, 0, "")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want the provider failure")
+	}
+
+	if outcome.Response.Message.Role != "" {
+		t.Fatalf("partial Response = %+v, want the zero response", outcome.Response.Message)
+	}
+	if len(outcome.Messages) != 3 ||
+		outcome.Messages[0].Role != model.RoleUser ||
+		outcome.Messages[1].Role != model.RoleAssistant ||
+		len(outcome.Messages[1].ToolCalls) != 1 ||
+		outcome.Messages[2].Role != model.RoleTool {
+		t.Fatalf("partial Messages = %#v, want user, assistant call, tool result", outcome.Messages)
+	}
+	if outcome.ModelCalls != 2 {
+		t.Fatalf("partial ModelCalls = %d, want 2 (successful turn + failed attempt)", outcome.ModelCalls)
+	}
+	if outcome.ToolExecutions != 1 {
+		t.Fatalf("partial ToolExecutions = %d, want 1", outcome.ToolExecutions)
+	}
+}
+
+// A tool failure leaves the evidence ending at the assistant turn that
+// requested the batch: the batch contributes no results.
+func TestExecuteReturnsPartialOutcomeOnToolError(t *testing.T) {
+	t.Parallel()
+
+	client := &scriptedModel{
+		responses: []model.Response{toolResponse(model.ToolCall{ID: "call-1", Name: "echo", Args: json.RawMessage(`{}`)})},
+	}
+	failing := tool.MustNew(tool.Tool[deps]{
+		Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`),
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
+			return "", errors.New("tool exploded")
+		},
+	})
+	request := model.Request{
+		Messages:  []model.Message{{Role: model.RoleUser, Content: "go"}},
+		ToolSpecs: specsFor(t, failing),
+	}
+
+	outcome, err := runner.Execute(context.Background(), client, []tool.Tool[deps]{failing}, deps{}, request, 10, noRetries, 0, "")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want the tool failure")
+	}
+
+	if len(outcome.Messages) != 2 || outcome.Messages[1].Role != model.RoleAssistant || len(outcome.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("partial Messages = %#v, want user then the assistant call turn", outcome.Messages)
+	}
+	if outcome.ToolExecutions != 1 {
+		t.Fatalf("partial ToolExecutions = %d, want 1 attempted execution", outcome.ToolExecutions)
+	}
+}
+
+// A run cancelled between turns returns the evidence of the turns that
+// completed.
+func TestExecuteReturnsPartialOutcomeOnCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &scriptedModel{
+		responses: []model.Response{toolResponse(model.ToolCall{ID: "call-1", Name: "echo", Args: json.RawMessage(`{}`)})},
+	}
+	cancelling := tool.MustNew(tool.Tool[deps]{
+		Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`),
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
+			cancel()
+			return "done", nil
+		},
+	})
+	request := model.Request{
+		Messages:  []model.Message{{Role: model.RoleUser, Content: "go"}},
+		ToolSpecs: specsFor(t, cancelling),
+	}
+
+	outcome, err := runner.Execute(ctx, client, []tool.Tool[deps]{cancelling}, deps{}, request, 10, noRetries, 0, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute() error = %v, want context.Canceled", err)
+	}
+
+	if len(outcome.Messages) != 3 || outcome.Messages[2].Role != model.RoleTool {
+		t.Fatalf("partial Messages = %#v, want the completed tool round preserved", outcome.Messages)
+	}
+	if outcome.ModelCalls != 1 || outcome.ToolExecutions != 1 {
+		t.Fatalf("partial counts = (%d calls, %d tools), want (1, 1)", outcome.ModelCalls, outcome.ToolExecutions)
 	}
 }

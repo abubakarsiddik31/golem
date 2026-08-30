@@ -23,7 +23,13 @@ normalized conversation in `Messages`, and cumulative `Usage`. Errors are
 `RunError` values with an inspectable stage — compare against
 `golem.StageModel`, `golem.StageTool`, `golem.StageDecode`,
 `golem.StageLoop`, or `golem.StageUsage` — that preserve the cause for
-`errors.Is` and `errors.As`.
+`errors.Is` and `errors.As`. A run that had begun producing evidence —
+completed model turns, reported usage, executed tools — carries it as
+`RunError.Partial`: the conversation through the last completed model
+turn, the usage completed turns reported, and the counts of model
+requests and tool executions. `Partial` is nil when the run failed
+before any of that; feed `Partial.Messages` to `RunWithHistory` to
+resume a failed conversation.
 
 ## Example
 
@@ -54,6 +60,7 @@ result, err := agent.Run(ctx, golem.RunContext[struct{}]{}, "Reply with exactly 
 
 - Runs make at most `golem.DefaultMaxIterations` (10) model turns; see
   `WithMaxIterations`.
-- Cancellation and deadline errors are returned unwrapped — match them
-  with `errors.Is(err, context.Canceled)`, not through `RunError`.
+- Cancellation and deadline errors ride a `RunError` like every other
+  failure and stay matchable with `errors.Is(err, context.Canceled)`
+  through the chain — wrapping is what preserves their partial evidence.
 - Environment variables are read by the application, never by Golem.

@@ -59,6 +59,10 @@ result, err := agent.RunStream(ctx, runCtx, "summarize the match",
   [Retries](retries.md).
 - An error returned from `onDelta` stops the run and comes back at the
   model stage with the original error reachable via `errors.Is`.
+- Failures carry the run's partial evidence on `RunError.Partial`,
+  exactly like unstreamed runs; the Gemini adapter also fails a stream
+  that ends without its terminal finishReason chunk instead of passing a
+  network truncation off as a short complete answer.
 - Deltas are in-flight progress, not a persistence contract.
 - Decisions live in `docs/adr/0008-streaming-port.md` and
   `docs/adr/0009-agent-streaming-runs.md`.
