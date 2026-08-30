@@ -154,6 +154,48 @@ func TestGenerateStreamAccumulatesToolCalls(t *testing.T) {
 	}
 }
 
+func TestGenerateStreamAcceptsCompleteToolCallsInSingleChunks(t *testing.T) {
+	t.Parallel()
+
+	// Local OpenAI-compatible servers (Ollama, LM Studio) deliver each
+	// tool call whole — ID, name, and full arguments in one chunk —
+	// instead of the fragmented accumulation shape.
+	server := newSSEServer(t,
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"part\\\":\\\"memory\\\"}\"}}]}}]}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call-2\",\"type\":\"function\",\"function\":{\"name\":\"reset\",\"arguments\":\"{}\"}}]}}]}\n\n",
+		"data: [DONE]\n\n",
+	)
+	client := newClient(t, server.server.URL)
+
+	var deltas []model.Delta
+	response, err := client.GenerateStream(context.Background(), userPrompt(), func(d model.Delta) error {
+		deltas = append(deltas, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	if len(deltas) != 2 {
+		t.Fatalf("deltas = %#v, want one per complete call", deltas)
+	}
+	first := deltas[0].ToolCalls[0]
+	if first.ID != "call-1" || first.Name != "lookup" || first.ArgsFragment != `{"part":"memory"}` {
+		t.Fatalf("first fragment = %#v, want the complete call", first)
+	}
+
+	calls := response.Message.ToolCalls
+	if len(calls) != 2 {
+		t.Fatalf("assembled calls = %#v, want 2", calls)
+	}
+	if calls[0].ID != "call-1" || calls[0].Name != "lookup" || string(calls[0].Args) != `{"part":"memory"}` {
+		t.Fatalf("first call = %#v", calls[0])
+	}
+	if calls[1].ID != "call-2" || calls[1].Name != "reset" || string(calls[1].Args) != "{}" {
+		t.Fatalf("second call = %#v", calls[1])
+	}
+}
+
 func TestGenerateStreamRequiresDoneSentinel(t *testing.T) {
 	t.Parallel()
 
