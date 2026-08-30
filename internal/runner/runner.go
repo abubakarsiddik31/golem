@@ -51,7 +51,21 @@ type Outcome struct {
 	ModelCalls int
 	// ToolExecutions counts tool executions attempted; unknown-tool
 	// requests and interrupted output-tool co-emissions do not count.
+	// Calls that deferred do not count either; their approved re-runs on
+	// resume do.
 	ToolExecutions int
+	// Pending is non-empty when the loop paused on deferred tool calls:
+	// the run ended mid-conversation awaiting their resolution. Response
+	// is the assistant turn that requested the calls, and Messages ends
+	// with the results of the batch's executed calls only.
+	Pending []PendingCall
+}
+
+// PendingCall is one tool call that deferred instead of executing.
+type PendingCall struct {
+	Call model.ToolCall
+	// Defer is the sentinel the tool returned, with its kind and reason.
+	Defer tool.Deferred
 }
 
 // RetryConfig bounds and paces retries of failed model calls.
@@ -92,6 +106,10 @@ const (
 	// round. The agent emits it; the runner loop never does, because only
 	// the agent knows the decoder's verdict.
 	EventOutputRejected EventKind = "output_rejected"
+	// EventDeferred marks a tool call that deferred instead of executing:
+	// the run pauses with the call pending, surfaced in Outcome.Pending.
+	// No EventToolEnd follows for a deferred call.
+	EventDeferred EventKind = "deferred"
 )
 
 // Event is one observation of an executing run. The fields a kind
@@ -123,7 +141,9 @@ type Event struct {
 // execution order: model attempts in call order, tool starts before and
 // tool ends after execution, with parallel groups emitting starts in
 // model emission order before the group runs and ends in the same order
-// after it completes. Observers run inline with execution and must not
+// after it completes. A call whose execution returns a deferred sentinel
+// reports EventDeferred in place of its tool end, in emission order
+// within its group. Observers run inline with execution and must not
 // block; cancel the run context to stop the run from an observer.
 type Observer func(Event)
 
@@ -320,11 +340,15 @@ func execute[Deps any](
 			}
 		}
 
-		toolMessages, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
+		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
 			return Outcome{}, err
 		}
 		messages = append(messages, toolMessages...)
+		if len(pending) > 0 {
+			return Outcome{Response: response, Messages: messages, Usage: usage,
+				ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
+		}
 	}
 }
 
@@ -337,13 +361,17 @@ type toolCallResult[Deps any] struct {
 
 // runToolCalls validates every requested call, executes them either in
 // emission order or concurrent barrier-separated groups, then emits results
-// in emission order regardless of completion order.
-func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, error) {
+// in emission order regardless of completion order. A call whose execution
+// returns a *tool.Deferred sentinel is not executed to a result: it is
+// recorded as pending, reported with EventDeferred, and the batch's other
+// calls still run. The returned messages carry results for the executed
+// calls only; pending lists every deferred call in emission order.
+func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, []PendingCall, error) {
 	results := make([]toolCallResult[Deps], len(calls))
 	for i, call := range calls {
 		declared, ok := findTool(tools, call.Name)
 		if !ok {
-			return nil, &ToolError{ToolName: call.Name, CallID: call.ID, Err: fmt.Errorf("tool was not declared for this run")}
+			return nil, nil, &ToolError{ToolName: call.Name, CallID: call.ID, Err: fmt.Errorf("tool was not declared for this run")}
 		}
 		results[i] = toolCallResult[Deps]{call: call, declared: declared}
 	}
@@ -358,13 +386,23 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 		start = end
 	}
 	messages := make([]model.Message, 0, len(results))
+	var pending []PendingCall
 	for _, item := range results {
+		var deferred *tool.Deferred
+		if item.err != nil && errors.As(item.err, &deferred) {
+			if deferred.Kind != tool.DeferApproval && deferred.Kind != tool.DeferExternal {
+				return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID,
+					Err: fmt.Errorf("tool deferred without a kind: %w", item.err)}
+			}
+			pending = append(pending, PendingCall{Call: item.call, Defer: *deferred})
+			continue
+		}
 		if item.err == nil {
 			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID, ToolName: item.call.Name, Content: item.result})
 			continue
 		}
 		if errors.Is(item.err, context.Canceled) || errors.Is(item.err, context.DeadlineExceeded) {
-			return nil, item.err
+			return nil, nil, item.err
 		}
 		var rejection *model.ModelRetry
 		limit := config.DefaultRetries
@@ -377,16 +415,18 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 				Content: fmt.Sprintf("Your tool call was rejected: %v. Correct the arguments and call the tool again.", rejection.Err)})
 			continue
 		}
-		return nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: terminalToolError(feedbacks[item.declared.Name], item.err)}
+		return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: terminalToolError(feedbacks[item.declared.Name], item.err)}
 	}
-	return messages, nil
+	return messages, pending, nil
 }
 
 // runToolGroup executes one sequential or barrier-separated group,
 // emitting tool events around each execution. Sequential groups emit
 // start and end per call; parallel groups emit every start in emission
 // order before any call runs and every end in the same order after the
-// group completes, so event order stays deterministic.
+// group completes, so event order stays deterministic. A call that
+// returns a deferred sentinel reports EventDeferred instead of a tool
+// end and does not count as an execution.
 func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool, counts *runCounts, turn int, emit Observer) {
 	if !parallel {
 		for i := range group {
@@ -394,9 +434,12 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 				group[i].err = err
 				return
 			}
-			counts.toolExecutions++
 			emitEvent(emit, Event{Kind: EventToolStart, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Args: group[i].call.Args})
 			group[i].result, group[i].err = executeTool(ctx, group[i].declared, deps, group[i].call.Args, timeout)
+			if deferredEvent(emit, group[i], turn) {
+				continue
+			}
+			counts.toolExecutions++
 			event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
 			if group[i].err != nil {
 				event.Err = group[i].err
@@ -413,18 +456,34 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 		wg.Add(1)
 		go func(item *toolCallResult[Deps]) {
 			defer wg.Done()
-			counts.toolExecutions++
 			item.result, item.err = executeTool(ctx, item.declared, deps, item.call.Args, timeout)
 		}(&group[i])
 	}
 	wg.Wait()
 	for i := range group {
+		if deferredEvent(emit, group[i], turn) {
+			continue
+		}
+		counts.toolExecutions++
 		event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
 		if group[i].err != nil {
 			event.Err = group[i].err
 		}
 		emitEvent(emit, event)
 	}
+}
+
+// deferredEvent reports and emits EventDeferred for a result whose error
+// carries a deferred sentinel: true when the call deferred, false when it
+// produced an ordinary outcome. It never rewrites item.err — the batch
+// processor needs the sentinel to record the pending call.
+func deferredEvent[Deps any](emit Observer, item toolCallResult[Deps], turn int) bool {
+	var deferred *tool.Deferred
+	if item.err == nil || !errors.As(item.err, &deferred) {
+		return false
+	}
+	emitEvent(emit, Event{Kind: EventDeferred, Turn: turn, CallID: item.call.ID, ToolName: item.call.Name, Args: item.call.Args})
+	return true
 }
 
 func findTool[Deps any](tools []tool.Tool[Deps], name string) (tool.Tool[Deps], bool) {
@@ -475,6 +534,15 @@ func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps D
 		return "", callCtx.Err()
 	}
 	return result, err
+}
+
+// ExecuteApprovedTool re-runs one approved deferred call: the tool
+// executes under tool.WithApprovedCall so CallApproved reports true, with
+// the same narrowest-deadline policy as loop executions. It is the resume
+// path for approval-kind pending calls; callers surface failures as tool
+// errors.
+func ExecuteApprovedTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (string, error) {
+	return executeTool(tool.WithApprovedCall(ctx), declared, deps, args, defaultTimeout)
 }
 
 // finishOnOutput ends the run on the model's call to the output tool.

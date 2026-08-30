@@ -74,6 +74,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
 | [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
+| [Deferred tools](docs/guides/deferred-tools.md) | Approvals and external results: pausing a run and resuming it |
 
 Design decisions live in [docs/adr/](docs/adr/); each guide links the ADR that decided its behavior.
 

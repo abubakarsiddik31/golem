@@ -419,10 +419,17 @@ type RunContext[Deps any] struct {
 // Result preserves the typed output and the normalized model evidence that
 // produced it, including every tool-call exchange in execution order. This
 // makes testing and observability possible without a tracing backend.
+//
+// A run that pauses on deferred tool calls reports Pending and skips
+// decoding: Output is the zero value and Messages ends with the executed
+// calls' results only. Check Pending before relying on Output.
 type Result[Output any] struct {
 	Output   Output
 	Messages []model.Message
 	Usage    model.Usage
+	// Pending is non-nil when the run paused awaiting deferred tool
+	// calls; see DeferredRequests for the resolution contract.
+	Pending *DeferredRequests
 }
 
 // Run executes the agent: it asks the configured model to answer prompt,
@@ -488,25 +495,20 @@ func (a *Agent[Deps, Output]) RunStreamWithHistory(ctx context.Context, runCtx R
 }
 
 func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Deps], history []model.Message, prompt string, onDelta func(model.Delta) error, opts ...RunOption) (Result[Output], error) {
-	var runOpts runOptions
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&runOpts)
-		}
-	}
-	if a.historyProcessor != nil {
-		processed, err := a.historyProcessor(ctx, history)
-		if err != nil {
-			return Result[Output]{}, fmt.Errorf("golem: history processor: %w", err)
-		}
-		if processed == nil {
-			processed = []model.Message{}
-		}
-		history = processed
-	}
-	if err := validatePromptInput(runOpts.promptParts, history); err != nil {
+	runOpts, history, err := a.prepareRun(ctx, history, opts...)
+	if err != nil {
 		return Result[Output]{}, err
 	}
+	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
+	return a.runLoop(ctx, runCtx, messages, onDelta)
+}
+
+// runLoop drives the shared tail of every run variant: the runner loop
+// over the prepared request conversation, the usage bound, and the
+// decode-or-correct boundary. It also returns a paused run: an outcome
+// carrying pending deferred calls skips decoding — a pause has no final
+// answer to validate — and surfaces them on Result.Pending.
+func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
 		if a.toolChoice != "" && t.Name != a.toolChoice {
@@ -526,7 +528,6 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		retry.Backoff = exponentialBackoff
 	}
 
-	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
 	var usage model.Usage
 	var modelCalls, toolExecutions int
 
@@ -550,6 +551,9 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		toolExecutions += outcome.ToolExecutions
 		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
 			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err}
+		}
+		if len(outcome.Pending) > 0 {
+			return Result[Output]{Messages: outcome.Messages, Usage: usage, Pending: deferredRequests(outcome.Pending)}, nil
 		}
 
 		output, err := a.decoder.Decode(ctx, outcome.Response)
