@@ -7,7 +7,12 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.6.0 — composition and control are in (agent delegation, run
+v0.7.0 — reasoning is first-class evidence: thinking blocks with
+provider signatures are captured, validated, and replayed across
+turns on every adapter. Tools can pause a run for human approval or
+external results, resuming in-process or across processes. Local
+runtimes — Ollama and LM Studio — serve the same adapter through a
+base URL. Composition and control are in (agent delegation, run
 events, request tuning), the common tool trio ships (web fetch, file
 read, command execution), the MCP client bridges server tools over
 stdio and streamable HTTP, and every adapter streams — Bedrock
