@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.7.2 — 2026-08-31
+
+This patch adds agent skills — the standard `SKILL.md` folders loaded
+on demand — and makes run events routable per request. Skills follow
+the open Agent Skills format: the new `skills` common tool discovers
+them from application-configured directories, catalogs each skill's
+name and description in the tool description, and returns the full
+instructions when the model asks for one. A shared agent can also
+route each request's events separately through a run-scoped observer.
+
+### Added
+
+- **Agent skills.** `skills.New[Deps]` scans application-configured
+  directories for `<name>/SKILL.md` folders (the agentskills.io open
+  standard — the same layout this repository uses for its own
+  development skills), validates each against the format limits, and
+  returns an ordinary tool named `skill`. Only each skill's name and
+  description enter the model's context, as an `<available_skills>`
+  catalog appended to the tool description; a matching task loads the
+  full instructions plus the skill's base directory and supporting
+  files. Discovery is strict and immutable per tool value, and skill
+  directories are always application-resolved — never the working
+  directory, home, or environment. See the
+  [agent skills guide](docs/guides/skills.md) and ADR 0019.
+- **Run-scoped run events.** `WithRunObserver` registers a run option
+  that delivers the same events `WithRunEvents` does — provider call
+  attempts, tool executions, correction boundaries — for a single run,
+  so a shared agent (a server handling many requests) routes each
+  request's events without rebuilding the agent. The run's observer
+  composes with the agent's: construction-scoped first, then the
+  run's, per event. Accepted by `Run` and its history, streaming, and
+  deferred-resume variants. See the
+  [run events guide](docs/guides/run-events.md).
+
 ## v0.7.1 — 2026-08-30
 
 This patch makes failures preserve their evidence, adds run-scoped

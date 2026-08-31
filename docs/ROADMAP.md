@@ -7,18 +7,19 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.7.1 — failures keep their evidence: a run that errors after it began
-producing carries its partial transcript, usage, and activity counts as
-`RunError.Partial`, resume-ready through `RunWithHistory`, and
-cancellation rides `RunError` so a client disconnect loses nothing.
+v0.7.2 — the standard skill pack: the `skills` common tool discovers
+Agent Skills (`<name>/SKILL.md` folders per the agentskills.io open
+standard) from application-configured directories, catalogs each
+skill's name and description in the tool description, and loads the
+full instructions — plus base directory and supporting files — when the
+model asks for one, so procedural knowledge ships as portable folders.
 Run events are run-scopable: `WithRunObserver` routes one request's
 events through a shared agent, composing with the agent-level observer.
-Gemini streams detect truncation: ending without a terminal
-finishReason fails instead of billing as a short answer. On the v0.7.0
-foundations — reasoning as first-class evidence with provider
+On the v0.7.0/v0.7.1 foundations — failures keeping their evidence via
+`RunError.Partial`, reasoning as first-class evidence with provider
 signatures, tools that pause for human approval or external results,
 local runtimes through a base URL, composition and control (agent
-delegation, run events, request tuning), the common tool trio, the MCP
+delegation, run events, request tuning), the common tools, the MCP
 client over stdio and streamable HTTP, and streaming on every adapter —
 the core execution contract is complete for single-agent applications.
 
