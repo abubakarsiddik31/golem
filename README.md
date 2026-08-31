@@ -61,6 +61,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
 | [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
 | [Command execution](docs/guides/command-execution.md) | The `shell` common tool: one command, combined output |
+| [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
@@ -89,6 +90,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
 | [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
+| [`skills`](examples/skills/main.go) | The `skills` common tool loading a standard SKILL.md folder |
 | [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
 | [`mcp-http`](examples/mcp-http/main.go) | MCP server bridged over streamable HTTP |
 | [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
