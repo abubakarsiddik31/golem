@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Finish-reason visibility.** Every response now carries the
+  provider's terminal cause, normalized onto `model.FinishReason`
+  (`stop`, `length`, `tool_call`, `content_filter`, `other`) from all
+  five adapters, on streamed and plain runs alike. `Result.FinishReason`
+  holds the final turn's cause and `RunError.Partial.FinishReason` the
+  last completed turn's, so a response the provider truncated — the
+  classic undecodable-JSON failure — is diagnosable instead of silent.
+  Bedrock's stream adapter also now tolerates a nil fragment callback,
+  matching its sibling adapters.
+
 - **Run activity counts on the result.** `Result.Requests` and
   `Result.ToolCalls` surface the model requests — retried attempts
   included — and the tool executions a successful run performed: the

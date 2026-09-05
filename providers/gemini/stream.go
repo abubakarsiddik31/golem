@@ -106,8 +106,9 @@ type streamAssembler struct {
 	calls   []model.ToolCall
 	usage   model.Usage
 	// finished records that a candidate chunk carried a finishReason —
-	// the stream's only terminal signal.
+	// the stream's only terminal signal. finish keeps the mapped cause.
 	finished bool
+	finish   model.FinishReason
 	// thinking holds assembled reasoning blocks; currentThinking is the
 	// index of the block that continues thought text, -1 when the next
 	// thought part opens a new block.
@@ -131,6 +132,7 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	}
 	if chunk.Candidates[0].FinishReason != "" {
 		a.finished = true
+		a.finish = finishReason(chunk.Candidates[0].FinishReason)
 	}
 
 	var delta model.Delta
@@ -197,6 +199,7 @@ func (a *streamAssembler) response() model.Response {
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
-		Usage: a.usage,
+		Usage:        a.usage,
+		FinishReason: a.finish,
 	}
 }

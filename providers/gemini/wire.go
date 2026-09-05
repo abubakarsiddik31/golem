@@ -124,6 +124,25 @@ type wireCandidate struct {
 	FinishReason string      `json:"finishReason"`
 }
 
+// finishReason translates the GenerateContent finishReason vocabulary
+// onto the shared model constants. All of the provider's blocked-content
+// categories are safety stops; MALFORMED_FUNCTION_CALL has no closer
+// shared meaning and stays visible as FinishOther.
+func finishReason(reason string) model.FinishReason {
+	switch reason {
+	case "STOP":
+		return model.FinishStop
+	case "MAX_TOKENS":
+		return model.FinishLength
+	case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII":
+		return model.FinishContentFilter
+	case "":
+		return ""
+	default:
+		return model.FinishOther
+	}
+}
+
 type wireUsageMeta struct {
 	PromptTokens     int `json:"promptTokenCount"`
 	CandidatesTokens int `json:"candidatesTokenCount"`
@@ -311,5 +330,6 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 			InputTokens:  wire.Usage.PromptTokens,
 			OutputTokens: wire.Usage.CandidatesTokens,
 		},
+		FinishReason: finishReason(wire.Candidates[0].FinishReason),
 	}, nil
 }

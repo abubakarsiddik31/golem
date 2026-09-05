@@ -42,9 +42,6 @@ Then the freeze ADR and v1.0.0.
 
 ## After v1 — additive minors
 
-- **Finish-reason visibility.** model.Response carries the provider's
-  terminal cause (stop, length cap, safety) — today no adapter
-  surfaces it, so truncation is invisible outside Gemini streams.
 - **Token-aware history bounding.** A count-tokens capability where
   providers expose one, and a token-budget history processor;
   TrimHistory stays message-count based.
