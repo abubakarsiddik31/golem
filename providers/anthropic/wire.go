@@ -112,6 +112,31 @@ type wireTool struct {
 type messagesResponse struct {
 	Content []wireBlock `json:"content"`
 	Usage   wireUsage   `json:"usage"`
+	// StopReason is the terminal cause: end_turn, max_tokens,
+	// stop_sequence, tool_use, pause_turn, refusal, or
+	// model_context_window_exceeded.
+	StopReason string `json:"stop_reason"`
+}
+
+// finishReason translates the Messages API stop_reason vocabulary onto
+// the shared model constants. end_turn and a hit stop sequence are a
+// natural completion; pause_turn and context-window exhaustion have no
+// closer shared meaning and stay visible as FinishOther.
+func finishReason(reason string) model.FinishReason {
+	switch reason {
+	case "end_turn", "stop_sequence":
+		return model.FinishStop
+	case "max_tokens":
+		return model.FinishLength
+	case "tool_use":
+		return model.FinishToolCall
+	case "refusal":
+		return model.FinishContentFilter
+	case "":
+		return ""
+	default:
+		return model.FinishOther
+	}
 }
 
 type wireUsage struct {
@@ -281,5 +306,6 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			InputTokens:  wire.Usage.InputTokens,
 			OutputTokens: wire.Usage.OutputTokens,
 		},
+		FinishReason: finishReason(wire.StopReason),
 	}, nil
 }

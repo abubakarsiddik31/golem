@@ -41,18 +41,23 @@ func (e *ToolError) Unwrap() error {
 }
 
 // Outcome is the terminal state of a loop: the final response, the full
-// ordered conversation evidence, usage summed across turns, and activity
-// counts for usage bounds. An error return keeps the evidence the loop
-// accumulated: Messages runs through the last completed model turn — a
-// failed provider call contributes nothing, and a tool batch that fails
-// contributes none of its results — Usage sums the completed turns, and
-// the counts include the failed provider attempt. Callers surface that
-// partial evidence; a run that failed before any activity returns the
-// zero Outcome.
+// ordered conversation evidence, usage summed across turns, the last
+// turn's terminal cause, and activity counts for usage bounds. An error
+// return keeps the evidence the loop accumulated: Messages runs through
+// the last completed model turn — a failed provider call contributes
+// nothing, and a tool batch that fails contributes none of its results —
+// Usage sums the completed turns, FinishReason is the last completed
+// turn's cause, and the counts include the failed provider attempt.
+// Callers surface that partial evidence; a run that failed before any
+// activity returns the zero Outcome.
 type Outcome struct {
 	Response model.Response
 	Messages []model.Message
 	Usage    model.Usage
+	// FinishReason is the provider's terminal cause of the last
+	// completed model turn: the final response's cause on success, the
+	// last completed turn's cause on failure.
+	FinishReason model.FinishReason
 	// ModelCalls counts provider calls, including retried attempts.
 	ModelCalls int
 	// ToolExecutions counts tool executions attempted; unknown-tool
@@ -313,29 +318,32 @@ func execute[Deps any](
 	messages := make([]model.Message, len(req.Messages))
 	copy(messages, req.Messages)
 	var usage model.Usage
+	var lastFinish model.FinishReason
 	feedbacks := make(map[string]int)
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
-			return partialOutcome(messages, usage, counts), err
+			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 		if turn >= maxIterations {
-			return partialOutcome(messages, usage, counts), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
+			return partialOutcome(messages, usage, counts, lastFinish), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 
 		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}, turn)
 		if err != nil {
 			counts.modelCalls += providerCalls
-			return partialOutcome(messages, usage, counts), err
+			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 		counts.modelCalls += providerCalls
+		lastFinish = response.FinishReason
 		messages = append(messages, response.Message)
 		usage.InputTokens += response.Usage.InputTokens
 		usage.OutputTokens += response.Usage.OutputTokens
 
 		if len(response.Message.ToolCalls) == 0 {
 			return Outcome{Response: response, Messages: messages, Usage: usage,
-				ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions}, nil
+				FinishReason: response.FinishReason,
+				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions}, nil
 		}
 
 		if outputTool != "" {
@@ -343,26 +351,29 @@ func execute[Deps any](
 				outcome := finishOnOutput(messages, usage, response, call)
 				outcome.ModelCalls = counts.modelCalls
 				outcome.ToolExecutions = counts.toolExecutions
+				outcome.FinishReason = response.FinishReason
 				return outcome, nil
 			}
 		}
 
 		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
-			return partialOutcome(messages, usage, counts), err
+			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 		messages = append(messages, toolMessages...)
 		if len(pending) > 0 {
 			return Outcome{Response: response, Messages: messages, Usage: usage,
-				ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
+				FinishReason: response.FinishReason,
+				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
 		}
 	}
 }
 
 // partialOutcome packages the evidence a failed loop accumulated, so a
-// run that errors keeps its transcript, usage, and activity counts.
-func partialOutcome(messages []model.Message, usage model.Usage, counts runCounts) Outcome {
-	return Outcome{Messages: messages, Usage: usage,
+// run that errors keeps its transcript, usage, activity counts, and the
+// last completed turn's terminal cause.
+func partialOutcome(messages []model.Message, usage model.Usage, counts runCounts, finish model.FinishReason) Outcome {
+	return Outcome{Messages: messages, Usage: usage, FinishReason: finish,
 		ModelCalls: counts.modelCalls, ToolExecutions: counts.toolExecutions}
 }
 

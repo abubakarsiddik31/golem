@@ -124,6 +124,8 @@ type streamEvent struct {
 type streamEventDelta struct {
 	Type string `json:"type"` // "text_delta" | "thinking_delta" | "signature_delta" | "input_json_delta"
 	Text string `json:"text,omitempty"`
+	// StopReason terminates the stream on the message_delta event.
+	StopReason string `json:"stop_reason,omitempty"`
 	// Thinking is a fragment of the block's reasoning text on
 	// thinking_delta events.
 	Thinking string `json:"thinking,omitempty"`
@@ -138,6 +140,8 @@ type streamEventDelta struct {
 // Block-index-to-call mapping is wire-specific and stays in the adapter.
 type streamAssembler struct {
 	content strings.Builder
+	// finish keeps the terminal cause carried by message_delta.
+	finish model.FinishReason
 	// ordinals maps wire content-block indexes to tool-call ordinals, so
 	// emitted fragments correlate with the assembled calls.
 	ordinals map[int]int
@@ -261,6 +265,9 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		if event.Usage != nil {
 			a.usage.OutputTokens = event.Usage.OutputTokens
 		}
+		if event.Delta != nil && event.Delta.StopReason != "" {
+			a.finish = finishReason(event.Delta.StopReason)
+		}
 	case "message_stop":
 		return true, nil
 	case "error":
@@ -328,6 +335,7 @@ func (a *streamAssembler) response() (model.Response, error) {
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
-		Usage: a.usage,
+		Usage:        a.usage,
+		FinishReason: a.finish,
 	}, nil
 }

@@ -101,6 +101,13 @@ type streamMetadata struct {
 // event carries usage. A stream that ends without messageStop is a
 // truncated response, not a silent partial one.
 func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.Response, error) {
+	report := func(delta model.Delta) error {
+		if onDelta == nil {
+			return nil
+		}
+		return onDelta(delta)
+	}
+
 	reader := bufio.NewReaderSize(body, 64*1024)
 
 	var content strings.Builder
@@ -112,6 +119,7 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 	lastTextBlock := -1
 	sawMessageStop := false
 	var usage model.Usage
+	var finish model.FinishReason
 
 	for {
 		message, err := readStreamMessage(reader)
@@ -140,7 +148,7 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 				ID:   event.Start.ToolUse.ToolUseID,
 				Name: event.Start.ToolUse.Name,
 			})
-			if err := onDelta(model.Delta{ToolCalls: []model.ToolCallDelta{{
+			if err := report(model.Delta{ToolCalls: []model.ToolCallDelta{{
 				Index: ordinal,
 				ID:    event.Start.ToolUse.ToolUseID,
 				Name:  event.Start.ToolUse.Name,
@@ -159,7 +167,7 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 				}
 				lastTextBlock = event.ContentBlockIndex
 				content.WriteString(event.Delta.Text)
-				if err := onDelta(model.Delta{Content: event.Delta.Text}); err != nil {
+				if err := report(model.Delta{Content: event.Delta.Text}); err != nil {
 					return model.Response{}, err
 				}
 			case event.Delta.ReasoningContent != nil:
@@ -179,7 +187,7 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 					thinking[ordinal].Text += reasoning.Text
 				}
 				if reasoning.Text != "" || reasoning.Signature != "" {
-					if err := onDelta(model.Delta{Thinking: []model.ThinkingDelta{{
+					if err := report(model.Delta{Thinking: []model.ThinkingDelta{{
 						Index:     ordinal,
 						Text:      reasoning.Text,
 						Signature: reasoning.Signature,
@@ -196,7 +204,7 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 					}
 				}
 				args[ordinal].WriteString(event.Delta.ToolUse.Input)
-				if err := onDelta(model.Delta{ToolCalls: []model.ToolCallDelta{{
+				if err := report(model.Delta{ToolCalls: []model.ToolCallDelta{{
 					Index:        ordinal,
 					ArgsFragment: event.Delta.ToolUse.Input,
 				}}}); err != nil {
@@ -205,6 +213,11 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 			}
 		case "messageStop":
 			sawMessageStop = true
+			var event streamMessageStop
+			if err := json.Unmarshal(message.Payload, &event); err != nil {
+				return model.Response{}, &DecodeError{Stage: "decode messageStop", Err: err}
+			}
+			finish = finishReason(event.StopReason)
 		case "metadata":
 			var event streamMetadata
 			if err := json.Unmarshal(message.Payload, &event); err != nil {
@@ -236,8 +249,15 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
-		Usage: usage,
+		Usage:        usage,
+		FinishReason: finish,
 	}, nil
+}
+
+// streamMessageStop is the terminal event of a Converse stream; its
+// stopReason uses the same vocabulary as the non-streaming response.
+type streamMessageStop struct {
+	StopReason string `json:"stopReason"`
 }
 
 // newStreamAPIError classifies an in-stream exception frame. Payloads

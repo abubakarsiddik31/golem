@@ -31,6 +31,25 @@ leaves the provider default, and an unset `MaxTokens` omits the bound,
 so unset controls never appear on the wire. Temperature 0 is a meaningful
 value, not a default: set it with `providers.Ptr(0)`.
 
+Every response also carries the provider's terminal cause, normalized
+onto `model.FinishReason` — identical on streamed and plain runs:
+
+| Adapter | Wire field | Stop | Length | Tool call | Content filter |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI / Azure | `finish_reason` | `stop` | `length` | `tool_calls`, `function_call` | `content_filter` |
+| Anthropic | `stop_reason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `refusal` |
+| Bedrock | `stopReason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `guardrail_intervened`, `content_filtered` |
+| Gemini | `finishReason` | `STOP` | `MAX_TOKENS` | — | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` |
+
+Unlisted values — Anthropic's `pause_turn`, Gemini's
+`MALFORMED_FUNCTION_CALL`, anything a provider adds later — map to
+`FinishOther`, and a missing field maps to the empty `FinishReason`;
+unrecognized causes are evidence, never failures. `Result.FinishReason`
+holds the final turn's cause, and `RunError.Partial.FinishReason` the
+last completed turn's when a run failed: a `length` cause on a decode
+failure means the provider truncated the output, not that the model
+wrote bad JSON.
+
 ## Example
 
 - `examples/minimal` — OpenAI-compatible.
@@ -84,6 +103,9 @@ focusedClient, _ := openai.New(openai.Config{
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
 - `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, HTTPClient})`
 - `providers.Ptr(v)` builds the optional `*float64` sampling fields.
+- `model.FinishReason` — `FinishStop | FinishLength | FinishToolCall |
+  FinishContentFilter | FinishOther`; on `model.Response`,
+  `golem.Result`, and `golem.PartialResult` (decision in ADR 0020).
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas
@@ -147,9 +169,10 @@ focusedClient, _ := openai.New(openai.Config{
   combined with function calling, so a request carrying both an output
   schema and tool declarations fails at request encoding with a
   `DecodeError` pointing at tool-mode output (`golem.WithOutputTool`).
-- The Gemini SSE stream has no terminal sentinel: it ends at EOF, so a
-  truncated stream cannot be detected the way the OpenAI-compatible
-  (`[DONE]`) and Anthropic (`message_stop`) adapters do.
+- The Gemini SSE stream has no terminal sentinel beyond a chunk's
+  `finishReason`: a stream that ends at EOF without one is a decode
+  failure, not a silent partial response — mirroring the
+  OpenAI-compatible (`[DONE]`) and Anthropic (`message_stop`) sentinels.
 - Structured output maps to OpenAI `response_format`, Anthropic
   `output_config`, and Gemini `generationConfig`; OpenAI and Anthropic
   require strict-conformant schemas (see
