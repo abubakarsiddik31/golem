@@ -430,9 +430,11 @@ func ExampleAgent() {
 
 	fmt.Println(result.Output)
 	fmt.Println(len(result.Messages), "messages,", result.Usage.OutputTokens, "output tokens")
+	fmt.Println("requests:", result.Requests, "- tool calls:", result.ToolCalls)
 	// Output:
 	// winner: Anne
 	// 4 messages, 4 output tokens
+	// requests: 2 - tool calls: 1
 }
 
 // delegatingModel hands the question to the researcher tool, then answers

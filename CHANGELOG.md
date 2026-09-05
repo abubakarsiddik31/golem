@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Run activity counts on the result.** `Result.Requests` and
+  `Result.ToolCalls` surface the model requests — retried attempts
+  included — and the tool executions a successful run performed: the
+  same counts the usage limit enforces and `RunError.Partial` preserves
+  on failure, so a cost ledger reads them off the result instead of
+  inferring activity from messages. Paused runs carry them too, and the
+  counts cover one run only: a delegated sub-agent's activity stays in
+  the sub-agent's own result.
+
 ## v0.7.2 — 2026-08-31
 
 This patch adds agent skills — the standard `SKILL.md` folders loaded

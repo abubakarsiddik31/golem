@@ -34,6 +34,11 @@ JSON-encoded, and `WithAgentResult` replaces the rendering — and is the
 hook for capturing the inner `Result`, whose messages and usage are not
 otherwise part of the delegating run's evidence.
 
+Activity counts stay separate too: the delegating run records the
+delegation itself as one tool call, and the sub-agent's own requests
+and tool executions appear only on the sub-agent's result — a run's
+`Result.Requests` and `Result.ToolCalls` count that run alone.
+
 Failures stay explicit. A missing or malformed `prompt` argument is
 rejected with `*model.ModelRetry`, so the delegating run's tool retry
 budget (`WithToolRetries`, or the tool's `MaxRetries`) governs
