@@ -428,6 +428,17 @@ type Result[Output any] struct {
 	Output   Output
 	Messages []model.Message
 	Usage    model.Usage
+	// Requests counts the model calls the run made, retried and failed
+	// attempts included — the same count UsageLimit.Requests bounds and
+	// RunError.Partial preserves on failure, so a cost ledger never has
+	// to infer activity from messages. It counts this run only: a
+	// delegated sub-agent's activity stays in the sub-agent's own result.
+	Requests int
+	// ToolCalls counts the tool executions the run attempted — rejected
+	// calls included, because the tool ran; unknown-tool requests,
+	// deferred calls, and interrupted output-tool co-emissions do not
+	// count. An approved deferred call's re-run on resume does.
+	ToolCalls int
 	// Pending is non-nil when the run paused awaiting deferred tool
 	// calls; see DeferredRequests for the resolution contract.
 	Pending *DeferredRequests
@@ -582,12 +593,15 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
 		}
 		if len(outcome.Pending) > 0 {
-			return Result[Output]{Messages: outcome.Messages, Usage: usage, Pending: deferredRequests(outcome.Pending)}, nil
+			return Result[Output]{Messages: outcome.Messages, Usage: usage,
+				Requests: modelCalls, ToolCalls: toolExecutions,
+				Pending: deferredRequests(outcome.Pending)}, nil
 		}
 
 		output, err := a.decoder.Decode(ctx, outcome.Response)
 		if err == nil {
-			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response), Usage: usage}, nil
+			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response),
+				Usage: usage, Requests: modelCalls, ToolCalls: toolExecutions}, nil
 		}
 		var rejection *model.ModelRetry
 		if !errors.As(err, &rejection) || attempt >= a.outputRetries {

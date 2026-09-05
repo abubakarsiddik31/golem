@@ -35,6 +35,13 @@ attempts included, and a tool execution is one tool run — rejected calls
 count, because the tool ran; unknown-tool requests and interrupted
 output-tool co-emissions do not.
 
+The run surfaces those counts on every result, successful or not:
+`Result.Requests` and `Result.ToolCalls` carry the same numbers the
+limit checks and `RunError.Partial` preserves, so a cost ledger reads
+them off the result instead of inferring activity from messages. The
+counts cover one run only — a delegated sub-agent's activity stays in
+the sub-agent's own result (see the agent delegation guide).
+
 ## Example
 
 See `ExampleWithUsageLimit` in package docs:
@@ -44,11 +51,13 @@ agent, _ := golem.New[struct{}, string](client, decoder,
     golem.WithUsageLimit[struct{}, string](golem.UsageLimit{TotalTokens: 10_000}),
 )
 
-_, err := agent.Run(ctx, runCtx, prompt)
+result, err := agent.Run(ctx, runCtx, prompt)
 var usageErr *golem.UsageLimitError
 if errors.As(err, &usageErr) {
     // stop, alert, or degrade — the run did not finish
 }
+log.Printf("run used %d input and %d output tokens across %d requests and %d tool calls",
+    result.Usage.InputTokens, result.Usage.OutputTokens, result.Requests, result.ToolCalls)
 ```
 
 ## API surface
@@ -57,6 +66,10 @@ if errors.As(err, &usageErr) {
 - `golem.UsageLimit{InputTokens, OutputTokens, TotalTokens, Requests, ToolCalls int}`
 - `golem.UsageLimitError{Kind, Limit, Actual}` via `RunError{Stage: StageUsage}`
 - `golem.StageUsage`
+- `golem.Result.Requests`, `golem.Result.ToolCalls` — the counts a
+  successful (or paused) run performed, shared with the limit's
+  accounting; `golem.PartialResult.Requests`, `golem.PartialResult.ToolCalls`
+  on failure
 
 ## Gotchas
 
