@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.7.3 — 2026-09-06
+
+This patch completes run evidence on the success path: a finished run
+now reports what it did and why the model stopped, matching what
+failures already preserved.
 
 ### Added
 
