@@ -104,6 +104,8 @@ type streamAssembler struct {
 	calls   []model.ToolCall
 	args    []strings.Builder
 	usage   model.Usage
+	// finish keeps the terminal cause carried by the final choice chunk.
+	finish model.FinishReason
 	// thinking accumulates reasoning fragments from endpoints that return
 	// a reasoning_content field on deltas.
 	thinking strings.Builder
@@ -125,6 +127,9 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	}
 	if len(chunk.Choices) == 0 {
 		return nil
+	}
+	if reason := chunk.Choices[0].FinishReason; reason != "" {
+		a.finish = finishReason(reason)
 	}
 
 	var delta model.Delta
@@ -193,6 +198,7 @@ func (a *streamAssembler) response() model.Response {
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
-		Usage: a.usage,
+		Usage:        a.usage,
+		FinishReason: a.finish,
 	}
 }

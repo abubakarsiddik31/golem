@@ -58,6 +58,10 @@ type PartialResult struct {
 	Messages []model.Message
 	// Usage sums the provider-reported consumption of completed turns.
 	Usage model.Usage
+	// FinishReason is the provider's terminal cause of the last
+	// completed model turn — FinishLength, for example, when a
+	// truncated turn is what made the output undecodable.
+	FinishReason model.FinishReason
 	// Requests counts model calls the run made, failed attempts included.
 	Requests int
 	// ToolCalls counts tool executions the run attempted.

@@ -193,10 +193,42 @@ type Usage struct {
 	OutputTokens int
 }
 
+// FinishReason is the provider's normalized terminal cause for one model
+// response: why the model stopped generating. Adapters translate their
+// provider's wire vocabulary onto the shared constants — each adapter's
+// documentation pins the translation — and an undocumented value maps to
+// FinishOther. The zero value means the provider reported nothing.
+type FinishReason string
+
+const (
+	// FinishStop is a natural completion, or a stop sequence: the model
+	// produced a full answer.
+	FinishStop FinishReason = "stop"
+	// FinishLength is a truncation: the response hit the output token or
+	// length cap before finishing. Content may be cut off mid-sentence —
+	// or mid-JSON, which the decoder then rejects.
+	FinishLength FinishReason = "length"
+	// FinishToolCall is a turn that ended because the model requested
+	// tool calls.
+	FinishToolCall FinishReason = "tool_call"
+	// FinishContentFilter is a stop forced by the provider's safety
+	// systems: content filters, guardrails, refusal, or blocked-content
+	// categories. The response may still carry refusal or partial text.
+	FinishContentFilter FinishReason = "content_filter"
+	// FinishOther is a terminal cause outside the shared vocabulary,
+	// preserved so an unrecognized provider value is still visible as
+	// "not stop".
+	FinishOther FinishReason = "other"
+)
+
 // Response is a normalized generation response.
 type Response struct {
 	Message Message
 	Usage   Usage
+	// FinishReason is the provider's terminal cause for this response;
+	// empty when the provider reported none. Fakes that do not set it
+	// leave it empty by design.
+	FinishReason FinishReason
 }
 
 // Model generates a single assistant response for a normalized request.

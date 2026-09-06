@@ -428,6 +428,13 @@ type Result[Output any] struct {
 	Output   Output
 	Messages []model.Message
 	Usage    model.Usage
+	// FinishReason is the provider's terminal cause of the final model
+	// turn: FinishStop for an answered run, FinishToolCall when the run
+	// ended on tool calls (a paused run, or an output-tool run, both of
+	// which the provider saw as tool requests), FinishLength when the
+	// provider truncated the turn. Empty when the model reported no
+	// cause.
+	FinishReason model.FinishReason
 	// Requests counts the model calls the run made, retried and failed
 	// attempts included — the same count UsageLimit.Requests bounds and
 	// RunError.Partial preserves on failure, so a cost ledger never has
@@ -582,7 +589,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			usage.OutputTokens += outcome.Usage.OutputTokens
 			modelCalls += outcome.ModelCalls
 			toolExecutions += outcome.ToolExecutions
-			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions))
+			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage,
+				outcome.FinishReason, modelCalls, toolExecutions))
 		}
 		usage.InputTokens += outcome.Usage.InputTokens
 		usage.OutputTokens += outcome.Usage.OutputTokens
@@ -590,10 +598,10 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		toolExecutions += outcome.ToolExecutions
 		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
 			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
+				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions)}
 		}
 		if len(outcome.Pending) > 0 {
-			return Result[Output]{Messages: outcome.Messages, Usage: usage,
+			return Result[Output]{Messages: outcome.Messages, Usage: usage, FinishReason: outcome.FinishReason,
 				Requests: modelCalls, ToolCalls: toolExecutions,
 				Pending: deferredRequests(outcome.Pending)}, nil
 		}
@@ -601,7 +609,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		output, err := a.decoder.Decode(ctx, outcome.Response)
 		if err == nil {
 			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response),
-				Usage: usage, Requests: modelCalls, ToolCalls: toolExecutions}, nil
+				Usage: usage, FinishReason: outcome.FinishReason,
+				Requests: modelCalls, ToolCalls: toolExecutions}, nil
 		}
 		var rejection *model.ModelRetry
 		if !errors.As(err, &rejection) || attempt >= a.outputRetries {
@@ -609,7 +618,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
 			}
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, modelCalls, toolExecutions)}
+				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions)}
 		}
 		if emit != nil {
 			emit(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
@@ -753,11 +762,11 @@ func classifyRunError(err error, partial *PartialResult) error {
 // the run produced nothing worth preserving: no model turn completed,
 // no usage was reported, and no tool executed — a lone failed provider
 // attempt is not evidence.
-func partialEvidence(messages []model.Message, usage model.Usage, requests, toolCalls int) *PartialResult {
+func partialEvidence(messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int) *PartialResult {
 	if toolCalls == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && !hasAssistantTurn(messages) {
 		return nil
 	}
-	return &PartialResult{Messages: messages, Usage: usage, Requests: requests, ToolCalls: toolCalls}
+	return &PartialResult{Messages: messages, Usage: usage, FinishReason: finish, Requests: requests, ToolCalls: toolCalls}
 }
 
 // hasAssistantTurn reports whether any completed model turn is in the

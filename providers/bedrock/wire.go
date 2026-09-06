@@ -320,5 +320,27 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			InputTokens:  wire.Usage.InputTokens,
 			OutputTokens: wire.Usage.OutputTokens,
 		},
+		FinishReason: finishReason(wire.StopReason),
 	}, nil
+}
+
+// finishReason translates the Converse API stopReason vocabulary onto the
+// shared model constants. end_turn and a hit stop sequence are a natural
+// completion; guardrail and content-filter interventions are safety
+// stops.
+func finishReason(reason string) model.FinishReason {
+	switch reason {
+	case "end_turn", "stop_sequence":
+		return model.FinishStop
+	case "max_tokens":
+		return model.FinishLength
+	case "tool_use":
+		return model.FinishToolCall
+	case "guardrail_intervened", "content_filtered":
+		return model.FinishContentFilter
+	case "":
+		return ""
+	default:
+		return model.FinishOther
+	}
 }

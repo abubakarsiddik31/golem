@@ -105,6 +105,29 @@ type chatResponse struct {
 
 type chatChoice struct {
 	Message chatMessage `json:"message"`
+	// FinishReason is the provider's terminal cause: stop, length,
+	// tool_calls, function_call (legacy), or content_filter.
+	FinishReason string `json:"finish_reason"`
+}
+
+// finishReason translates the chat-completions finish_reason vocabulary
+// onto the shared model constants: stop and its legacy function-call
+// sibling are a tool request, everything undocumented is FinishOther.
+func finishReason(reason string) model.FinishReason {
+	switch reason {
+	case "stop":
+		return model.FinishStop
+	case "length":
+		return model.FinishLength
+	case "tool_calls", "function_call":
+		return model.FinishToolCall
+	case "content_filter":
+		return model.FinishContentFilter
+	case "":
+		return ""
+	default:
+		return model.FinishOther
+	}
 }
 
 type chatUsage struct {
@@ -121,6 +144,8 @@ type chatChunk struct {
 
 type chatChunkChoice struct {
 	Delta chatDeltaMessage `json:"delta"`
+	// FinishReason terminates the stream on the final choice chunk.
+	FinishReason string `json:"finish_reason"`
 }
 
 type chatDeltaMessage struct {
@@ -294,5 +319,6 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			InputTokens:  wire.Usage.PromptTokens,
 			OutputTokens: wire.Usage.CompletionTokens,
 		},
+		FinishReason: finishReason(wire.Choices[0].FinishReason),
 	}, nil
 }

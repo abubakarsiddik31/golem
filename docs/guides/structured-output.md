@@ -96,4 +96,7 @@ agent, _ := golem.New[struct{}, City](client, golem.DecodeJSON[City](),
 - In tool mode the first output-tool call ends the run: co-emitted tool
   calls are not executed, and the output-tool name must not collide with a
   registered tool.
+- A decode failure caused by a truncated response is diagnosable:
+  `RunError.Partial.FinishReason` of `length` names the provider's
+  output cap as the cause, not a model mistake.
 - Decisions live in `docs/adr/0010-output-schema.md`.
