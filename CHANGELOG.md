@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Prompt caching (Anthropic, Bedrock).** The adapters expose prompt
+  caching where the provider offers control, with a shared shape:
+  `anthropic.Config.CacheControl` sends Anthropic's automatic-caching
+  parameter (breakpoint on the last cacheable block, moving forward as
+  the conversation grows), and `bedrock.Config.CacheControl` places an
+  explicit `cachePoint` checkpoint at each request's conversation
+  frontier on Bedrock. A zero TTL selects the five-minute default on
+  both; `anthropic.CacheOneHour` / `bedrock.CacheOneHour` ask for the
+  one-hour entry. OpenAI, Azure, and Gemini cache implicitly with
+  nothing to send. Cache hits and writes stay visible on the usage
+  detail fields, so a run reports what caching saved.
+
 - **Usage detail.** `model.Usage` gains provider-reported
   `CacheReadTokens`, `CacheWriteTokens`, and `ReasoningTokens` beside
   the token totals, captured from every adapter on streamed and plain

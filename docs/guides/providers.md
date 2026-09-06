@@ -41,6 +41,36 @@ onto `model.FinishReason` — identical on streamed and plain runs:
 | Bedrock | `stopReason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `guardrail_intervened`, `content_filtered` |
 | Gemini | `finishReason` | `STOP` | `MAX_TOKENS` | — | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` |
 
+## Prompt caching
+
+Every provider can serve a repeated prompt prefix from cache instead of
+re-processing it; the adapters expose the control where the provider
+offers one, and every adapter reports the outcome on `model.Usage`'s
+cache token fields, so a run can compute what caching saved.
+
+- **Anthropic** — `anthropic.Config.CacheControl` requests the
+  provider's automatic caching: a top-level `cache_control` field, and
+  the provider applies the breakpoint to the last cacheable block of
+  each request, moving it forward as the conversation grows. A zero TTL
+  selects the five-minute default; `anthropic.CacheOneHour` asks for
+  the one-hour entry at a premium. Anthropic-compatible gateways
+  reached through `BaseURL` may not support the parameter — the
+  provider's own API does.
+- **Bedrock** — `bedrock.Config.CacheControl` places an explicit
+  `cachePoint` checkpoint at each request's conversation frontier, so
+  the prefix it covers — tool declarations, system guidance, and
+  history — is cached and re-read on later requests. TTL semantics are
+  the same (`bedrock.CacheOneHour` where the model supports it), and
+  Anthropic models on Bedrock also cache implicitly without any
+  opt-in.
+- **OpenAI and Azure** — caching is automatic for eligible prefixes
+  (about a thousand tokens and up); there is nothing to send, and the
+  cached share arrives on `Usage.CacheReadTokens`.
+- **Gemini** — caching is implicit for current models; nothing to
+  send, and `Usage.CacheReadTokens` reports hits. The explicit
+  context-caching API (a separate cached-content resource with its own
+  lifecycle) stays out of scope.
+
 Usage carries detail where providers break it out, normalized onto
 three `model.Usage` fields beside the token totals:
 
@@ -114,7 +144,8 @@ focusedClient, _ := openai.New(openai.Config{
 ## API surface
 
 - `openai.New(openai.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
-- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, HTTPClient})`
+- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, Effort, CacheControl, HTTPClient})`
+- `anthropic.CacheControl{TTL}` — automatic prompt caching; `anthropic.CacheOneHour`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
 - `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, HTTPClient})`
