@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.7.4 — 2026-09-06
+
+This patch makes cache economics first-class: a run reports the
+provider's token breakdown, and the adapters expose prompt caching
+where the provider offers control, so applications can see — and
+shape — what caching saves.
 
 ### Added
 

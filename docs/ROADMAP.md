@@ -7,17 +7,15 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.7.3 — the run reports its own evidence on success: the result
-carries the model requests and tool executions it performed (the same
-counts the usage limit enforces and failures preserve as
-`RunError.Partial`), so a cost ledger reads numbers instead of
-inferring them from messages, and every response carries the
-provider's finish reason, normalized across the five adapters
-(`model.FinishReason`), so a run truncated by the output cap — or
-stopped by a safety system — is visible as such everywhere, including
-through `RunError.Partial` when truncation is what made output fail to
-decode.
-On the v0.7.0/v0.7.1/v0.7.2 foundations — failures keeping their evidence via
+v0.7.4 — cache economics are first-class: `model.Usage` carries the
+provider's cache-read, cache-write, and reasoning token breakdown
+beside the totals (summed across turns like the rest), and the
+adapters expose prompt caching where the provider offers control —
+`anthropic.Config.CacheControl` and `bedrock.Config.CacheControl` —
+while OpenAI, Azure, and Gemini cache implicitly with hits reported
+the same way. A cost ledger can now read a run's activity, finish
+reason, and priced token detail straight off the result.
+On the v0.7.0–v0.7.3 foundations — failures keeping their evidence via
 `RunError.Partial`, reasoning as first-class evidence with provider
 signatures, tools that pause for human approval or external results,
 local runtimes through a base URL, composition and control (agent
@@ -25,7 +23,7 @@ delegation, run events, request tuning), the common tools, the MCP
 client over stdio and streamable HTTP, and streaming on every adapter —
 the core execution contract is complete for single-agent applications.
 
-## Toward v0.7.4 — embeddings
+## Toward v0.7.5 — embeddings
 
 Verified against real usage — a RAG application built on Golem. The
 item lands as its own PR and is dogfooded before the freeze.
