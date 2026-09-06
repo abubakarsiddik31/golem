@@ -188,9 +188,27 @@ type Request struct {
 
 // Usage reports provider-recorded consumption for a generation. A missing
 // value is represented by zeroes when a provider does not expose usage.
+// The detail fields are provider-reported figures beside the totals, not
+// summed into them: providers disagree on whether cached tokens are a
+// subset of the input total or reported exclusively, so a cost ledger
+// combines them per provider (the providers guide carries the table).
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	// CacheReadTokens is input tokens served from the provider's prompt
+	// cache — a discount on input cost. OpenAI-compatible APIs and
+	// Gemini report it inside InputTokens; Anthropic and Bedrock report
+	// it beside.
+	CacheReadTokens int
+	// CacheWriteTokens is input tokens written to the prompt cache this
+	// turn — a premium on input cost where reported (Anthropic, Bedrock).
+	// OpenAI-compatible APIs and Gemini cache implicitly and report no
+	// write figure.
+	CacheWriteTokens int
+	// ReasoningTokens is output tokens the model spent reasoning before
+	// its visible answer, where the provider breaks them out; they are
+	// part of the billed output.
+	ReasoningTokens int
 }
 
 // FinishReason is the provider's normalized terminal cause for one model

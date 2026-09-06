@@ -172,6 +172,8 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	case "message_start":
 		a.usage.InputTokens = event.Message.Usage.InputTokens
 		a.usage.OutputTokens = event.Message.Usage.OutputTokens
+		a.usage.CacheReadTokens = event.Message.Usage.CacheReadTokens
+		a.usage.CacheWriteTokens = event.Message.Usage.CacheCreationTokens
 	case "content_block_start":
 		if event.ContentBlock == nil {
 			return false, nil

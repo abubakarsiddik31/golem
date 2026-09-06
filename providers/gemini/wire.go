@@ -146,6 +146,10 @@ func finishReason(reason string) model.FinishReason {
 type wireUsageMeta struct {
 	PromptTokens     int `json:"promptTokenCount"`
 	CandidatesTokens int `json:"candidatesTokenCount"`
+	// CachedContent is a subset of PromptTokens; thoughts are part of
+	// the billed output.
+	CachedContent int `json:"cachedContentTokenCount"`
+	ThoughtTokens int `json:"thoughtsTokenCount"`
 }
 
 // toWireContents converts normalized messages into GenerateContent turns.
@@ -327,8 +331,10 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 			Thinking:  thinking,
 		},
 		Usage: model.Usage{
-			InputTokens:  wire.Usage.PromptTokens,
-			OutputTokens: wire.Usage.CandidatesTokens,
+			InputTokens:     wire.Usage.PromptTokens,
+			OutputTokens:    wire.Usage.CandidatesTokens,
+			CacheReadTokens: wire.Usage.CachedContent,
+			ReasoningTokens: wire.Usage.ThoughtTokens,
 		},
 		FinishReason: finishReason(wire.Candidates[0].FinishReason),
 	}, nil

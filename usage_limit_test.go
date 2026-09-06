@@ -119,3 +119,31 @@ func TestAgentRunWithoutUsageLimitIsUnbounded(t *testing.T) {
 		t.Fatalf("Run() error = %v, want success without a configured limit", err)
 	}
 }
+
+func TestUsageDetailAccumulatesAcrossRounds(t *testing.T) {
+	t.Parallel()
+
+	// Cache and reasoning detail sum across turns exactly like the token
+	// totals, correction rounds included.
+	client := &queuedModel{responses: []model.Response{
+		{Message: model.Message{Role: model.RoleAssistant, Content: "no"},
+			Usage: model.Usage{InputTokens: 4, OutputTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 1, ReasoningTokens: 2}},
+		{Message: model.Message{Role: model.RoleAssistant, Content: "yes"},
+			Usage: model.Usage{InputTokens: 4, OutputTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 1, ReasoningTokens: 2}},
+	}}
+	agent, err := golem.New[struct{}, string](client, strictDecoder("yes"),
+		golem.WithOutputRetries[struct{}, string](1),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "answer")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := model.Usage{InputTokens: 8, OutputTokens: 4, CacheReadTokens: 6, CacheWriteTokens: 2, ReasoningTokens: 4}
+	if result.Usage != want {
+		t.Fatalf("usage = %#v, want %#v summed across rounds", result.Usage, want)
+	}
+}

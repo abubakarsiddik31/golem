@@ -120,10 +120,7 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		return &DecodeError{Stage: "decode stream chunk", Err: err}
 	}
 	if chunk.Usage != nil {
-		a.usage = model.Usage{
-			InputTokens:  chunk.Usage.PromptTokens,
-			OutputTokens: chunk.Usage.CompletionTokens,
-		}
+		a.usage = usageWithDetails(*chunk.Usage)
 	}
 	if len(chunk.Choices) == 0 {
 		return nil

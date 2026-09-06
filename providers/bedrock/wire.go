@@ -149,6 +149,8 @@ type converseResponse struct {
 	Usage      struct {
 		InputTokens  int `json:"inputTokens"`
 		OutputTokens int `json:"outputTokens"`
+		CacheRead    int `json:"cacheReadInputTokens"`
+		CacheWrite   int `json:"cacheWriteInputTokens"`
 	} `json:"usage"`
 }
 
@@ -317,8 +319,10 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Thinking:  thinking,
 		},
 		Usage: model.Usage{
-			InputTokens:  wire.Usage.InputTokens,
-			OutputTokens: wire.Usage.OutputTokens,
+			InputTokens:      wire.Usage.InputTokens,
+			OutputTokens:     wire.Usage.OutputTokens,
+			CacheReadTokens:  wire.Usage.CacheRead,
+			CacheWriteTokens: wire.Usage.CacheWrite,
 		},
 		FinishReason: finishReason(wire.StopReason),
 	}, nil

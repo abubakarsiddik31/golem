@@ -41,6 +41,22 @@ onto `model.FinishReason` — identical on streamed and plain runs:
 | Bedrock | `stopReason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `guardrail_intervened`, `content_filtered` |
 | Gemini | `finishReason` | `STOP` | `MAX_TOKENS` | — | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` |
 
+Usage carries detail where providers break it out, normalized onto
+three `model.Usage` fields beside the token totals:
+
+| Adapter | `CacheReadTokens` | `CacheWriteTokens` | `ReasoningTokens` |
+| --- | --- | --- | --- |
+| OpenAI / Azure | `prompt_tokens_details.cached_tokens` — inside input | — (implicit caching) | `completion_tokens_details.reasoning_tokens` — inside output |
+| Anthropic | `cache_read_input_tokens` — beside input | `cache_creation_input_tokens` — beside input | — |
+| Bedrock | `cacheReadInputTokens` — beside input | `cacheWriteInputTokens` — beside input | — |
+| Gemini | `cachedContentTokenCount` — inside input | — (implicit caching) | `thoughtsTokenCount` — inside output |
+
+"Inside" and "beside" matter for pricing: a subset of the input total
+discounts part of it, an exclusive figure replaces it. Detail fields
+are zero when a provider (or a proxied endpoint) does not report them,
+and streamed runs carry the same figures as plain ones — every adapter
+reports streamed usage through its terminal chunk or event.
+
 Unlisted values — Anthropic's `pause_turn`, Gemini's
 `MALFORMED_FUNCTION_CALL`, anything a provider adds later — map to
 `FinishOther`, and a missing field maps to the empty `FinishReason`;

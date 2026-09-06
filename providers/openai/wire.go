@@ -134,6 +134,27 @@ func finishReason(reason string) model.FinishReason {
 type chatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// Cached tokens are a subset of PromptTokens; reasoning tokens are a
+	// subset of CompletionTokens.
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+// detailUsage lifts the optional detail objects into the normalized
+// usage: cached input from prompt_tokens_details, reasoning output from
+// completion_tokens_details.
+func (u chatUsage) detailUsage() (cacheRead, reasoning int) {
+	if u.PromptTokensDetails != nil {
+		cacheRead = u.PromptTokensDetails.CachedTokens
+	}
+	if u.CompletionTokensDetails != nil {
+		reasoning = u.CompletionTokensDetails.ReasoningTokens
+	}
+	return cacheRead, reasoning
 }
 
 // chatChunk is one streamed SSE chunk: a delta for the first
@@ -319,10 +340,19 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
-		Usage: model.Usage{
-			InputTokens:  wire.Usage.PromptTokens,
-			OutputTokens: wire.Usage.CompletionTokens,
-		},
+		Usage:        usageWithDetails(wire.Usage),
 		FinishReason: finishReason(wire.Choices[0].FinishReason),
 	}, nil
+}
+
+// usageWithDetails translates the totals plus their optional detail
+// objects into the normalized usage.
+func usageWithDetails(u chatUsage) model.Usage {
+	cacheRead, reasoning := u.detailUsage()
+	return model.Usage{
+		InputTokens:     u.PromptTokens,
+		OutputTokens:    u.CompletionTokens,
+		CacheReadTokens: cacheRead,
+		ReasoningTokens: reasoning,
+	}
 }
