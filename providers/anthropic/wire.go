@@ -29,8 +29,32 @@ type messagesRequest struct {
 	// OutputConfig requests provider-enforced output structure; set for
 	// structured output.
 	OutputConfig *wireOutputConfig `json:"output_config,omitempty"`
+	// CacheControl asks the provider for automatic prompt caching: the
+	// cache breakpoint lands on the last cacheable block and moves
+	// forward as the conversation grows.
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 	// Stream selects streaming mode.
 	Stream bool `json:"stream,omitempty"`
+}
+
+// wireCacheControl is the automatic prompt-caching request: an ephemeral
+// entry with the provider's default TTL, or the explicit one-hour value.
+type wireCacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+// cacheControlOnWire maps the configured cache control onto the wire;
+// nil stays off the wire.
+func cacheControlOnWire(cc *CacheControl) *wireCacheControl {
+	if cc == nil {
+		return nil
+	}
+	wire := &wireCacheControl{Type: "ephemeral"}
+	if cc.TTL == CacheOneHour {
+		wire.TTL = "1h"
+	}
+	return wire
 }
 
 // wireThinking is the thinking configuration: adaptive lets the model

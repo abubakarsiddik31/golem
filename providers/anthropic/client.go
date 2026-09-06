@@ -57,10 +57,45 @@ type Config struct {
 	// "medium", "high", or "xhigh"; empty leaves the provider default. It
 	// applies with adaptive thinking and on its own.
 	Effort string
+	// CacheControl enables the provider's automatic prompt caching: the
+	// provider applies a cache breakpoint to the last cacheable block of
+	// each request and moves it forward as the conversation grows, so a
+	// shared prefix — instructions, tools, history — is read from cache
+	// instead of re-billed. Nil (the default) sends no cache_control
+	// field. Hits and writes surface on model.Usage's cache token
+	// fields. Anthropic-compatible gateways reached through BaseURL may
+	// not support the automatic-caching parameter; the provider's own
+	// API does.
+	CacheControl *CacheControl
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+}
+
+// CacheControl configures automatic prompt caching. Cache entries
+// normally live five minutes, refreshed on every use; one hour is
+// available at a premium.
+type CacheControl struct {
+	// TTL bounds the cache entry's lifetime. Zero selects the provider's
+	// five-minute default; CacheOneHour asks for the one-hour entry.
+	// Any other value fails New.
+	TTL time.Duration
+}
+
+// CacheOneHour asks automatic prompt caching for a one-hour cache entry.
+const CacheOneHour = time.Hour
+
+// validateCacheControl checks the TTL against the provider's documented
+// values: the five-minute default and the one-hour entry.
+func validateCacheControl(cc *CacheControl) error {
+	if cc == nil {
+		return nil
+	}
+	if cc.TTL != 0 && cc.TTL != 5*time.Minute && cc.TTL != CacheOneHour {
+		return fmt.Errorf("anthropic: unsupported cache TTL %s (documented values: the five-minute default and %s)", cc.TTL, CacheOneHour)
+	}
+	return nil
 }
 
 // ThinkingConfig requests reasoning from Anthropic models. Exactly one
@@ -114,6 +149,9 @@ func New(cfg Config) (*Client, error) {
 		cfg.MaxTokens = DefaultMaxTokens
 	}
 	if err := validateSampling(cfg.Temperature, cfg.TopP); err != nil {
+		return nil, err
+	}
+	if err := validateCacheControl(cfg.CacheControl); err != nil {
 		return nil, err
 	}
 	if cfg.Thinking != nil {
@@ -180,6 +218,7 @@ func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Reque
 		TopP:         c.cfg.TopP,
 		Thinking:     thinkingOnWire(c.cfg.Thinking),
 		Effort:       c.cfg.Effort,
+		CacheControl: cacheControlOnWire(c.cfg.CacheControl),
 		OutputConfig: outputConfig,
 		Stream:       stream,
 	})

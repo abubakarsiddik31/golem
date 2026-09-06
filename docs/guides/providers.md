@@ -41,6 +41,17 @@ onto `model.FinishReason` — identical on streamed and plain runs:
 | Bedrock | `stopReason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `guardrail_intervened`, `content_filtered` |
 | Gemini | `finishReason` | `STOP` | `MAX_TOKENS` | — | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` |
 
+The Anthropic adapter can request the provider's automatic prompt
+caching with `anthropic.Config.CacheControl`: the provider applies a
+cache breakpoint to the last cacheable block of each request and moves
+it forward as the conversation grows, so instructions, tools, and
+history are read from cache instead of re-billed on every turn. A zero
+TTL selects the five-minute default; `anthropic.CacheOneHour` asks for
+the one-hour entry at a premium. Hits and writes are visible on
+`model.Usage`'s cache token fields, so a run can report what caching
+saved. Anthropic-compatible gateways reached through `BaseURL` may not
+support the automatic-caching parameter — the provider's own API does.
+
 Usage carries detail where providers break it out, normalized onto
 three `model.Usage` fields beside the token totals:
 
@@ -114,7 +125,8 @@ focusedClient, _ := openai.New(openai.Config{
 ## API surface
 
 - `openai.New(openai.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
-- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, HTTPClient})`
+- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, Effort, CacheControl, HTTPClient})`
+- `anthropic.CacheControl{TTL}` — automatic prompt caching; `anthropic.CacheOneHour`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
 - `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, HTTPClient})`

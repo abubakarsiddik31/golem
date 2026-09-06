@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Automatic prompt caching (Anthropic).** `anthropic.Config.CacheControl`
+  enables the provider's automatic caching: a cache breakpoint rides the
+  last cacheable block of every request and moves forward as the
+  conversation grows, so shared prefixes — instructions, tools, history —
+  are read from cache instead of re-billed each turn. Zero TTL selects
+  the five-minute default; `anthropic.CacheOneHour` asks for the
+  one-hour entry. Cache hits and writes stay visible on the usage
+  detail fields from the same release, so a run reports what caching
+  saved.
+
 - **Usage detail.** `model.Usage` gains provider-reported
   `CacheReadTokens`, `CacheWriteTokens`, and `ReasoningTokens` beside
   the token totals, captured from every adapter on streamed and plain
