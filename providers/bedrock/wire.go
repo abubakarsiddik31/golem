@@ -44,6 +44,9 @@ type wireBlock struct {
 	ToolUse *wireToolUse `json:"toolUse,omitempty"`
 	// ToolResult carries the execution outcome back.
 	ToolResult *wireToolResult `json:"toolResult,omitempty"`
+	// CachePoint marks a prompt-cache checkpoint: the provider caches the
+	// request prefix up to and including this block.
+	CachePoint *wireCachePoint `json:"cachePoint,omitempty"`
 	// Image carries an inline image block; see wireImage for the formats
 	// Converse accepts.
 	Image *wireImage `json:"image,omitempty"`
@@ -92,6 +95,14 @@ type wireTextOnly struct {
 
 type wireSystem struct {
 	Text string `json:"text"`
+}
+
+// wireCachePoint is an explicit prompt-cache checkpoint. Type is always
+// "default"; the TTL selects the five-minute default or the one-hour
+// entry where the model supports it.
+type wireCachePoint struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 type wireToolConfig struct {

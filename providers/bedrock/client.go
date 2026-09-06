@@ -61,10 +61,43 @@ type Config struct {
 	// https://bedrock-runtime.{Region}.amazonaws.com. Point it at a
 	// proxy or LocalStack-style emulator when needed.
 	BaseURL string
+	// CacheControl enables explicit prompt caching: each request's
+	// conversation prefix — tool declarations, system guidance, and
+	// history up to the frontier — carries a cache checkpoint, so later
+	// requests with the same prefix read it from cache instead of
+	// re-processing it. Nil (the default) sends no checkpoint. Cache
+	// hits and writes surface on model.Usage's cache token fields.
+	// Implicit caching needs no opt-in and is unaffected.
+	CacheControl *CacheControl
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+}
+
+// CacheControl configures explicit prompt caching. Entries live five
+// minutes by default, refreshed on every use; one hour is available on
+// models that support it.
+type CacheControl struct {
+	// TTL bounds the cache entry's lifetime. Zero selects the provider's
+	// five-minute default; CacheOneHour asks for the one-hour entry. Any
+	// other value fails New.
+	TTL time.Duration
+}
+
+// CacheOneHour asks explicit prompt caching for a one-hour cache entry.
+const CacheOneHour = time.Hour
+
+// validateCacheControl checks the TTL against the provider's documented
+// values: the five-minute default and the one-hour entry.
+func validateCacheControl(cc *CacheControl) error {
+	if cc == nil {
+		return nil
+	}
+	if cc.TTL != 0 && cc.TTL != 5*time.Minute && cc.TTL != CacheOneHour {
+		return fmt.Errorf("bedrock: unsupported cache TTL %s (documented values: the five-minute default and %s)", cc.TTL, CacheOneHour)
+	}
+	return nil
 }
 
 // Client generates responses through the Bedrock Runtime Converse API. It
@@ -98,6 +131,9 @@ func New(cfg Config) (*Client, error) {
 		if err := cfg.Thinking.validate(); err != nil {
 			return nil, err
 		}
+	}
+	if err := validateCacheControl(cfg.CacheControl); err != nil {
+		return nil, err
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com", cfg.Region)
@@ -144,6 +180,18 @@ func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Reque
 	system, turns, err := toWireMessages(request.Messages)
 	if err != nil {
 		return nil, err
+	}
+	if c.cfg.CacheControl != nil && len(turns) > 0 {
+		// One checkpoint at the conversation frontier: the prefix it
+		// covers includes the tool declarations and system guidance, so
+		// a later request re-reading the prefix skips re-processing all
+		// of it. New rejects unsupported TTLs.
+		ttl := ""
+		if c.cfg.CacheControl.TTL == CacheOneHour {
+			ttl = "1h"
+		}
+		last := &turns[len(turns)-1]
+		last.Content = append(last.Content, wireBlock{CachePoint: &wireCachePoint{Type: "default", TTL: ttl}})
 	}
 	var inferenceConfig *wireInference
 	if c.cfg.MaxTokens > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil {
