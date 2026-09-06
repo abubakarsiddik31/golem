@@ -339,6 +339,9 @@ func execute[Deps any](
 		messages = append(messages, response.Message)
 		usage.InputTokens += response.Usage.InputTokens
 		usage.OutputTokens += response.Usage.OutputTokens
+		usage.CacheReadTokens += response.Usage.CacheReadTokens
+		usage.CacheWriteTokens += response.Usage.CacheWriteTokens
+		usage.ReasoningTokens += response.Usage.ReasoningTokens
 
 		if len(response.Message.ToolCalls) == 0 {
 			return Outcome{Response: response, Messages: messages, Usage: usage,

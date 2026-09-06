@@ -126,6 +126,8 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CandidatesTokens > 0 {
 		a.usage.InputTokens = chunk.Usage.PromptTokens
 		a.usage.OutputTokens = chunk.Usage.CandidatesTokens
+		a.usage.CacheReadTokens = chunk.Usage.CachedContent
+		a.usage.ReasoningTokens = chunk.Usage.ThoughtTokens
 	}
 	if len(chunk.Candidates) == 0 {
 		return nil

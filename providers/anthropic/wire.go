@@ -142,6 +142,9 @@ func finishReason(reason string) model.FinishReason {
 type wireUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Cache tokens are reported exclusively of InputTokens.
+	CacheReadTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationTokens int `json:"cache_creation_input_tokens"`
 }
 
 // toWireTurns converts normalized messages into Messages API turns.
@@ -303,8 +306,10 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Thinking:  thinking,
 		},
 		Usage: model.Usage{
-			InputTokens:  wire.Usage.InputTokens,
-			OutputTokens: wire.Usage.OutputTokens,
+			InputTokens:      wire.Usage.InputTokens,
+			OutputTokens:     wire.Usage.OutputTokens,
+			CacheReadTokens:  wire.Usage.CacheReadTokens,
+			CacheWriteTokens: wire.Usage.CacheCreationTokens,
 		},
 		FinishReason: finishReason(wire.StopReason),
 	}, nil

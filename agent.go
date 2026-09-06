@@ -585,15 +585,13 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit)
 		}
 		if err != nil {
-			usage.InputTokens += outcome.Usage.InputTokens
-			usage.OutputTokens += outcome.Usage.OutputTokens
+			addUsage(&usage, outcome.Usage)
 			modelCalls += outcome.ModelCalls
 			toolExecutions += outcome.ToolExecutions
 			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage,
 				outcome.FinishReason, modelCalls, toolExecutions))
 		}
-		usage.InputTokens += outcome.Usage.InputTokens
-		usage.OutputTokens += outcome.Usage.OutputTokens
+		addUsage(&usage, outcome.Usage)
 		modelCalls += outcome.ModelCalls
 		toolExecutions += outcome.ToolExecutions
 		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
@@ -762,6 +760,16 @@ func classifyRunError(err error, partial *PartialResult) error {
 // the run produced nothing worth preserving: no model turn completed,
 // no usage was reported, and no tool executed — a lone failed provider
 // attempt is not evidence.
+// addUsage sums one turn's provider-reported consumption into the run's
+// cumulative usage, detail fields included.
+func addUsage(dst *model.Usage, src model.Usage) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.CacheReadTokens += src.CacheReadTokens
+	dst.CacheWriteTokens += src.CacheWriteTokens
+	dst.ReasoningTokens += src.ReasoningTokens
+}
+
 func partialEvidence(messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int) *PartialResult {
 	if toolCalls == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && !hasAssistantTurn(messages) {
 		return nil

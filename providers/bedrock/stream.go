@@ -89,6 +89,8 @@ type streamMetadata struct {
 	Usage struct {
 		InputTokens  int `json:"inputTokens"`
 		OutputTokens int `json:"outputTokens"`
+		CacheRead    int `json:"cacheReadInputTokens"`
+		CacheWrite   int `json:"cacheWriteInputTokens"`
 	} `json:"usage"`
 }
 
@@ -224,8 +226,10 @@ func readConverseStream(body io.Reader, onDelta func(model.Delta) error) (model.
 				return model.Response{}, &DecodeError{Stage: "decode metadata", Err: err}
 			}
 			usage = model.Usage{
-				InputTokens:  event.Usage.InputTokens,
-				OutputTokens: event.Usage.OutputTokens,
+				InputTokens:      event.Usage.InputTokens,
+				OutputTokens:     event.Usage.OutputTokens,
+				CacheReadTokens:  event.Usage.CacheRead,
+				CacheWriteTokens: event.Usage.CacheWrite,
 			}
 		}
 	}

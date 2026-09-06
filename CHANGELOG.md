@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Usage detail.** `model.Usage` gains provider-reported
+  `CacheReadTokens`, `CacheWriteTokens`, and `ReasoningTokens` beside
+  the token totals, captured from every adapter on streamed and plain
+  runs alike and summed across a run's turns on the result — the raw
+  material a cost ledger needs to price cache discounts, cache-write
+  premiums, and reasoning output, where the provider breaks them out.
+  Detail figures are zero when unreported; the providers guide tables
+  which field each adapter reports and whether it is a subset of the
+  totals or exclusive of them.
+
 ## v0.7.3 — 2026-09-06
 
 This patch completes run evidence on the success path: a finished run
