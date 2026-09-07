@@ -192,7 +192,7 @@ func TestImagePartsValidateAtTheBoundary(t *testing.T) {
 		{"url and data", model.Part{Kind: model.PartImage, URL: "https://example.com/y.png", Data: []byte{1}}, "both"},
 		{"neither url nor data", model.Part{Kind: model.PartImage}, "neither"},
 		{"data without media type", model.Part{Kind: model.PartImage, Data: []byte{1}}, "media type"},
-		{"unknown kind", model.Part{Kind: "video", URL: "https://example.com/y.mp4"}, "unsupported part kind"},
+		{"unknown kind", model.Part{Kind: "hologram", URL: "https://example.com/y.png"}, "unsupported part kind"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,6 +210,18 @@ func TestImagePartsValidateAtTheBoundary(t *testing.T) {
 	}
 	if err := (model.ImageData("image/png", []byte{1, 2, 3})).Validate(); err != nil {
 		t.Fatalf("ImageData part invalid: %v", err)
+	}
+	if err := (model.DocumentURL("https://example.com/a.pdf")).Validate(); err != nil {
+		t.Fatalf("DocumentURL part invalid: %v", err)
+	}
+	if err := (model.DocumentData("application/pdf", []byte{1, 2, 3})).Validate(); err != nil {
+		t.Fatalf("DocumentData part invalid: %v", err)
+	}
+	if err := (model.AudioData("audio/wav", []byte{1, 2, 3})).Validate(); err != nil {
+		t.Fatalf("AudioData part invalid: %v", err)
+	}
+	if err := (model.VideoData("video/mp4", []byte{1, 2, 3})).Validate(); err != nil {
+		t.Fatalf("VideoData part invalid: %v", err)
 	}
 }
 
@@ -261,6 +273,34 @@ func TestMessageJSONStaysAdditiveWithParts(t *testing.T) {
 	}
 	if legacy.Parts != nil {
 		t.Fatalf("legacy message gained parts: %#v", legacy.Parts)
+	}
+
+	// Newer kinds ride the same fields: kind stays a plain string in JSON
+	// and the media type round-trips.
+	media := model.Message{Role: model.RoleUser, Parts: []model.Part{
+		model.DocumentData("application/pdf", []byte{1}),
+		model.AudioData("audio/wav", []byte{2}),
+		model.VideoData("video/mp4", []byte{3}),
+	}}
+	encoded, err = json.Marshal(media)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	wantMedia := `{"role":"user","parts":[` +
+		`{"kind":"document","data":"AQ==","mediaType":"application/pdf"},` +
+		`{"kind":"audio","data":"Ag==","mediaType":"audio/wav"},` +
+		`{"kind":"video","data":"Aw==","mediaType":"video/mp4"}]}`
+	if string(encoded) != wantMedia {
+		t.Fatalf("media kinds encoding:\n got %s\nwant %s", encoded, wantMedia)
+	}
+	var decodedMedia model.Message
+	if err := json.Unmarshal(encoded, &decodedMedia); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	for i, want := range []model.PartKind{model.PartDocument, model.PartAudio, model.PartVideo} {
+		if decodedMedia.Parts[i].Kind != want {
+			t.Fatalf("part %d kind = %q, want %q", i, decodedMedia.Parts[i].Kind, want)
+		}
 	}
 }
 
