@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/abubakarsiddik31/golem/model"
@@ -111,13 +112,13 @@ type wireBlock struct {
 	// Result carries the outcome handed back to the model.
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Result    string `json:"content,omitempty"`
-	// Source carries an "image" block's payload: a provider-fetched URL
-	// or base64 inline data with its media type.
+	// Source carries an "image" or "document" block's payload: a
+	// provider-fetched URL or base64 inline data with its media type.
 	Source *wireSource `json:"source,omitempty"`
 }
 
-// wireSource is an image block source: a URL the provider fetches, or
-// base64 inline data with its media type.
+// wireSource is an image or document block source: a URL the provider
+// fetches, or base64 inline data with its media type.
 type wireSource struct {
 	Type      string `json:"type"`
 	URL       string `json:"url,omitempty"`
@@ -176,7 +177,7 @@ type wireUsage struct {
 // of the same role — tool results after an assistant turn, or a user
 // prompt after tool results — merge into one turn, because the API expects
 // alternating roles with tool results as user-turn blocks.
-func toWireTurns(messages []model.Message) (system string, turns []wireMessage) {
+func toWireTurns(messages []model.Message) (system string, turns []wireMessage, err error) {
 	var systemParts []string
 	for _, message := range messages {
 		var role string
@@ -197,7 +198,10 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage) 
 			}}
 		default:
 			role = "user"
-			blocks = userBlocks(message)
+			blocks, err = userBlocks(message)
+			if err != nil {
+				return "", nil, err
+			}
 		}
 		if len(turns) > 0 && turns[len(turns)-1].Role == role {
 			turns[len(turns)-1].Content = append(turns[len(turns)-1].Content, blocks...)
@@ -205,7 +209,7 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage) 
 		}
 		turns = append(turns, wireMessage{Role: role, Content: blocks})
 	}
-	return strings.Join(systemParts, "\n\n"), turns
+	return strings.Join(systemParts, "\n\n"), turns, nil
 }
 
 // assistantBlocks renders an assistant message: its reasoning blocks
@@ -236,34 +240,67 @@ func assistantBlocks(message model.Message) []wireBlock {
 }
 
 // userBlocks renders a user message: its text as a text block when
-// present, followed by one image block per attached part. URL parts send
-// a provider-fetched source; inline data sends base64.
-func userBlocks(message model.Message) []wireBlock {
+// present, followed by one image or document block per attached part.
+// URL parts send a provider-fetched source; inline data sends base64.
+// Documents are application/pdf only, and audio or video parts fail
+// before any request — the Messages API accepts neither.
+func userBlocks(message model.Message) ([]wireBlock, error) {
 	var blocks []wireBlock
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Type: "text", Text: message.Content})
 	}
-	for _, part := range message.Parts {
-		if part.URL != "" {
+	for i, part := range message.Parts {
+		switch part.Kind {
+		case model.PartImage:
+			blocks = append(blocks, imageBlock(part))
+		case model.PartDocument:
+			if part.URL == "" && part.MediaType != "application/pdf" {
+				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+					"document part %d media type %q; the Messages API accepts application/pdf documents", i, part.MediaType)}
+			}
+			if part.URL != "" {
+				blocks = append(blocks, wireBlock{
+					Type:   "document",
+					Source: &wireSource{Type: "url", URL: part.URL},
+				})
+				continue
+			}
 			blocks = append(blocks, wireBlock{
-				Type:   "image",
-				Source: &wireSource{Type: "url", URL: part.URL},
+				Type: "document",
+				Source: &wireSource{
+					Type:      "base64",
+					MediaType: part.MediaType,
+					Data:      base64.StdEncoding.EncodeToString(part.Data),
+				},
 			})
-			continue
+		default:
+			return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+				"part %d kind %q; the Messages API accepts image and document parts only", i, part.Kind)}
 		}
-		blocks = append(blocks, wireBlock{
-			Type: "image",
-			Source: &wireSource{
-				Type:      "base64",
-				MediaType: part.MediaType,
-				Data:      base64.StdEncoding.EncodeToString(part.Data),
-			},
-		})
 	}
 	if len(blocks) == 0 {
 		blocks = []wireBlock{{Type: "text", Text: message.Content}}
 	}
-	return blocks
+	return blocks, nil
+}
+
+// imageBlock renders one image part: a provider-fetched URL source, or
+// base64 inline data with its media type.
+func imageBlock(part model.Part) wireBlock {
+	if part.URL != "" {
+		return wireBlock{
+			Type:   "image",
+			Source: &wireSource{Type: "url", URL: part.URL},
+		}
+	}
+	return wireBlock{
+		Type: "image",
+		Source: &wireSource{
+			Type:      "base64",
+			MediaType: part.MediaType,
+			Data:      base64.StdEncoding.EncodeToString(part.Data),
+		},
+	}
 }
 
 func toWireTools(specs []model.ToolSpec) []wireTool {

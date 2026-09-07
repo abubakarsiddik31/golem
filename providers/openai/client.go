@@ -138,9 +138,13 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 			JSONSchema: &chatJSONSchema{Name: "output", Strict: true, Schema: request.OutputSchema},
 		}
 	}
+	wireMessages, err := toWireMessages(request.Messages)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(chatRequest{
 		Model:           c.cfg.Model,
-		Messages:        toWireMessages(request.Messages),
+		Messages:        wireMessages,
 		Tools:           toWireTools(request.ToolSpecs),
 		Temperature:     c.cfg.Temperature,
 		TopP:            c.cfg.TopP,
