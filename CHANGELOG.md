@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Embeddings.** A provider-neutral `embedding.Embedder` port with the
+  query/documents split as the task-type encoding: `EmbedQuery` embeds
+  one search query, `EmbedDocuments` embeds a corpus batch in one
+  provider call, and both return `embedding.Result` — vectors in input
+  order plus `model.Usage` input-token evidence. Adapters ship where
+  the provider offers an embeddings API — `openai.Embedder`
+  (OpenAI-compatible endpoints, including Ollama and LM Studio through
+  `BaseURL`), `azure.Embedder` (deployment-addressed Azure OpenAI), and
+  `gemini.Embedder` (retrieval task types, `outputDimensionality`) —
+  each with config-level `Dimensions` truncation where the provider
+  supports it and the shared `APIError`/`TransportError`/`DecodeError`
+  classification. `testmodel.EmbedFunc` fakes the port offline. Vector
+  stores, chunking, and rerankers stay application concerns; Anthropic
+  has no embeddings API (decision in ADR 0021).
+
 ## v0.7.4 — 2026-09-06
 
 This patch makes cache economics first-class: a run reports the

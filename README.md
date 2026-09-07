@@ -57,6 +57,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | --- | --- |
 | [Getting started](docs/guides/getting-started.md) | The smallest agent, result shape, error stages |
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
+| [Embeddings](docs/guides/embeddings.md) | The `embedding.Embedder` port: queries, documents, usage |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
 | [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
 | [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
@@ -86,6 +87,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | Example | Shows |
 | --- | --- |
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
+| [`embeddings`](examples/embeddings/main.go) | Semantic search over the `embedding.Embedder` port |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |

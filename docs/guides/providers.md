@@ -96,6 +96,25 @@ last completed turn's when a run failed: a `length` cause on a decode
 failure means the provider truncated the output, not that the model
 wrote bad JSON.
 
+## Embeddings
+
+Generation adapters are not the only port: the same providers serve
+text embeddings through the `embedding.Embedder` port, covered end to
+end in [Embeddings](embeddings.md). Query and document calls share one
+`Result` shape — vectors in input order plus `model.Usage` input-token
+evidence — and the split maps to the provider's task type where one
+exists:
+
+| Embedder | Wire | Query / documents | `Dimensions` | Usage |
+| --- | --- | --- | --- | --- |
+| `openai.Embedder` | `POST {BaseURL}/embeddings` | one shape, split ignored | `dimensions` (text-embedding-3+) | `usage.prompt_tokens` |
+| `azure.Embedder` | `POST {Endpoint}/openai/deployments/{deployment}/embeddings` | one shape, split ignored | `dimensions` (text-embedding-3+) | `usage.prompt_tokens` |
+| `gemini.Embedder` | `:embedContent` / `:batchEmbedContents` | `RETRIEVAL_QUERY` / `RETRIEVAL_DOCUMENT` | `outputDimensionality` (newer models) | not reported today — stays zero |
+
+Anthropic has no embeddings API, so there is no Anthropic embedder.
+Bedrock's embedding models (Titan, Cohere on Bedrock) are likewise not
+covered yet; say the word if your index runs there.
+
 ## Example
 
 - `examples/minimal` — OpenAI-compatible.
@@ -153,6 +172,9 @@ focusedClient, _ := openai.New(openai.Config{
 - `model.FinishReason` — `FinishStop | FinishLength | FinishToolCall |
   FinishContentFilter | FinishOther`; on `model.Response`,
   `golem.Result`, and `golem.PartialResult` (decision in ADR 0020).
+- `openai.Embedder` / `azure.Embedder` / `gemini.Embedder` — text
+  embeddings beside generation; see the [Embeddings](embeddings.md)
+  API surface (decision in ADR 0021).
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas

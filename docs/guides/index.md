@@ -13,22 +13,23 @@ example, and the README index agree.
 
 1. [Getting started](getting-started.md) — the smallest agent and where everything lives.
 2. [Providers](providers.md) — connecting OpenAI-compatible and Anthropic APIs.
-3. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
-4. [Web fetch](web-fetch.md) — the webfetch common tool: URLs as agent-readable text.
-5. [File read](file-read.md) — the fileread common tool: workspace files as agent-readable text.
-6. [Command execution](command-execution.md) — the shell common tool: one command, combined output.
-7. [Agent skills](skills.md) — the skills common tool: standard SKILL.md folders loaded on demand.
-8. [MCP client](mcp-client.md) — bridging Model Context Protocol servers into agent tools.
-9. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
-10. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
-11. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
-12. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
-13. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
-14. [Self-correction](self-correction.md) — rejection budgets for output and tools.
-15. [Retries](retries.md) — surviving transient model failures and falling back to another model.
-16. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-17. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
-18. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
-19. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-20. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
-21. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+3. [Embeddings](embeddings.md) — the text-to-vector port: queries, documents, and usage.
+4. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
+5. [Web fetch](web-fetch.md) — the webfetch common tool: URLs as agent-readable text.
+6. [File read](file-read.md) — the fileread common tool: workspace files as agent-readable text.
+7. [Command execution](command-execution.md) — the shell common tool: one command, combined output.
+8. [Agent skills](skills.md) — the skills common tool: standard SKILL.md folders loaded on demand.
+9. [MCP client](mcp-client.md) — bridging Model Context Protocol servers into agent tools.
+10. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
+11. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
+12. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
+13. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
+14. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
+15. [Self-correction](self-correction.md) — rejection budgets for output and tools.
+16. [Retries](retries.md) — surviving transient model failures and falling back to another model.
+17. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
+18. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
+19. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
+20. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+21. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+22. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.

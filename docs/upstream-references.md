@@ -7,7 +7,7 @@ Golem keeps a local, Git-ignored checkout of the official [Pydantic AI repositor
 The cache lives at `reference/pydantic-ai/docs/`. It is a shallow sparse checkout containing only the upstream `docs/` directory, so it remains local and does not enter Golem commits.
 
 It was initially fetched on 2026-08-15 at upstream commit `25a70926cfafdfc63b3d32c1b5f2c7f139e2c58c`.
-Last refreshed on 2026-08-28 at upstream commit `ecce65f0a64b9c48412db3deb0ab86fa0aee8073`.
+Last refreshed on 2026-09-07 at upstream commit `a1a42986ca10f5693cf83c9c414e1b57d01f837e`.
 
 ## Refresh
 
