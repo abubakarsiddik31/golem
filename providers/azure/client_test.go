@@ -59,6 +59,12 @@ func (r *recordedServer) last(t *testing.T) recordedRequest {
 	}
 }
 
+func (r *recordedServer) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.bodies)
+}
+
 type recordedRequest struct {
 	body   string
 	apiKey string

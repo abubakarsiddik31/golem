@@ -17,13 +17,14 @@ import (
 )
 
 // recordedServer replies with a scripted status and body and records the
-// body and auth header of every request it receives.
+// path, body, and auth header of every request it receives.
 type recordedServer struct {
 	server *httptest.Server
 
 	mu     sync.Mutex
 	bodies []string
 	auths  []string
+	paths  []string
 }
 
 func newRecordedServer(status int, body string) *recordedServer {
@@ -33,6 +34,7 @@ func newRecordedServer(status int, body string) *recordedServer {
 		recorder.mu.Lock()
 		recorder.bodies = append(recorder.bodies, string(payload))
 		recorder.auths = append(recorder.auths, r.Header.Get("Authorization"))
+		recorder.paths = append(recorder.paths, r.URL.Path)
 		recorder.mu.Unlock()
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -58,6 +60,22 @@ func (r *recordedServer) lastAuth(t *testing.T) string {
 		t.Fatal("recordedServer received no requests")
 	}
 	return r.auths[len(r.auths)-1]
+}
+
+func (r *recordedServer) lastPath(t *testing.T) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.paths) == 0 {
+		t.Fatal("recordedServer received no requests")
+	}
+	return r.paths[len(r.paths)-1]
+}
+
+func (r *recordedServer) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.bodies)
 }
 
 func newClient(t *testing.T, baseURL string) *openai.Client {
