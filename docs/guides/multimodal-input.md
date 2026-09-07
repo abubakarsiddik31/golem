@@ -2,16 +2,17 @@
 
 ## Purpose
 
-Attach images to a run's prompt so vision-capable models can see them:
-`golem.WithPromptImageURL` for an image the provider fetches,
-`golem.WithPromptImageData` for bytes your application already holds.
+Attach non-text content — images, documents, audio, video — to a run's
+prompt so multimodal models can see, read, or hear it: `model.Part`
+values on the prompt message, with helpers for the common cases.
 
 ## When to use
 
-When a prompt needs to reference an image — describing a photo, reading a
-chart, comparing two renders. Not for files the model cannot see: plain
-text prompts stay text, and tool results are text (an image-bearing tool
-result would need a contract change; none exists yet).
+When a prompt needs more than text: describing a photo, reading a chart,
+summarizing a PDF, transcribing a recording, reviewing a clip. Not for
+plain text (send it as the prompt), and not for tool results — they are
+text (a media-bearing tool result would need a contract change; none
+exists yet).
 
 ## How it works
 
@@ -34,45 +35,55 @@ they appear in `Result.Messages` and persist with the same additive-only
 JSON contract as every other message field: history written before this
 feature exists decodes unchanged, and text-only messages encode
 byte-identically. Inline data is base64 in JSON. To read a part back
-from evidence, switch on its kind:
+from evidence, switch on its kind — `model.PartImage`, `PartDocument`,
+`PartAudio`, or `PartVideo`:
 
 ```go
 for _, part := range message.Parts {
-    if part.Kind == model.PartImage {
+    if part.Kind == model.PartDocument {
         fmt.Println(part.MediaType, part.URL, len(part.Data))
     }
 }
 ```
 
-Each adapter translates parts to its provider's native form:
+A part carries exactly one of a URL (the provider fetches the content)
+or inline `Data` plus its `MediaType`. Every adapter translates the
+kinds its provider accepts to the native wire form and rejects the rest
+before any request is sent, with an error that names the unsupported
+combination and the portable alternative:
 
-| Adapter | URL part | Inline data part |
-| --- | --- | --- |
-| openai, azure | `image_url` the provider fetches | data URL in an `image_url` part |
-| anthropic | `url` source block | `base64` source block with media type |
-| gemini | `fileData` URI — must be Files API or GCS, content the provider reaches itself | `inlineData` with base64 |
-| bedrock | rejected: `ErrUnsupportedContent` | Converse `image` block, png/jpeg/gif/webp only |
+| Adapter | Image | Document | Audio | Video |
+| --- | --- | --- | --- | --- |
+| openai, azure | URL or data URL, any image type | inline `application/pdf` only | inline `audio/wav` or `audio/mpeg` | rejected |
+| anthropic | URL or base64, provider's image types | URL or inline `application/pdf` | rejected | rejected |
+| gemini | URL (Files API/GCS) or inline | URL or inline, `application/pdf` and text types | inline, or URL the provider reaches | inline, or URL (incl. YouTube) |
+| bedrock | inline png/jpeg/gif/webp | inline pdf, csv, doc(x), xls(x), html, txt, md | rejected | rejected |
 
-The bedrock adapter never silently drops content: a URL part, or a media
-type outside `image/png`, `image/jpeg`, `image/gif`, `image/webp`, fails
-with an error wrapping `bedrock.ErrUnsupportedContent` before any request
-is signed or sent.
+Rejections wrap the adapter's typed error — `DecodeError` on the
+chat-completions and Messages adapters, `ErrUnsupportedContent` on
+bedrock — and media types an endpoint cannot carry fail the same way,
+so a misrouted part never reaches the provider as a cryptic 400.
+Inline data is the portable form; URLs only where the provider fetches
+content itself.
+
+The bedrock document block requires a name, which the adapter derives
+neutrally (`document-1`, `document-2`, …) — AWS flags the field as
+prompt-injection-prone and recommends against customer-controlled
+values.
 
 ## Example
 
-`examples/multimodal-input` embeds a 1×1 red PNG and asks the model to
-describe it; set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) to run
-it.
+`examples/multimodal-input` embeds a 1×1 red PNG and a small PDF, and
+asks the model to describe both; set `OPENAI_API_KEY` (and optionally
+`OPENAI_MODEL`) to run it.
 
 ```go
-pixels, err := base64.StdEncoding.DecodeString(redPixelPNG)
-if err != nil {
-	fmt.Println("decode embedded image:", err)
-	return
-}
 result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{},
-	"Describe this image in one short sentence.",
-	golem.WithPromptImageData("image/png", pixels))
+	"Describe the image and summarize the document.",
+	golem.WithPromptParts(
+		model.ImageData("image/png", pixels),
+		model.DocumentData("application/pdf", pdf),
+	))
 if err != nil {
 	fmt.Println("Run:", err)
 	return
@@ -85,8 +96,10 @@ fmt.Println(result.Output)
 - `golem.WithPromptParts(parts ...model.Part) golem.RunOption` — append validated parts to the prompt message.
 - `golem.WithPromptImageURL(url string) golem.RunOption` — one image the provider fetches.
 - `golem.WithPromptImageData(mediaType string, data []byte) golem.RunOption` — one inline image.
-- `model.ImageURL(url string) model.Part` — construct a URL part directly.
-- `model.ImageData(mediaType string, data []byte) model.Part` — construct an inline part directly.
+- `model.ImageURL(url string) model.Part` / `model.ImageData(mediaType string, data []byte) model.Part` — image parts.
+- `model.DocumentURL(url string) model.Part` / `model.DocumentData(mediaType string, data []byte) model.Part` — document parts.
+- `model.AudioData(mediaType string, data []byte) model.Part` — an inline audio part.
+- `model.VideoData(mediaType string, data []byte) model.Part` — an inline video part.
 - `model.Part.Validate() error` — the boundary check; runs automatically at run start.
 - `model.Message.Parts []model.Part` — where parts live in normalized evidence.
 
@@ -95,12 +108,20 @@ fmt.Println(result.Output)
 - Parts are valid only on user messages; the run rejects anything else,
   including assistant messages in supplied history.
 - Exactly one of a part's URL or Data is set — both, or neither, is a
-  validation error — and inline data requires its media type.
+  validation error — and inline data requires its media type. Audio and
+  video URLs exist only on gemini (provider-addressable URIs); build
+  them as `model.Part{Kind: model.PartAudio, URL: ...}`.
 - Data is application-owned and not copied: treat the byte slice as
   immutable once attached (recorded evidence in `testmodel` is copied).
-- Inline data rides the request body as base64 — large images mean large
-  payloads and token counts; providers bill for image tokens.
-- URL handling is provider-specific: gemini only resolves URIs it can
-  reach itself (Files API or GCS), and bedrock rejects URLs outright.
-  Inline data is the portable form.
-- Deciding contract: `docs/adr/0011-image-content-parts.md`.
+- Inline data rides the request body as base64 — large media mean large
+  payloads and token counts; providers bill for image and document
+  tokens. Gemini caps a request's inline payload (about 20 MB total);
+  larger content belongs in Files API or GCS objects behind URLs.
+- Document kinds are stricter than images on several adapters: the
+  chat-completions adapters accept inline PDFs only, anthropic pairs its
+  PDF rule with URL support, and bedrock wants an explicit
+  media-type-to-format match. The openai-compatible table also depends
+  on the endpoint behind `BaseURL` — local runtimes may accept none of
+  the media parts.
+- Deciding contracts: `docs/adr/0011-image-content-parts.md` and
+  `docs/adr/0022-media-input-parts.md`.
