@@ -48,10 +48,12 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Providers: providers.md
+  - Embeddings: embeddings.md
   - Tools and dependencies: tools-and-dependencies.md
   - Web fetch: web-fetch.md
   - File read: file-read.md
   - Command execution: command-execution.md
+  - Agent skills: skills.md
   - MCP client: mcp-client.md
   - Agent delegation: agent-delegation.md
   - Tool timeouts: tool-timeouts.md
