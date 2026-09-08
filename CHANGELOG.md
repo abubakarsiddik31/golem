@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.7.5 — 2026-09-08
+
+This patch widens what a run can take in and adds the retrieval
+primitive beside it: multimodal input grows beyond images to documents,
+audio, and video, and a provider-neutral embeddings port embeds queries
+and corpora for applications building search on Golem.
 
 ### Added
 
