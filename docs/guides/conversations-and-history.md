@@ -85,7 +85,10 @@ results whose requesting call was trimmed, and assistant tool-call turns
 whose results were trimmed. Repair would otherwise reattach synthesized
 results to those turns, paying tokens for evidence the trim meant to
 drop. The processor applies to the history only; the fresh prompt and
-resolved instructions always join in full.
+resolved instructions always join in full. When a message count is the
+wrong unit, `golem.BudgetHistory(counter, maxTokens)` bounds the history
+by token budget under the same boundary rule — see
+[Token counting](token-counting.md).
 
 ## Example
 

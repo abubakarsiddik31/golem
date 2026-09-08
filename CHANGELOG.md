@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Token counting.** A provider-neutral `tokens.Counter` port prices a
+  request before it is sent: adapters ship where the provider offers a
+  counting endpoint — `anthropic.Counter`, `gemini.Counter`, and
+  `bedrock.Counter`, each reusing that adapter's request builders — and
+  applications implement the port where none exists (decision in ADR
+  0023). Two users ride the port: `UsageLimit.PerRequestInputTokens`
+  with `golem.WithTokenCounter` fails a run at the usage stage before
+  the oversized request goes out, and `golem.BudgetHistory` bounds
+  history by token budget as the counting sibling of `TrimHistory`.
+  `testmodel.CountFunc` fakes the port offline.
+
 ## v0.7.5 — 2026-09-08
 
 This patch widens what a run can take in and adds the retrieval

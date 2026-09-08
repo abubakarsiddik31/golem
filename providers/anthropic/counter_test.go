@@ -38,8 +38,8 @@ func TestCounterPricesMessagesSystemAndTools(t *testing.T) {
 	}
 
 	var sent struct {
-		Model    string          `json:"model"`
-		System   string          `json:"system"`
+		Model    string `json:"model"`
+		System   string `json:"system"`
 		Messages []struct {
 			Role string `json:"role"`
 		} `json:"messages"`
