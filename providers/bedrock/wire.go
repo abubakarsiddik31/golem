@@ -50,6 +50,9 @@ type wireBlock struct {
 	// Image carries an inline image block; see wireImage for the formats
 	// Converse accepts.
 	Image *wireImage `json:"image,omitempty"`
+	// Document carries an inline document block; see wireDocument for the
+	// formats Converse accepts.
+	Document *wireDocument `json:"document,omitempty"`
 }
 
 // wireImage is an inline image block. Converse accepts base64 bytes only,
@@ -63,6 +66,46 @@ type wireImage struct {
 // Converse API decodes it.
 type wireImageSrc struct {
 	Bytes string `json:"bytes"`
+}
+
+// wireDocument is an inline document block. Converse accepts base64
+// bytes with an explicit format extension, and the block requires a
+// name, which the adapter derives neutrally per AWS guidance.
+type wireDocument struct {
+	Name   string          `json:"name"`
+	Format string          `json:"format"`
+	Source wireDocumentSrc `json:"source"`
+}
+
+// wireDocumentSrc carries the document payload. Bytes is base64-encoded.
+type wireDocumentSrc struct {
+	Bytes string `json:"bytes"`
+}
+
+// documentFormat maps a document media type onto the Converse format
+// vocabulary; the bool is false for media types Converse cannot carry.
+func documentFormat(mediaType string) (string, bool) {
+	switch mediaType {
+	case "application/pdf":
+		return "pdf", true
+	case "text/csv":
+		return "csv", true
+	case "application/msword":
+		return "doc", true
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return "docx", true
+	case "application/vnd.ms-excel":
+		return "xls", true
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return "xlsx", true
+	case "text/html":
+		return "html", true
+	case "text/plain":
+		return "txt", true
+	case "text/markdown":
+		return "md", true
+	}
+	return "", false
 }
 
 type wireToolUse struct {
@@ -235,27 +278,47 @@ func assistantBlocks(message model.Message) []wireBlock {
 }
 
 // userBlocks renders a user message: its text as a text block when
-// present, followed by one image block per attached part. Converse
-// accepts inline bytes in the png, jpeg, gif, and webp formats; any other
-// form — a URL, or an unknown media type — fails with
-// ErrUnsupportedContent instead of being silently dropped.
+// present, followed by one image or document block per attached part.
+// Converse accepts inline bytes only — images in the png, jpeg, gif, and
+// webp formats, documents in the pdf, csv, doc, docx, xls, xlsx, html,
+// txt, and md formats — and no audio or video at all. Any other form —
+// a URL, or an unknown media type — fails with ErrUnsupportedContent
+// instead of being silently dropped.
 func userBlocks(message model.Message) ([]wireBlock, error) {
 	var blocks []wireBlock
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Text: message.Content})
 	}
-	for _, part := range message.Parts {
-		if part.URL != "" {
-			return nil, fmt.Errorf("%w: image URL parts; fetch the image and attach it inline with golem.WithPromptImageData", ErrUnsupportedContent)
+	for i, part := range message.Parts {
+		switch part.Kind {
+		case model.PartImage:
+			if part.URL != "" {
+				return nil, fmt.Errorf("%w: image URL parts; fetch the image and attach it inline with golem.WithPromptImageData", ErrUnsupportedContent)
+			}
+			format, ok := strings.CutPrefix(part.MediaType, "image/")
+			if !ok || format == "" {
+				return nil, fmt.Errorf("%w: image media type %q; Converse accepts image/png, image/jpeg, image/gif, or image/webp", ErrUnsupportedContent, part.MediaType)
+			}
+			blocks = append(blocks, wireBlock{Image: &wireImage{
+				Format: format,
+				Source: wireImageSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
+			}})
+		case model.PartDocument:
+			if part.URL != "" {
+				return nil, fmt.Errorf("%w: document URL parts; fetch the document and attach it inline with golem.WithPromptParts(model.DocumentData(...))", ErrUnsupportedContent)
+			}
+			format, ok := documentFormat(part.MediaType)
+			if !ok {
+				return nil, fmt.Errorf("%w: document media type %q; Converse accepts application/pdf, text/plain, text/markdown, text/html, text/csv, and the Office formats", ErrUnsupportedContent, part.MediaType)
+			}
+			blocks = append(blocks, wireBlock{Document: &wireDocument{
+				Name:   fmt.Sprintf("document-%d", i+1),
+				Format: format,
+				Source: wireDocumentSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
+			}})
+		default:
+			return nil, fmt.Errorf("%w: %s parts; Converse accepts image and document parts only", ErrUnsupportedContent, part.Kind)
 		}
-		format, ok := strings.CutPrefix(part.MediaType, "image/")
-		if !ok || format == "" {
-			return nil, fmt.Errorf("%w: image media type %q; Converse accepts image/png, image/jpeg, image/gif, or image/webp", ErrUnsupportedContent, part.MediaType)
-		}
-		blocks = append(blocks, wireBlock{Image: &wireImage{
-			Format: format,
-			Source: wireImageSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
-		}})
 	}
 	if len(blocks) == 0 {
 		blocks = []wireBlock{{Text: message.Content}}

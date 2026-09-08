@@ -65,14 +65,31 @@ type chatMessage struct {
 
 // chatContentPart is one entry of a multimodal content array: the text of
 // the message or a provider-fetched image.
+// chatContentPart is one entry of a multimodal content array: the text
+// of the message, an image, an inline document, or inline audio.
 type chatContentPart struct {
-	Type     string        `json:"type"`
-	Text     string        `json:"text,omitempty"`
-	ImageURL *chatImageURL `json:"image_url,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ImageURL   *chatImageURL   `json:"image_url,omitempty"`
+	InputAudio *chatInputAudio `json:"input_audio,omitempty"`
+	File       *chatFileInput  `json:"file,omitempty"`
 }
 
 type chatImageURL struct {
 	URL string `json:"url"`
+}
+
+// chatInputAudio is inline audio; the endpoint accepts wav and mp3 only.
+type chatInputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+}
+
+// chatFileInput is one inline document; file_data is the base64 payload
+// and filename labels it for the model.
+type chatFileInput struct {
+	FileData string `json:"file_data"`
+	Filename string `json:"filename,omitempty"`
 }
 
 type chatToolCall struct {
@@ -199,39 +216,90 @@ type chatErrorBody struct {
 	Message string `json:"message"`
 }
 
-func toWireMessages(messages []model.Message) []chatMessage {
+func toWireMessages(messages []model.Message) ([]chatMessage, error) {
 	wire := make([]chatMessage, 0, len(messages))
 	for _, message := range messages {
+		content, err := toWireContent(message)
+		if err != nil {
+			return nil, err
+		}
 		wire = append(wire, chatMessage{
 			Role:       toWireRole(message.Role),
-			Content:    toWireContent(message),
+			Content:    content,
 			ToolCalls:  toWireToolCalls(message.ToolCalls),
 			ToolCallID: message.ToolCallID,
 		})
 	}
-	return wire
+	return wire, nil
 }
 
 // toWireContent renders message content: the text alone when no parts are
-// attached, or a text part followed by one image part per attached part.
-// Inline image data becomes a data URL, the only inline form the
-// chat-completions content array accepts.
-func toWireContent(message model.Message) any {
+// attached, or a text part followed by one content part per attached
+// part. Inline image data becomes a data URL; documents send base64
+// `file` parts and audio sends `input_audio` parts. Unsupported
+// combinations — document or audio URLs, non-PDF documents, audio that
+// is not wav or mp3, and video, which the chat-completions content
+// array cannot carry — fail before any request.
+func toWireContent(message model.Message) (any, error) {
 	if len(message.Parts) == 0 {
-		return message.Content
+		return message.Content, nil
 	}
 	parts := make([]chatContentPart, 0, 1+len(message.Parts))
 	if message.Content != "" {
 		parts = append(parts, chatContentPart{Type: "text", Text: message.Content})
 	}
-	for _, part := range message.Parts {
-		url := part.URL
-		if len(part.Data) > 0 {
-			url = "data:" + part.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+	for i, part := range message.Parts {
+		switch part.Kind {
+		case model.PartImage:
+			url := part.URL
+			if len(part.Data) > 0 {
+				url = "data:" + part.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+			}
+			parts = append(parts, chatContentPart{Type: "image_url", ImageURL: &chatImageURL{URL: url}})
+		case model.PartDocument:
+			if part.URL != "" {
+				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+					"document part %d carries a URL; chat completions accept inline file data only — fetch the document and attach it with golem.WithPromptParts(model.DocumentData(...))", i)}
+			}
+			if part.MediaType != "application/pdf" {
+				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+					"document part %d media type %q; chat completions accept inline application/pdf documents", i, part.MediaType)}
+			}
+			parts = append(parts, chatContentPart{Type: "file", File: &chatFileInput{
+				FileData: base64.StdEncoding.EncodeToString(part.Data),
+				Filename: "document.pdf",
+			}})
+		case model.PartAudio:
+			if part.URL != "" {
+				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+					"audio part %d carries a URL; chat completions accept inline audio only — attach it with golem.WithPromptParts(model.AudioData(...))", i)}
+			}
+			format, ok := audioFormat(part.MediaType)
+			if !ok {
+				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+					"audio part %d media type %q; chat completions accept audio/wav or audio/mpeg", i, part.MediaType)}
+			}
+			parts = append(parts, chatContentPart{Type: "input_audio", InputAudio: &chatInputAudio{
+				Data:   base64.StdEncoding.EncodeToString(part.Data),
+				Format: format,
+			}})
+		default:
+			return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+				"part %d kind %q; chat completions accept image, document, and audio parts — use the gemini adapter for video", i, part.Kind)}
 		}
-		parts = append(parts, chatContentPart{Type: "image_url", ImageURL: &chatImageURL{URL: url}})
 	}
-	return parts
+	return parts, nil
+}
+
+// audioFormat maps a media type onto the input_audio format vocabulary.
+func audioFormat(mediaType string) (string, bool) {
+	switch mediaType {
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return "wav", true
+	case "audio/mpeg", "audio/mp3":
+		return "mp3", true
+	}
+	return "", false
 }
 
 func toWireRole(role model.Role) string {

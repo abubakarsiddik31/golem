@@ -200,7 +200,10 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 // endpoint. stream selects streaming mode. A request carrying an output
 // schema maps to the json_schema output format.
 func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
-	system, turns := toWireTurns(request.Messages)
+	system, turns, err := toWireTurns(request.Messages)
+	if err != nil {
+		return nil, err
+	}
 	var outputConfig *wireOutputConfig
 	if len(request.OutputSchema) > 0 {
 		outputConfig = &wireOutputConfig{Format: &wireOutputFormat{

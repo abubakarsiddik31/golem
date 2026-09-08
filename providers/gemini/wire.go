@@ -60,9 +60,11 @@ type wireInlineData struct {
 }
 
 // wireFileData references content by URI. GenerateContent resolves URIs
-// the provider can reach itself, such as Files API or GCS objects.
+// the provider can reach itself, such as Files API or GCS objects; the
+// MIME type is optional and rides along when the part carries one.
 type wireFileData struct {
-	FileURI string `json:"fileUri"`
+	FileURI  string `json:"fileUri"`
+	MimeType string `json:"mimeType,omitempty"`
 }
 
 type wireFunctionCall struct {
@@ -223,9 +225,10 @@ func modelParts(message model.Message) []wirePart {
 }
 
 // userParts renders a user message: its text as a text part when present,
-// followed by one image part per attached part. Inline bytes send base64
+// followed by one media part per attached part — images, documents,
+// audio, and video, keyed by MIME type. Inline bytes send base64
 // inlineData; URLs send fileData and must reference content the provider
-// can reach itself, such as Files API or GCS objects.
+// can reach itself, such as Files API, GCS objects, or YouTube videos.
 func userParts(message model.Message) []wirePart {
 	var parts []wirePart
 	if message.Content != "" {
@@ -233,7 +236,7 @@ func userParts(message model.Message) []wirePart {
 	}
 	for _, part := range message.Parts {
 		if part.URL != "" {
-			parts = append(parts, wirePart{FileData: &wireFileData{FileURI: part.URL}})
+			parts = append(parts, wirePart{FileData: &wireFileData{FileURI: part.URL, MimeType: part.MediaType}})
 			continue
 		}
 		parts = append(parts, wirePart{InlineData: &wireInlineData{

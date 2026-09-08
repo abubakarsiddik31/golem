@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Document, audio, and video input parts.** The multimodal part
+  vocabulary grows beyond images: `model.PartDocument`, `PartAudio`,
+  and `PartVideo` join `PartImage` on `model.Message.Parts`, with
+  constructors `model.DocumentURL`, `model.DocumentData`,
+  `model.AudioData`, and `model.VideoData` and the same validation,
+  durable JSON, and evidence semantics as image parts (decision in
+  ADR 0022). Each adapter maps the kinds its provider accepts —
+  OpenAI-compatible endpoints take inline PDF documents and wav/mp3
+  audio, Anthropic takes PDF documents by URL or inline, Gemini takes
+  all four kinds inline or behind provider-addressable URLs, Bedrock
+  takes inline documents in the pdf, csv, Office, html, txt, and md
+  formats — and rejects unsupported combinations before any request
+  with an error naming the fix. No new run options: `WithPromptParts`
+  carries every kind.
+
 - **Embeddings.** A provider-neutral `embedding.Embedder` port with the
   query/documents split as the task-type encoding: `EmbedQuery` embeds
   one search query, `EmbedDocuments` embeds a corpus batch in one

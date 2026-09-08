@@ -52,6 +52,12 @@ func (r *recordedServer) lastBody(t *testing.T) string {
 	return r.bodies[len(r.bodies)-1]
 }
 
+func (r *recordedServer) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.bodies)
+}
+
 func (r *recordedServer) lastHeader(t *testing.T, name string) string {
 	t.Helper()
 	r.mu.Lock()

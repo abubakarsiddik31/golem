@@ -20,9 +20,11 @@ transport faults — never context cancellation) and the runner's retry
 policy decides. All shipped adapters implement `model.StreamingModel`
 — over SSE everywhere except Bedrock, whose ConverseStream responses
 are AWS binary event-stream frames decoded with the standard library.
-Every adapter also translates image
-parts on user messages to its native multimodal form; the per-provider
-differences live in [Multimodal input](multimodal-input.md).
+Every adapter also translates media
+parts on user messages — images, documents, audio, video — to its
+native multimodal form, and rejects unsupported combinations before
+any request; the per-provider matrix lives in
+[Multimodal input](multimodal-input.md).
 
 Every adapter accepts optional sampling and length controls on its
 Config — `Temperature`, `TopP`, and `MaxTokens` — validated against the

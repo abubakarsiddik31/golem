@@ -247,10 +247,12 @@ type runOptions struct {
 // start; invalid input fails the run before any model call.
 type RunOption func(*runOptions)
 
-// WithPromptParts appends non-text parts, such as images, after the prompt
-// text of this run's user message. Parts must be well-formed (see
-// model.Part.Validate); a malformed part, or parts on a history message
-// other than a user message, fails the run up front.
+// WithPromptParts appends non-text parts — images, documents, audio,
+// video — after the prompt text of this run's user message. Parts must
+// be well-formed (see model.Part.Validate); a malformed part, or parts
+// on a history message other than a user message, fails the run up
+// front. Which kinds and media types an adapter accepts is its own
+// contract: unsupported combinations fail before any request.
 func WithPromptParts(parts ...model.Part) RunOption {
 	return func(opts *runOptions) {
 		opts.promptParts = append(opts.promptParts, parts...)

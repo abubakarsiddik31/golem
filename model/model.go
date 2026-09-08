@@ -120,14 +120,26 @@ func (b ThinkingBlock) Validate() error {
 // PartKind identifies the kind of non-text content a Part carries.
 type PartKind string
 
-// PartImage is an image attached to a user message.
-const PartImage PartKind = "image"
+const (
+	// PartImage is an image attached to a user message.
+	PartImage PartKind = "image"
+	// PartDocument is a document attached to a user message, such as a
+	// PDF. Adapters translate it where the provider accepts documents and
+	// reject the combination up front where it does not.
+	PartDocument PartKind = "document"
+	// PartAudio is an audio recording attached to a user message.
+	PartAudio PartKind = "audio"
+	// PartVideo is a video clip attached to a user message.
+	PartVideo PartKind = "video"
+)
 
 // Part is one non-text piece of message content, carried on user messages
 // alongside the text in Content. Exactly one of URL or Data is set, and
 // Data requires MediaType; constructors make the common path well-formed
 // and Validate is the boundary check for parts that arrive through decoded
-// history. Adapters translate parts to their native multimodal form.
+// history. Adapters translate parts to their native multimodal form and
+// reject, before any request, the kind/media combinations their provider
+// cannot express.
 type Part struct {
 	Kind      PartKind `json:"kind"`
 	URL       string   `json:"url,omitempty"`
@@ -147,19 +159,48 @@ func ImageData(mediaType string, data []byte) Part {
 	return Part{Kind: PartImage, MediaType: mediaType, Data: data}
 }
 
+// DocumentURL attaches a document the provider fetches itself, such as a
+// hosted PDF. Only some providers resolve URLs; inline data is the
+// portable form.
+func DocumentURL(url string) Part {
+	return Part{Kind: PartDocument, URL: url}
+}
+
+// DocumentData attaches inline document bytes with their media type, such
+// as "application/pdf". Data is application-owned: treat it as immutable
+// once attached, because a Part does not copy it.
+func DocumentData(mediaType string, data []byte) Part {
+	return Part{Kind: PartDocument, MediaType: mediaType, Data: data}
+}
+
+// AudioData attaches inline audio bytes with their media type, such as
+// "audio/wav" or "audio/mpeg". Data is application-owned: treat it as
+// immutable once attached, because a Part does not copy it.
+func AudioData(mediaType string, data []byte) Part {
+	return Part{Kind: PartAudio, MediaType: mediaType, Data: data}
+}
+
+// VideoData attaches inline video bytes with their media type, such as
+// "video/mp4". Data is application-owned: treat it as immutable once
+// attached, because a Part does not copy it.
+func VideoData(mediaType string, data []byte) Part {
+	return Part{Kind: PartVideo, MediaType: mediaType, Data: data}
+}
+
 // Validate reports whether the part is well-formed. The agent validates
 // parts at run start, before any model call; adapters may assume the parts
-// that reach them passed this check.
+// that reach them passed this check, and decide which kinds and media
+// types their provider can express.
 func (p Part) Validate() error {
 	switch {
-	case p.Kind != PartImage:
+	case p.Kind != PartImage && p.Kind != PartDocument && p.Kind != PartAudio && p.Kind != PartVideo:
 		return fmt.Errorf("model: unsupported part kind %q", p.Kind)
 	case p.URL != "" && len(p.Data) > 0:
-		return fmt.Errorf("model: image part carries both a URL and inline data; set exactly one")
+		return fmt.Errorf("model: %s part carries both a URL and inline data; set exactly one", p.Kind)
 	case p.URL == "" && len(p.Data) == 0:
-		return fmt.Errorf("model: image part has neither a URL nor inline data")
+		return fmt.Errorf("model: %s part has neither a URL nor inline data", p.Kind)
 	case len(p.Data) > 0 && p.MediaType == "":
-		return fmt.Errorf("model: image part with inline data requires a media type")
+		return fmt.Errorf("model: %s part with inline data requires a media type", p.Kind)
 	}
 	return nil
 }
