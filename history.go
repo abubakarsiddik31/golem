@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/tokens"
 )
 
 // HistoryProcessor rewrites the history of one run before the request is
@@ -63,5 +64,48 @@ func opensConversation(message model.Message) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+// BudgetHistory returns a HistoryProcessor that keeps the newest turns
+// of a conversation whose input-token count fits maxTokens, as reported
+// by the counter. It counts the history it receives — the run's tools
+// and instructions are not included, so leave headroom for them — and,
+// while over budget, drops the oldest message and counts again, always
+// advancing past messages that cannot open a request under the same
+// boundary rule TrimHistory uses. Counting is one call to the counter
+// per dropped message plus one, so prefer a generous budget over a
+// tight one. A nil counter or a budget below 1 fails the run; so does a
+// history whose newest openable turn alone exceeds the budget, or
+// nothing left after the boundary rule.
+func BudgetHistory(counter tokens.Counter, maxTokens int) HistoryProcessor {
+	return func(ctx context.Context, history []model.Message) ([]model.Message, error) {
+		if counter == nil {
+			return nil, fmt.Errorf("golem: BudgetHistory requires a non-nil counter")
+		}
+		if maxTokens < 1 {
+			return nil, fmt.Errorf("golem: BudgetHistory budget must be at least 1, got %d", maxTokens)
+		}
+		drop := 0
+		for {
+			for drop < len(history) && !opensConversation(history[drop]) {
+				drop++
+			}
+			kept := history[drop:]
+			if len(kept) == 0 {
+				return nil, fmt.Errorf("golem: BudgetHistory left no messages; history of %d messages has no turn that can open a request", len(history))
+			}
+			count, err := counter.CountTokens(ctx, tokens.CountInput{Messages: kept})
+			if err != nil {
+				return nil, fmt.Errorf("golem: BudgetHistory: %w", err)
+			}
+			if count <= maxTokens {
+				return kept, nil
+			}
+			if len(kept) == 1 {
+				return nil, fmt.Errorf("golem: BudgetHistory: newest openable turn alone needs %d tokens, over budget %d", count, maxTokens)
+			}
+			drop++
+		}
 	}
 }

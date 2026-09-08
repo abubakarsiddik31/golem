@@ -10,6 +10,7 @@ import (
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/tokens"
 	"github.com/abubakarsiddik31/golem/tool"
 )
 
@@ -61,6 +62,7 @@ type Agent[Deps any, Output any] struct {
 	outputToolName    string
 	outputToolSpec    model.ToolSpec
 	usageLimit        UsageLimit
+	tokenCounter      tokens.Counter
 	runEvents         func(RunEvent)
 }
 
@@ -231,6 +233,11 @@ type UsageLimit struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
+	// PerRequestInputTokens bounds one model request's estimated input,
+	// enforced before the request is sent. It requires WithTokenCounter
+	// and counts what the wired counter counts — see the tokens package
+	// for the per-provider support matrix.
+	PerRequestInputTokens int
 	// Requests bounds model calls, retried attempts included.
 	Requests int
 	// ToolCalls bounds tool executions.
@@ -317,6 +324,17 @@ func WithUsageLimit[Deps any, Output any](limit UsageLimit) Option[Deps, Output]
 	}
 }
 
+// WithTokenCounter wires a tokens.Counter so the run can price a request
+// before sending it: UsageLimit.PerRequestInputTokens turns the counter
+// into a pre-send bound checked before every model call. A nil counter
+// leaves the agent without one; setting the per-request bound without a
+// counter fails New.
+func WithTokenCounter[Deps any, Output any](counter tokens.Counter) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.tokenCounter = counter
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -369,8 +387,11 @@ func New[Deps any, Output any](
 		}
 	}
 	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 ||
-		agent.usageLimit.Requests < 0 || agent.usageLimit.ToolCalls < 0 {
+		agent.usageLimit.Requests < 0 || agent.usageLimit.ToolCalls < 0 || agent.usageLimit.PerRequestInputTokens < 0 {
 		return nil, fmt.Errorf("golem: usage limit must not be negative, got %+v", agent.usageLimit)
+	}
+	if agent.usageLimit.PerRequestInputTokens > 0 && agent.tokenCounter == nil {
+		return nil, fmt.Errorf("golem: usage limit PerRequestInputTokens requires WithTokenCounter; wire a tokens.Counter to enforce a pre-send bound")
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -571,6 +592,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 	if retry.Backoff == nil && a.maxAttempts > 1 {
 		retry.Backoff = exponentialBackoff
 	}
+	preSend := a.preSendCheck()
 
 	var usage model.Usage
 	var modelCalls, toolExecutions int
@@ -581,10 +603,10 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta)
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta, preSend)
 		} else {
 			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit)
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, preSend)
 		}
 		if err != nil {
 			addUsage(&usage, outcome.Usage)
@@ -660,6 +682,27 @@ const recordedToolResult = "Result recorded."
 // closeOutputCall closes the output-tool call of the final response, when
 // the run used one, so result evidence keeps the call/result pairing
 // providers require. On success the close is a recorded result; for a
+// preSendCheck returns the pre-send bound the runner checks before every
+// model call: with a counter and PerRequestInputTokens wired, it prices
+// the would-be request and fails the run at the usage stage when the
+// estimate crosses the bound. Without either, the run sends unchecked.
+func (a *Agent[Deps, Output]) preSendCheck() func(ctx context.Context, req model.Request) error {
+	if a.tokenCounter == nil || a.usageLimit.PerRequestInputTokens <= 0 {
+		return nil
+	}
+	limit := a.usageLimit.PerRequestInputTokens
+	return func(ctx context.Context, req model.Request) error {
+		count, err := a.tokenCounter.CountTokens(ctx, tokens.CountInput{Messages: req.Messages, Tools: req.ToolSpecs})
+		if err != nil {
+			return fmt.Errorf("golem: token count failed before request: %w", err)
+		}
+		if count > limit {
+			return &UsageLimitError{Kind: "per-request input token", Limit: limit, Actual: count}
+		}
+		return nil
+	}
+}
+
 // correction round the caller appends the rejection itself, bound to the
 // call.
 func (a *Agent[Deps, Output]) closeOutputCall(evidence []model.Message, response model.Response) []model.Message {
@@ -745,12 +788,17 @@ func exponentialBackoff(attempt int) time.Duration {
 // classifyRunError maps runner outcomes to public stages, attaching the
 // run's partial evidence. Cancellation and deadline errors ride a RunError
 // like every other failure — Unwrap keeps them matchable with errors.Is —
-// because wrapping is the only way their evidence survives.
+// because wrapping is the only way their evidence survives. A crossed
+// usage bound — post-response, or the pre-send per-request estimate —
+// lands at the usage stage.
 func classifyRunError(err error, partial *PartialResult) error {
 	var toolErr *runner.ToolError
+	var limitErr *UsageLimitError
 	switch {
 	case errors.As(err, &toolErr):
 		return &RunError{Stage: StageTool, Err: err, Partial: partial}
+	case errors.As(err, &limitErr):
+		return &RunError{Stage: StageUsage, Err: err, Partial: partial}
 	case errors.Is(err, runner.ErrLoopLimit):
 		return &RunError{Stage: StageLoop, Err: err, Partial: partial}
 	default:
