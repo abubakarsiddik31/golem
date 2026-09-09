@@ -76,23 +76,23 @@ func (a *Agent[Deps, Output]) AsTool(name, description string, options ...AgentT
 	if render == nil {
 		render = defaultAgentResult[Output]
 	}
-	exec := func(ctx context.Context, deps Deps, args json.RawMessage) (string, error) {
+	exec := func(ctx context.Context, deps Deps, args json.RawMessage) (tool.Result, error) {
 		var input agentToolArgs
 		if err := json.Unmarshal(args, &input); err != nil {
-			return "", &model.ModelRetry{Err: fmt.Errorf("arguments must be an object with a string prompt: %w", err)}
+			return tool.Result{}, &model.ModelRetry{Err: fmt.Errorf("arguments must be an object with a string prompt: %w", err)}
 		}
 		if input.Prompt == "" {
-			return "", &model.ModelRetry{Err: fmt.Errorf("prompt is required")}
+			return tool.Result{}, &model.ModelRetry{Err: fmt.Errorf("prompt is required")}
 		}
 		result, err := a.Run(ctx, RunContext[Deps]{Deps: deps}, input.Prompt)
 		if err != nil {
-			return "", err
+			return tool.Result{}, err
 		}
 		rendered, err := render(ctx, result.Output)
 		if err != nil {
-			return "", fmt.Errorf("render result: %w", err)
+			return tool.Result{}, fmt.Errorf("render result: %w", err)
 		}
-		return rendered, nil
+		return tool.Text(rendered), nil
 	}
 	return tool.New(tool.Tool[Deps]{
 		Name:        name,

@@ -43,18 +43,18 @@ func main() {
 			"properties": {"n": {"type": "integer", "description": "How many times to roll."}},
 			"required": ["n"]
 		}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			var input struct {
 				N int `json:"n"`
 			}
 			if err := json.Unmarshal(args, &input); err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			if input.N <= 0 {
 				// A rejection the model can fix, not a failure.
-				return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+				return tool.Result{}, &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
 			}
-			return fmt.Sprintf("rolled %d", input.N), nil
+			return tool.Text(fmt.Sprintf("rolled %d", input.N)), nil
 		},
 	})
 

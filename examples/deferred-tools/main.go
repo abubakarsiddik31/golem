@@ -31,18 +31,18 @@ func run() error {
 		Name:        "delete_file",
 		Description: "Delete a workspace file.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
-		Exec: func(ctx context.Context, ws *workspace, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, ws *workspace, args json.RawMessage) (tool.Result, error) {
 			if !tool.CallApproved(ctx) {
-				return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "deleting workspace files needs sign-off"}
+				return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "deleting workspace files needs sign-off"}
 			}
 			var request struct {
 				Path string `json:"path"`
 			}
 			if err := json.Unmarshal(args, &request); err != nil {
-				return "", fmt.Errorf("decode path: %w", err)
+				return tool.Result{}, fmt.Errorf("decode path: %w", err)
 			}
 			ws.Deletions = append(ws.Deletions, request.Path)
-			return fmt.Sprintf("deleted %s", request.Path), nil
+			return tool.Text(fmt.Sprintf("deleted %s", request.Path)), nil
 		},
 	})
 

@@ -70,8 +70,8 @@ func TestPausedResultCarriesFinishReason(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 		},
 	})
 	client := &queuedModel{responses: []model.Response{

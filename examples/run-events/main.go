@@ -20,8 +20,8 @@ func main() {
 		Name:        "get_player_name",
 		Description: "Get the player's name.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, playerName string, args json.RawMessage) (string, error) {
-			return playerName, nil
+		Exec: func(ctx context.Context, playerName string, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(playerName), nil
 		},
 	})
 

@@ -62,10 +62,11 @@ prompt parts:
 - **Anthropic** maps parts to image and document blocks inside the
   `tool_result`, sets `is_error` for a failed result, and fails before
   the request on audio or video parts.
-- **Bedrock** maps parts to image, document, and video blocks inside
-  the `toolResult` (family support is the model's own caveat), sets
-  `status: "error"` for a failure, and fails before the request on
-  audio parts.
+- **Bedrock** maps parts to image and document blocks inside the
+  `toolResult` — the same rules, formats, and inline-only constraints as
+  its prompt parts (Converse's video and search-result block types stay
+  out of scope) — sets `status: "error"` for a failure, and fails before
+  the request on audio or video parts.
 - **OpenAI and Azure** keep the tool message text (JSON-framed
   `{"error": ...}` when failed) and emit one synthetic user message
   after the call batch's results, each part framed with

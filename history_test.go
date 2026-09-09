@@ -18,8 +18,8 @@ func toolForHistory(t *testing.T) tool.Tool[playerDeps] {
 		Name:        "get_player_name",
 		Description: "Get the player's name.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps playerDeps, args json.RawMessage) (string, error) {
-			return deps.Name, nil
+		Exec: func(ctx context.Context, deps playerDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(deps.Name), nil
 		},
 	})
 }

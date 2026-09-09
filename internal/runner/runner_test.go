@@ -65,8 +65,8 @@ func echoTool(t *testing.T) tool.Tool[deps] {
 		Name:        "echo",
 		Description: "Echo the tenant and raw args.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
-			return d.Tenant + " " + string(args), nil
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(d.Tenant + " " + string(args)), nil
 		},
 	})
 }
@@ -207,8 +207,8 @@ func TestExecuteClassifiesToolFailures(t *testing.T) {
 		Name:        "failing",
 		Description: "Always fails.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
-			return "", cause
+		Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, cause
 		},
 	})
 	m := &scriptedModel{responses: []model.Response{
@@ -253,17 +253,17 @@ func validatingTool(t *testing.T) tool.Tool[deps] {
 		Name:        "roll",
 		Description: "Roll a die; n must be positive.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
-		Exec: func(_ context.Context, _ deps, args json.RawMessage) (string, error) {
+		Exec: func(_ context.Context, _ deps, args json.RawMessage) (tool.Result, error) {
 			var input struct {
 				N int `json:"n"`
 			}
 			if err := json.Unmarshal(args, &input); err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			if input.N <= 0 {
-				return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+				return tool.Result{}, &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
 			}
-			return fmt.Sprintf("rolled %d", input.N), nil
+			return tool.Text(fmt.Sprintf("rolled %d", input.N)), nil
 		},
 	})
 }
@@ -276,9 +276,9 @@ func rejectingTool(t *testing.T, reason error) (tool.Tool[deps], *int) {
 		Name:        "roll",
 		Description: "Always rejects.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+		Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
 			executions++
-			return "", &model.ModelRetry{Err: reason}
+			return tool.Result{}, &model.ModelRetry{Err: reason}
 		},
 	})
 	return rejecting, &executions
@@ -405,8 +405,8 @@ func TestExecuteStillAbortsPlainToolErrorsWithBudget(t *testing.T) {
 		Name:        "failing",
 		Description: "Fails for real.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
-			return "", cause
+		Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, cause
 		},
 	})
 	m := &scriptedModel{responses: []model.Response{
@@ -458,9 +458,9 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 			Name:        "first",
 			Description: "Cancels the run.",
 			Schema:      json.RawMessage(`{"type":"object"}`),
-			Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+			Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
 				cancel()
-				return "ok", nil
+				return tool.Text("ok"), nil
 			},
 		})
 		secondExecutions := 0
@@ -468,9 +468,9 @@ func TestExecutePropagatesCancellationBeforeEveryStep(t *testing.T) {
 			Name:        "second",
 			Description: "Must not run.",
 			Schema:      json.RawMessage(`{"type":"object"}`),
-			Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+			Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
 				secondExecutions++
-				return "", nil
+				return tool.Result{}, nil
 			},
 		})
 		m := &scriptedModel{responses: []model.Response{
@@ -870,8 +870,8 @@ func TestExecuteReturnsPartialOutcomeOnToolError(t *testing.T) {
 	}
 	failing := tool.MustNew(tool.Tool[deps]{
 		Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
-			return "", errors.New("tool exploded")
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, errors.New("tool exploded")
 		},
 	})
 	request := model.Request{
@@ -903,9 +903,9 @@ func TestExecuteReturnsPartialOutcomeOnCancellation(t *testing.T) {
 	}
 	cancelling := tool.MustNew(tool.Tool[deps]{
 		Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (tool.Result, error) {
 			cancel()
-			return "done", nil
+			return tool.Text("done"), nil
 		},
 	})
 	request := model.Request{

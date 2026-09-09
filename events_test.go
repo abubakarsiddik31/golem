@@ -52,8 +52,8 @@ func TestRunEventsCoverTwoTurnToolExchange(t *testing.T) {
 		Name:        "lookup",
 		Description: "Looks a value up.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "42", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("42"), nil
 		},
 	})
 	m := testmodel.New().Respond(
@@ -151,8 +151,8 @@ func TestRunEventsCarryToolRejections(t *testing.T) {
 		Name:        "strict",
 		Description: "Rejects bad arguments correctably.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "", &model.ModelRetry{Err: errors.New("arguments must name a city")}
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &model.ModelRetry{Err: errors.New("arguments must name a city")}
 		},
 	})
 	m := testmodel.New().Respond(
@@ -197,14 +197,14 @@ func TestRunEventsParallelGroupsStayOrdered(t *testing.T) {
 
 	first := tool.MustNew(tool.Tool[struct{}]{
 		Name: "first", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "one", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("one"), nil
 		},
 	})
 	second := tool.MustNew(tool.Tool[struct{}]{
 		Name: "second", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "two", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("two"), nil
 		},
 	})
 	m := testmodel.New().Respond(
@@ -440,11 +440,11 @@ func TestRunObserverWorksOnDeferredResume(t *testing.T) {
 
 	gated := tool.MustNew(tool.Tool[struct{}]{
 		Name: "gated", Description: "Needs sign-off.", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			if tool.CallApproved(ctx) {
-				return "signed off", nil
+				return tool.Text("signed off"), nil
 			}
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 		},
 	})
 	m := testmodel.New().Respond(

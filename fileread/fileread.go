@@ -108,8 +108,9 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 		Name:        ToolName,
 		Description: ToolDescription,
 		Schema:      schema,
-		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (string, error) {
-			return r.read(ctx, args)
+		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (tool.Result, error) {
+			text, err := r.read(ctx, args)
+			return tool.Text(text), err
 		},
 	})
 }

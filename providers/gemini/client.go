@@ -166,7 +166,10 @@ func (c *Client) newGenerateContentHTTPRequest(ctx context.Context, request mode
 		return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
 			"output schema cannot be combined with tool declarations: JSON response mode is unsupported with function calling; configure tool-mode output (golem.WithOutputTool) instead")}
 	}
-	system, contents := toWireContents(request.Messages)
+	system, contents, err := toWireContents(request.Messages)
+	if err != nil {
+		return nil, err
+	}
 	var generationConfig *wireGenConfig
 	if len(request.OutputSchema) > 0 || c.cfg.Temperature != nil || c.cfg.TopP != nil || c.cfg.MaxTokens > 0 || c.cfg.Thinking != nil {
 		generationConfig = &wireGenConfig{

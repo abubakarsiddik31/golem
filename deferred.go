@@ -223,7 +223,8 @@ func (a *Agent[Deps, Output]) resolvePending(ctx context.Context, runCtx RunCont
 					Err: fmt.Errorf("approved re-run failed: %w", err)}, nil)
 			}
 			resolutions[call.ID] = model.Message{
-				Role: model.RoleTool, ToolCallID: call.ID, ToolName: call.Name, Content: result,
+				Role: model.RoleTool, ToolCallID: call.ID, ToolName: call.Name,
+				Content: result.Text, Parts: result.Parts,
 			}
 			continue
 		}

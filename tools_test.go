@@ -42,8 +42,8 @@ func TestAgentRunExecutesToolsWithTypedDeps(t *testing.T) {
 		Name:        "get_player_name",
 		Description: "Get the player's name.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps playerDeps, args json.RawMessage) (string, error) {
-			return deps.Name, nil
+		Exec: func(ctx context.Context, deps playerDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(deps.Name), nil
 		},
 	})
 
@@ -114,8 +114,8 @@ func TestAgentRunClassifiesToolAndLoopFailures(t *testing.T) {
 			Name:        "failing",
 			Description: "Always fails.",
 			Schema:      json.RawMessage(`{"type":"object"}`),
-			Exec: func(context.Context, struct{}, json.RawMessage) (string, error) {
-				return "", cause
+			Exec: func(context.Context, struct{}, json.RawMessage) (tool.Result, error) {
+				return tool.Result{}, cause
 			},
 		})
 		agent, err := golem.New[struct{}, string](&queuedModel{responses: []model.Response{callTo("failing", "c1")}},
@@ -141,7 +141,7 @@ func TestAgentRunClassifiesToolAndLoopFailures(t *testing.T) {
 			Name:        "looping",
 			Description: "Succeeds so the model keeps calling.",
 			Schema:      json.RawMessage(`{"type":"object"}`),
-			Exec:        func(context.Context, struct{}, json.RawMessage) (string, error) { return "ok", nil },
+			Exec:        func(context.Context, struct{}, json.RawMessage) (tool.Result, error) { return tool.Text("ok"), nil },
 		})
 		agent, err := golem.New[struct{}, string](
 			&queuedModel{responses: []model.Response{callTo("looping", "c1"), callTo("looping", "c2"), callTo("looping", "c3")}},
@@ -197,7 +197,7 @@ func TestNewRejectsInvalidToolAndIterationConfiguration(t *testing.T) {
 		Name:        "ok",
 		Description: "d",
 		Schema:      json.RawMessage(`{}`),
-		Exec:        func(context.Context, struct{}, json.RawMessage) (string, error) { return "", nil },
+		Exec:        func(context.Context, struct{}, json.RawMessage) (tool.Result, error) { return tool.Result{}, nil },
 	}
 
 	if _, err := golem.New[struct{}, string](client, decoder,

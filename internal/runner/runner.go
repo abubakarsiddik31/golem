@@ -141,6 +141,9 @@ type Event struct {
 	Args json.RawMessage
 	// Result is the tool result text of a successful execution.
 	Result string
+	// Parts is the non-text evidence a successful execution produced;
+	// mirrors the parts stored on the tool message.
+	Parts []model.Part
 	// Err is the attempt or execution error. A correction rejection
 	// carries *model.ModelRetry.
 	Err error
@@ -393,7 +396,7 @@ func partialOutcome(messages []model.Message, usage model.Usage, counts runCount
 type toolCallResult[Deps any] struct {
 	call     model.ToolCall
 	declared tool.Tool[Deps]
-	result   string
+	result   tool.Result
 	err      error
 }
 
@@ -436,7 +439,14 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 			continue
 		}
 		if item.err == nil {
-			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID, ToolName: item.call.Name, Content: item.result})
+			for j, part := range item.result.Parts {
+				if err := part.Validate(); err != nil {
+					return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID,
+						Err: fmt.Errorf("tool produced an invalid part %d: %w", j, err)}
+				}
+			}
+			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID,
+				ToolName: item.call.Name, Content: item.result.Text, Parts: item.result.Parts})
 			continue
 		}
 		// Cancellation and deadlines keep their identity through the
@@ -445,6 +455,15 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 		// stopped.
 		if errors.Is(item.err, context.Canceled) || errors.Is(item.err, context.DeadlineExceeded) {
 			return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: item.err}
+		}
+		// A definitive failure is the tool's result, not a correction
+		// request: record it, let the model decide what to do next, and
+		// leave the retry budget alone.
+		var failed *tool.Failed
+		if errors.As(item.err, &failed) {
+			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID,
+				ToolName: item.call.Name, Content: failed.Reason, Failed: true})
+			continue
 		}
 		var rejection *model.ModelRetry
 		limit := config.DefaultRetries
@@ -482,7 +501,7 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 				continue
 			}
 			counts.toolExecutions++
-			event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
+			event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result.Text, Parts: group[i].result.Parts}
 			if group[i].err != nil {
 				event.Err = group[i].err
 			}
@@ -507,7 +526,7 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 			continue
 		}
 		counts.toolExecutions++
-		event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result}
+		event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result.Text, Parts: group[i].result.Parts}
 		if group[i].err != nil {
 			event.Err = group[i].err
 		}
@@ -558,7 +577,7 @@ func findCallByName(calls []model.ToolCall, name string) (model.ToolCall, bool) 
 // executeTool applies the narrowest configured deadline to one call. The
 // tool owns any work it starts and must honor ctx cancellation; this wrapper
 // does not leave a goroutine behind to race a non-cooperative tool.
-func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (string, error) {
+func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (tool.Result, error) {
 	timeout := defaultTimeout
 	if declared.Timeout != 0 {
 		timeout = declared.Timeout
@@ -570,10 +589,10 @@ func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps D
 	defer cancel()
 	result, err := declared.Exec(callCtx, deps, args)
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return tool.Result{}, ctx.Err()
 	}
 	if callCtx.Err() != nil {
-		return "", callCtx.Err()
+		return tool.Result{}, callCtx.Err()
 	}
 	return result, err
 }
@@ -583,7 +602,7 @@ func executeTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps D
 // the same narrowest-deadline policy as loop executions. It is the resume
 // path for approval-kind pending calls; callers surface failures as tool
 // errors.
-func ExecuteApprovedTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (string, error) {
+func ExecuteApprovedTool[Deps any](ctx context.Context, declared tool.Tool[Deps], deps Deps, args json.RawMessage, defaultTimeout time.Duration) (tool.Result, error) {
 	return executeTool(tool.WithApprovedCall(ctx), declared, deps, args, defaultTimeout)
 }
 

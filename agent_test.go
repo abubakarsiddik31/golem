@@ -230,8 +230,8 @@ func TestRunWithHistoryRejectsPartsOutsideUserMessages(t *testing.T) {
 	history := []model.Message{{Role: model.RoleAssistant, Content: "hi",
 		Parts: []model.Part{model.ImageURL("https://example.com/a.png")}}}
 	_, err = agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, history, "go on")
-	if err == nil || !strings.Contains(err.Error(), "user messages") {
-		t.Fatalf("RunWithHistory() error = %v, want rejection of non-user parts", err)
+	if err == nil || !strings.Contains(err.Error(), "user and tool messages") {
+		t.Fatalf("RunWithHistory() error = %v, want rejection of parts outside user and tool messages", err)
 	}
 	if client.request.Messages != nil {
 		t.Fatal("model was called despite invalid history parts")
@@ -245,8 +245,8 @@ func usageEchoTool(t *testing.T) tool.Tool[struct{}] {
 		Name:        "echo",
 		Description: "Echo the arguments.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return string(args), nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(string(args)), nil
 		},
 	})
 }

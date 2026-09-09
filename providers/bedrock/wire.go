@@ -127,13 +127,13 @@ type wireReasoningText struct {
 	Signature string `json:"signature,omitempty"`
 }
 
+// wireToolResult carries one execution outcome. Content holds the result
+// text plus any image or document evidence the tool produced; Status is
+// "error" for a definitive failure the model should see.
 type wireToolResult struct {
-	ToolUseID string         `json:"toolUseId"`
-	Content   []wireTextOnly `json:"content"`
-}
-
-type wireTextOnly struct {
-	Text string `json:"text"`
+	ToolUseID string      `json:"toolUseId"`
+	Content   []wireBlock `json:"content"`
+	Status    string      `json:"status,omitempty"`
 }
 
 type wireSystem struct {
@@ -229,10 +229,10 @@ func toWireMessages(messages []model.Message) (system []wireSystem, turns []wire
 			blocks = assistantBlocks(message)
 		case model.RoleTool:
 			role = "user"
-			blocks = []wireBlock{{ToolResult: &wireToolResult{
-				ToolUseID: message.ToolCallID,
-				Content:   []wireTextOnly{{Text: message.Content}},
-			}}}
+			blocks, err = toolResultBlocks(message)
+			if err != nil {
+				return nil, nil, err
+			}
 		default:
 			role = "user"
 			blocks, err = userBlocks(message)
@@ -324,6 +324,73 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 		blocks = []wireBlock{{Text: message.Content}}
 	}
 	return blocks, nil
+}
+
+// toolResultBlocks renders one tool outcome: a toolResult block whose
+// content carries the result text plus any image or document evidence the
+// tool produced, under the same Converse rules as prompt parts — inline
+// bytes only, the same accepted formats. Other part kinds fail before any
+// request. A definitive failure sets status "error" so the provider
+// surfaces the outcome as failed.
+func toolResultBlocks(message model.Message) ([]wireBlock, error) {
+	content := make([]wireBlock, 0, 1+len(message.Parts))
+	if message.Content != "" {
+		content = append(content, wireBlock{Text: message.Content})
+	}
+	for i, part := range message.Parts {
+		block, err := partBlock(i, part)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, block)
+	}
+	if len(content) == 0 {
+		content = append(content, wireBlock{Text: message.Content})
+	}
+	status := ""
+	if message.Failed {
+		status = "error"
+	}
+	return []wireBlock{{ToolResult: &wireToolResult{
+		ToolUseID: message.ToolCallID,
+		Content:   content,
+		Status:    status,
+	}}}, nil
+}
+
+// partBlock renders one tool-result part under Converse's inline-only
+// rules: base64 image bytes in the png, jpeg, gif, and webp formats, or
+// an inline document in one of the accepted formats.
+func partBlock(i int, part model.Part) (wireBlock, error) {
+	switch part.Kind {
+	case model.PartImage:
+		if part.URL != "" {
+			return wireBlock{}, fmt.Errorf("%w: image URL parts; fetch the image and attach it inline", ErrUnsupportedContent)
+		}
+		format, ok := strings.CutPrefix(part.MediaType, "image/")
+		if !ok || format == "" {
+			return wireBlock{}, fmt.Errorf("%w: image media type %q; Converse accepts image/png, image/jpeg, image/gif, or image/webp", ErrUnsupportedContent, part.MediaType)
+		}
+		return wireBlock{Image: &wireImage{
+			Format: format,
+			Source: wireImageSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
+		}}, nil
+	case model.PartDocument:
+		if part.URL != "" {
+			return wireBlock{}, fmt.Errorf("%w: document URL parts; fetch the document and attach it inline", ErrUnsupportedContent)
+		}
+		format, ok := documentFormat(part.MediaType)
+		if !ok {
+			return wireBlock{}, fmt.Errorf("%w: document media type %q; Converse accepts application/pdf, text/plain, text/markdown, text/html, text/csv, and the Office formats", ErrUnsupportedContent, part.MediaType)
+		}
+		return wireBlock{Document: &wireDocument{
+			Name:   fmt.Sprintf("document-%d", i+1),
+			Format: format,
+			Source: wireDocumentSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
+		}}, nil
+	default:
+		return wireBlock{}, fmt.Errorf("%w: %s parts; Converse accepts image and document parts in a tool result only", ErrUnsupportedContent, part.Kind)
+	}
 }
 
 func toWireToolConfig(specs []model.ToolSpec) *wireToolConfig {

@@ -81,9 +81,9 @@ func TestOutputToolCoEmittedCallsAreNotExecuted(t *testing.T) {
 		Name:        "roll",
 		Description: "Roll a die.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			executions++
-			return "6", nil
+			return tool.Text("6"), nil
 		},
 	})
 	client := &queuedModel{responses: []model.Response{{Message: model.Message{
@@ -212,7 +212,9 @@ func TestNewValidatesOutputToolConfiguration(t *testing.T) {
 	roll := tool.MustNew(tool.Tool[struct{}]{
 		Name:   "roll",
 		Schema: json.RawMessage(`{"type":"object"}`),
-		Exec:   func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) { return "6", nil },
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("6"), nil
+		},
 	})
 	if _, err := golem.New[struct{}, weather](&queuedModel{}, golem.DecodeJSON[weather](),
 		golem.WithTools[struct{}, weather](roll),

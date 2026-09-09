@@ -152,7 +152,11 @@ func TestGenerateTranslatesRequestAndResponse(t *testing.T) {
 				Name      string          `json:"name,omitempty"`
 				Input     json.RawMessage `json:"input,omitempty"`
 				ToolUseID string          `json:"tool_use_id,omitempty"`
-				Content   string          `json:"content,omitempty"`
+				Content   []struct {
+					Type string `json:"type"`
+					Text string `json:"text,omitempty"`
+				} `json:"content"`
+				IsError bool `json:"is_error,omitempty"`
 			} `json:"content"`
 		} `json:"messages"`
 		Tools []struct {
@@ -197,7 +201,8 @@ func TestGenerateTranslatesRequestAndResponse(t *testing.T) {
 	}
 	third := sent.Messages[2]
 	if third.Role != "user" || len(third.Content) != 3 ||
-		third.Content[0].Type != "tool_result" || third.Content[0].ToolUseID != "toolu-1" || third.Content[0].Content != "rolled 1" ||
+		third.Content[0].Type != "tool_result" || third.Content[0].ToolUseID != "toolu-1" ||
+		len(third.Content[0].Content) != 1 || third.Content[0].Content[0].Type != "text" || third.Content[0].Content[0].Text != "rolled 1" ||
 		third.Content[1].Type != "tool_result" || third.Content[1].ToolUseID != "toolu-2" ||
 		third.Content[2].Type != "text" || third.Content[2].Text != "Now roll two." {
 		t.Fatalf("merged user turn = %#v", third)

@@ -33,14 +33,14 @@ func gateClient(t *testing.T, responses ...model.Response) (*queuedModel, *golem
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
 			rec.runs++
 			rec.approved = tool.CallApproved(ctx)
 			if !tool.CallApproved(ctx) {
-				return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "deletes need sign-off"}
+				return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "deletes need sign-off"}
 			}
 			rec.deletions = append(rec.deletions, string(args))
-			return "deleted", nil
+			return tool.Text("deleted"), nil
 		},
 	})
 	agent, err := golem.New[gateDeps, string](
@@ -122,17 +122,17 @@ func TestRunPausesWithMixedBatchExecutesTheRest(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
 			rec.runs++
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 		},
 	})
 	stat := tool.MustNew(tool.Tool[gateDeps]{
 		Name:        "stat_file",
 		Description: "Stat a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "size=12", nil
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("size=12"), nil
 		},
 	})
 	client := &queuedModel{responses: []model.Response{
@@ -173,8 +173,8 @@ func TestRunPausesOnExternalDeferredTool(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Start a report build.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Kind: tool.DeferExternal, Reason: "job-7"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferExternal, Reason: "job-7"}
 		},
 	})
 	agent, err := golem.New[gateDeps, string](
@@ -237,13 +237,13 @@ func mustGatedDeleter(t *testing.T, rec *gateRecorder) tool.Tool[gateDeps] {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
 			rec.runs++
 			rec.approved = tool.CallApproved(ctx)
 			if !tool.CallApproved(ctx) {
-				return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+				return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 			}
-			return "deleted", nil
+			return tool.Text("deleted"), nil
 		},
 	})
 }
@@ -255,8 +255,8 @@ func TestRunFailsWhenToolDefersWithoutKind(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Defers without a kind.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Reason: "oops"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Reason: "oops"}
 		},
 	})
 	agent, err := golem.New[gateDeps, string](
@@ -347,8 +347,8 @@ func TestResumeExternalResultReachesModelVerbatim(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Start a report build.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Kind: tool.DeferExternal, Reason: "job-7"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferExternal, Reason: "job-7"}
 		},
 	})
 	client := &queuedModel{responses: []model.Response{
@@ -391,8 +391,8 @@ func TestResumeResolutionsInterleaveInEmissionOrder(t *testing.T) {
 		Name:        "stat_file",
 		Description: "Stat a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "size=12", nil
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("size=12"), nil
 		},
 	})
 	client := &queuedModel{responses: []model.Response{
@@ -501,11 +501,11 @@ func TestResumeApprovedRerunFailureIsToolStage(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
 			if !tool.CallApproved(ctx) {
-				return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+				return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 			}
-			return "", errors.New("disk on fire")
+			return tool.Result{}, errors.New("disk on fire")
 		},
 	})
 	client := &queuedModel{responses: []model.Response{
@@ -543,8 +543,8 @@ func TestResumeApprovedRerunDeferringAgainFails(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "again"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "again"}
 		},
 	})
 	client := &queuedModel{responses: []model.Response{

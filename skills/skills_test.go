@@ -174,7 +174,7 @@ func TestFirstDirWinsOnDuplicateNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if !strings.Contains(result, "first body") {
+	if !strings.Contains(result.Text, "first body") {
 		t.Errorf("Exec result = %q, want the first dir's body", result)
 	}
 }
@@ -206,7 +206,7 @@ func TestLoadReturnsBodyBaseDirAndFiles(t *testing.T) {
 		"</skill_files>",
 		"</skill_content>",
 	} {
-		if !strings.Contains(result, want) {
+		if !strings.Contains(result.Text, want) {
 			t.Errorf("Exec result missing %q:\n%s", want, result)
 		}
 	}
@@ -219,7 +219,7 @@ func TestLoadWithoutSupportingFilesOmitsFileList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if strings.Contains(result, "<skill_files>") {
+	if strings.Contains(result.Text, "<skill_files>") {
 		t.Errorf("result should omit skill_files when the skill has no extra files:\n%s", result)
 	}
 }
@@ -268,7 +268,7 @@ func TestTruncatesLargeBodies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if !strings.Contains(result, strings.Repeat("a", 16)+"\n\n[skills: body truncated at 16 bytes]") {
+	if !strings.Contains(result.Text, strings.Repeat("a", 16)+"\n\n[skills: body truncated at 16 bytes]") {
 		t.Errorf("Exec result missing truncated body:\n%s", result)
 	}
 }

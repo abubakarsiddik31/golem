@@ -26,8 +26,8 @@ func main() {
 		Name:        "lookup_city",
 		Description: "Look up a city's population.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "population 12,500,000", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("population 12,500,000"), nil
 		},
 	})
 

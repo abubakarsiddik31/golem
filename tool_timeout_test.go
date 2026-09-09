@@ -20,9 +20,9 @@ func TestAgentRunTimesOutToolWithItsContext(t *testing.T) {
 		Description: "Wait for cancellation.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
 		Timeout:     time.Nanosecond,
-		Exec: func(ctx context.Context, _ struct{}, _ json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, _ struct{}, _ json.RawMessage) (tool.Result, error) {
 			<-ctx.Done()
-			return "", ctx.Err()
+			return tool.Result{}, ctx.Err()
 		},
 	})
 	client := &queuedModel{responses: []model.Response{{Message: model.Message{

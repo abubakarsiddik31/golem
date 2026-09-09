@@ -95,7 +95,7 @@ func TestRunCapturesCombinedOutput(t *testing.T) {
 	}
 	// Stdout and stderr share one pipe, so arrival order is the
 	// command's write order.
-	if result != "out\nerr\n" {
+	if result.Text != "out\nerr\n" {
 		t.Errorf("Exec result = %q, want combined %q", result, "out\nerr\n")
 	}
 }
@@ -125,7 +125,7 @@ func TestRunNonZeroExitIsSuccessfulResult(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Exec error = %v; a non-zero exit is evidence for the model, not a failure", err)
 			}
-			if result != testCase.want {
+			if result.Text != testCase.want {
 				t.Errorf("Exec result = %q, want %q", result, testCase.want)
 			}
 		})
@@ -140,7 +140,7 @@ func TestRunOutputTruncated(t *testing.T) {
 		t.Fatalf("Exec error = %v", err)
 	}
 	want := strings.Repeat("a", 8) + "\n\n[shell: output truncated at 8 bytes]"
-	if result != want {
+	if result.Text != want {
 		t.Errorf("Exec result = %q, want %q", result, want)
 	}
 }
@@ -192,7 +192,7 @@ func TestRunEnvAndDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if result != "hello\n" {
+	if result.Text != "hello\n" {
 		t.Errorf("Exec result = %q, want %q", result, "hello\n")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker.txt")); err != nil {
