@@ -52,15 +52,15 @@ func asTool[Deps any](client *Client, info ToolInfo) (tool.Tool[Deps], error) {
 		Name:        info.Name,
 		Description: info.Description,
 		Schema:      schema,
-		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (tool.Result, error) {
 			result, err := client.CallTool(ctx, info.Name, args)
 			if err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			if result.IsError {
-				return "", &model.ModelRetry{Err: serverToolError(info.Name, result)}
+				return tool.Result{}, &model.ModelRetry{Err: serverToolError(info.Name, result)}
 			}
-			return result.Text(), nil
+			return tool.Text(result.Text()), nil
 		},
 	})
 }

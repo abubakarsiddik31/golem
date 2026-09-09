@@ -47,14 +47,14 @@ func main() {
 			"properties": {"player_id": {"type": "integer", "description": "The player's numeric id."}},
 			"required": ["player_id"]
 		}`),
-		Exec: func(ctx context.Context, deps roster, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps roster, args json.RawMessage) (tool.Result, error) {
 			var input struct {
 				PlayerID int `json:"player_id"`
 			}
 			if err := json.Unmarshal(args, &input); err != nil {
-				return "", fmt.Errorf("decode get_player_name args: %w", err)
+				return tool.Result{}, fmt.Errorf("decode get_player_name args: %w", err)
 			}
-			return fmt.Sprintf("%s (id %d)", deps.PlayerName, input.PlayerID), nil
+			return tool.Text(fmt.Sprintf("%s (id %d)", deps.PlayerName, input.PlayerID)), nil
 		},
 	})
 

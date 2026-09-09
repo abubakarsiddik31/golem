@@ -24,8 +24,8 @@ func main() {
 		Name:        "lookup",
 		Description: "Look up a fact.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "golem agents preserve evidence", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("golem agents preserve evidence"), nil
 		},
 	})
 	decoder := golem.DecodeFunc[string](func(_ context.Context, response model.Response) (string, error) {

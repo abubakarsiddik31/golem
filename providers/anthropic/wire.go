@@ -109,9 +109,12 @@ type wireBlock struct {
 	Name  string          `json:"name,omitempty"`
 	Input json.RawMessage `json:"input,omitempty"`
 	// ToolUseID correlates a "tool_result" block with its requested call;
-	// Result carries the outcome handed back to the model.
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	Result    string `json:"content,omitempty"`
+	// Result carries the outcome handed back to the model — the result
+	// text plus any image or document evidence the tool produced — and
+	// IsError marks a definitive failure the model should see.
+	ToolUseID string      `json:"tool_use_id,omitempty"`
+	Result    []wireBlock `json:"content,omitempty"`
+	IsError   bool        `json:"is_error,omitempty"`
 	// Source carries an "image" or "document" block's payload: a
 	// provider-fetched URL or base64 inline data with its media type.
 	Source *wireSource `json:"source,omitempty"`
@@ -191,11 +194,10 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage, 
 			blocks = assistantBlocks(message)
 		case model.RoleTool:
 			role = "user"
-			blocks = []wireBlock{{
-				Type:      "tool_result",
-				ToolUseID: message.ToolCallID,
-				Result:    message.Content,
-			}}
+			blocks, err = toolResultBlocks(message)
+			if err != nil {
+				return "", nil, err
+			}
 		default:
 			role = "user"
 			blocks, err = userBlocks(message)
@@ -210,6 +212,42 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage, 
 		turns = append(turns, wireMessage{Role: role, Content: blocks})
 	}
 	return strings.Join(systemParts, "\n\n"), turns, nil
+}
+
+// toolResultBlocks renders one tool outcome: a "tool_result" block whose
+// content carries the result text plus any image or document evidence the
+// tool produced. The Messages API takes images and PDF documents inside a
+// tool result; other part kinds fail before any request. A definitive
+// failure sets is_error so the provider surfaces the outcome as failed.
+func toolResultBlocks(message model.Message) ([]wireBlock, error) {
+	content := make([]wireBlock, 0, 1+len(message.Parts))
+	if message.Content != "" {
+		content = append(content, wireBlock{Type: "text", Text: message.Content})
+	}
+	for i, part := range message.Parts {
+		switch part.Kind {
+		case model.PartImage:
+			content = append(content, imageBlock(part))
+		case model.PartDocument:
+			block, err := documentBlock(i, part)
+			if err != nil {
+				return nil, err
+			}
+			content = append(content, block)
+		default:
+			return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+				"tool result part %d kind %q; the Messages API accepts image and document parts in a tool result only", i, part.Kind)}
+		}
+	}
+	if len(content) == 0 {
+		content = append(content, wireBlock{Type: "text", Text: message.Content})
+	}
+	return []wireBlock{{
+		Type:      "tool_result",
+		ToolUseID: message.ToolCallID,
+		Result:    content,
+		IsError:   message.Failed,
+	}}, nil
 }
 
 // assistantBlocks renders an assistant message: its reasoning blocks
@@ -254,25 +292,11 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 		case model.PartImage:
 			blocks = append(blocks, imageBlock(part))
 		case model.PartDocument:
-			if part.URL == "" && part.MediaType != "application/pdf" {
-				return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
-					"document part %d media type %q; the Messages API accepts application/pdf documents", i, part.MediaType)}
+			block, err := documentBlock(i, part)
+			if err != nil {
+				return nil, err
 			}
-			if part.URL != "" {
-				blocks = append(blocks, wireBlock{
-					Type:   "document",
-					Source: &wireSource{Type: "url", URL: part.URL},
-				})
-				continue
-			}
-			blocks = append(blocks, wireBlock{
-				Type: "document",
-				Source: &wireSource{
-					Type:      "base64",
-					MediaType: part.MediaType,
-					Data:      base64.StdEncoding.EncodeToString(part.Data),
-				},
-			})
+			blocks = append(blocks, block)
 		default:
 			return nil, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
 				"part %d kind %q; the Messages API accepts image and document parts only", i, part.Kind)}
@@ -282,6 +306,30 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 		blocks = []wireBlock{{Type: "text", Text: message.Content}}
 	}
 	return blocks, nil
+}
+
+// documentBlock renders one document part: a provider-fetched URL
+// source, or base64 inline data with its media type. The Messages API
+// accepts application/pdf documents only.
+func documentBlock(i int, part model.Part) (wireBlock, error) {
+	if part.URL == "" && part.MediaType != "application/pdf" {
+		return wireBlock{}, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
+			"document part %d media type %q; the Messages API accepts application/pdf documents", i, part.MediaType)}
+	}
+	if part.URL != "" {
+		return wireBlock{
+			Type:   "document",
+			Source: &wireSource{Type: "url", URL: part.URL},
+		}, nil
+	}
+	return wireBlock{
+		Type: "document",
+		Source: &wireSource{
+			Type:      "base64",
+			MediaType: part.MediaType,
+			Data:      base64.StdEncoding.EncodeToString(part.Data),
+		},
+	}, nil
 }
 
 // imageBlock renders one image part: a provider-fetched URL source, or

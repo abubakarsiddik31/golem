@@ -24,8 +24,8 @@ func echoToolFor(deps struct{}) tool.Tool[struct{}] {
 		Name:        "echo",
 		Description: "Echo a fixed reply.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "echoed", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("echoed"), nil
 		},
 	})
 }
@@ -96,8 +96,8 @@ func TestToolFailureKeepsPartialEvidence(t *testing.T) {
 	)
 	explode := tool.MustNew(tool.Tool[struct{}]{
 		Name: "explode", Description: "Always fails.", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "", errors.New("tool exploded")
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, errors.New("tool exploded")
 		},
 	})
 
@@ -163,9 +163,9 @@ func TestCancellationKeepsPartialEvidence(t *testing.T) {
 	)
 	cancelling := tool.MustNew(tool.Tool[struct{}]{
 		Name: "echo", Description: "Cancels the run.", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			cancel()
-			return "last words", nil
+			return tool.Text("last words"), nil
 		},
 	})
 
@@ -204,9 +204,9 @@ func TestToolTimeoutKeepsPartialEvidence(t *testing.T) {
 	)
 	hang := tool.MustNew(tool.Tool[struct{}]{
 		Name: "hang", Description: "Blocks until its deadline.", Schema: json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			<-ctx.Done()
-			return "", ctx.Err()
+			return tool.Result{}, ctx.Err()
 		},
 	})
 

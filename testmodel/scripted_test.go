@@ -154,8 +154,8 @@ func TestScriptedDrivesAnAgentEndToEnd(t *testing.T) {
 		Name:        "get_player_name",
 		Description: "Get the player's name.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "Anne", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("Anne"), nil
 		},
 	})
 	agent, err := golem.New[struct{}, string](client,

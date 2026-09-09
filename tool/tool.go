@@ -9,7 +9,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/abubakarsiddik31/golem/model"
 )
+
+// Result is what one tool execution hands back to the model. Text is the
+// conventional tool result; Parts attach non-text evidence — images,
+// documents, audio, video — to the same call. Where a provider cannot
+// carry a part inside its tool-result channel, the adapter frames the
+// part onto the user channel with tags naming the call, or fails before
+// the request when it has no way to send it at all; either way the
+// decision is documented per adapter and never silently drops content.
+type Result struct {
+	// Text is the tool result text the model reads beside any parts.
+	Text string
+	// Parts is optional non-text evidence produced by this call. Parts
+	// must be well-formed (see model.Part.Validate); a malformed part
+	// fails the run at the tool stage.
+	Parts []model.Part
+}
+
+// Text returns a text-only Result, the shape a pre-parts tool returned.
+func Text(s string) Result {
+	return Result{Text: s}
+}
+
+// Failed is a definitive tool failure: the call completed but produced no
+// usable outcome — a missing resource, an unsupported operation, an
+// upstream error. Returning it records the failure as the tool's result
+// so the model sees it and decides what to do next; the run continues and
+// the tool's retry budget is untouched. Use *model.ModelRetry instead
+// when the model should correct the call and try again.
+type Failed struct {
+	// Reason is the model-visible failure description.
+	Reason string
+}
+
+func (f *Failed) Error() string {
+	return "tool failed: " + f.Reason
+}
 
 // Tool is one executable capability offered to a model. Deps is the agent's
 // declared dependency type; the same value flows to every tool in a run.
@@ -22,12 +60,15 @@ type Tool[Deps any] struct {
 	Description string
 	// Schema is a JSON Schema document describing the arguments object.
 	Schema json.RawMessage
-	// Exec runs the tool and returns the text handed back to the model. It
-	// must honor ctx cancellation and return a classified error rather than
-	// logging it. Returning an error that wraps *model.ModelRetry rejects
-	// this call as correctable: with a tool retry budget configured, the
-	// run feeds the rejection back to the model.
-	Exec func(ctx context.Context, deps Deps, args json.RawMessage) (string, error)
+	// Exec runs the tool and returns the result handed back to the model —
+	// text plus optional non-text parts. It must honor ctx cancellation and
+	// return a classified error rather than logging it. Returning an error
+	// that wraps *model.ModelRetry rejects this call as correctable: with a
+	// tool retry budget configured, the run feeds the rejection back to the
+	// model. Returning &tool.Failed records the failure as the tool's
+	// result — the model sees it, the run continues, the retry budget is
+	// untouched.
+	Exec func(ctx context.Context, deps Deps, args json.RawMessage) (Result, error)
 	// MaxRetries overrides the agent's tool-rejection budget for this tool.
 	// Nil inherits the agent setting; a pointer to zero permits no correction.
 	MaxRetries *int

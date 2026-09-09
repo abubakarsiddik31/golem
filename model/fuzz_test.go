@@ -33,6 +33,8 @@ func FuzzMessageJSONIsDurable(f *testing.F) {
 	f.Add([]byte(`[null]`))
 	f.Add([]byte(`[]`))
 	f.Add([]byte(`[{"role":"user","content":"truncated"`))
+	f.Add([]byte(`[{"role":"tool","content":"mailbox is read-only","toolCallId":"c1","toolName":"archive","failed":true}]`))
+	f.Add([]byte(`[{"role":"tool","content":"screenshot","toolCallId":"c1","toolName":"camera","parts":[{"kind":"image","data":"AQID","mediaType":"image/png"}]}]`))
 	f.Add([]byte(`not json at all`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {

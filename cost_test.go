@@ -107,8 +107,8 @@ func TestPendingRunCarriesCost(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "deletes need sign-off"}
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "deletes need sign-off"}
 		},
 	})
 	client := &queuedModel{responses: []model.Response{pauseResponse("delete_file")}}

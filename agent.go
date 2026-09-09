@@ -287,10 +287,12 @@ func WithPromptImageData(mediaType string, data []byte) RunOption {
 }
 
 // validatePromptInput checks the parts this run attaches: every part is
-// well-formed, and history carries parts only on user messages. Thinking
-// gets the mirror-image rule: reasoning blocks belong to assistant
-// messages, so history carrying them elsewhere fails here. Validation
-// runs before any model call so invalid input never reaches a provider.
+// well-formed, parts ride user messages and tool messages only (user
+// prompts, and evidence tools produced), and history carries no parts on
+// any other role. Thinking gets the mirror-image rule: reasoning blocks
+// belong to assistant messages, so history carrying them elsewhere fails
+// here. Validation runs before any model call so invalid input never
+// reaches a provider.
 func validatePromptInput(promptParts []model.Part, history []model.Message) error {
 	for i, part := range promptParts {
 		if err := part.Validate(); err != nil {
@@ -298,8 +300,8 @@ func validatePromptInput(promptParts []model.Part, history []model.Message) erro
 		}
 	}
 	for i, message := range history {
-		if message.Role != model.RoleUser && len(message.Parts) > 0 {
-			return fmt.Errorf("golem: history message %d: parts are only supported on user messages", i)
+		if message.Role != model.RoleUser && message.Role != model.RoleTool && len(message.Parts) > 0 {
+			return fmt.Errorf("golem: history message %d: parts are only supported on user and tool messages", i)
 		}
 		for j, part := range message.Parts {
 			if err := part.Validate(); err != nil {

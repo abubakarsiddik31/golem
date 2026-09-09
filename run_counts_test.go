@@ -103,17 +103,17 @@ func TestPausedResultCarriesActivityCounts(t *testing.T) {
 		Name:        "delete_file",
 		Description: "Delete a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
 			rec.runs++
-			return "", &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
+			return tool.Result{}, &tool.Deferred{Kind: tool.DeferApproval, Reason: "sign-off"}
 		},
 	})
 	stat := tool.MustNew(tool.Tool[gateDeps]{
 		Name:        "stat_file",
 		Description: "Stat a file.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (string, error) {
-			return "size=12", nil
+		Exec: func(ctx context.Context, deps gateDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("size=12"), nil
 		},
 	})
 	client := &queuedModel{responses: []model.Response{
@@ -187,8 +187,8 @@ func TestDelegatedActivityStaysInSubAgentResult(t *testing.T) {
 		Name:        "lookup",
 		Description: "Look up a fact.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps delegationDeps, args json.RawMessage) (string, error) {
-			return "capital of France: Paris", nil
+		Exec: func(ctx context.Context, deps delegationDeps, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("capital of France: Paris"), nil
 		},
 	})
 	inner, err := golem.New[delegationDeps, string](innerModel, golem.DecodeFunc[string](decodeContent),
@@ -248,8 +248,8 @@ func countingTool(t *testing.T) (*queuedModel, tool.Tool[struct{}]) {
 		Name:        "roll",
 		Description: "Roll a die.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
-			return "six", nil
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
+			return tool.Text("six"), nil
 		},
 	})
 	return client, roll

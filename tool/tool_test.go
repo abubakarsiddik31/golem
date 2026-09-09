@@ -12,7 +12,9 @@ import (
 
 type deps struct{ Tenant string }
 
-func validExec(context.Context, deps, json.RawMessage) (string, error) { return "", nil }
+func validExec(context.Context, deps, json.RawMessage) (tool.Result, error) {
+	return tool.Result{}, nil
+}
 
 func TestNewRejectsInvalidToolDeclarations(t *testing.T) {
 	t.Parallel()
@@ -66,9 +68,9 @@ func TestMetadataIsInspectableWithoutExecution(t *testing.T) {
 		Name:        "roll_dice",
 		Description: "Roll a six-sided die.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"guess":{"type":"integer"}}}`),
-		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
+		Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
 			executions++
-			return "", nil
+			return tool.Result{}, nil
 		},
 	})
 	if err != nil {
@@ -100,9 +102,9 @@ func TestExecReceivesContextDepsAndRawArgs(t *testing.T) {
 		Name:        "echo",
 		Description: "Echo the tenant.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, d deps, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, d deps, args json.RawMessage) (tool.Result, error) {
 			got = capture{ctx: ctx, deps: d, args: args}
-			return "ok", nil
+			return tool.Text("ok"), nil
 		},
 	})
 	if err != nil {
@@ -115,7 +117,7 @@ func TestExecReceivesContextDepsAndRawArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec() error = %v", err)
 	}
-	if output != "ok" {
+	if output.Text != "ok" {
 		t.Fatalf("Exec() output = %q, want ok", output)
 	}
 	if got.ctx != ctx {
@@ -137,8 +139,8 @@ func TestExecFailureIsReturnedNotSwallowed(t *testing.T) {
 		Name:        "failing",
 		Description: "Always fails.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(context.Context, deps, json.RawMessage) (string, error) {
-			return "", cause
+		Exec: func(context.Context, deps, json.RawMessage) (tool.Result, error) {
+			return tool.Result{}, cause
 		},
 	})
 	if err != nil {

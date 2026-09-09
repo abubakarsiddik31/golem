@@ -159,7 +159,7 @@ type wireUsageMeta struct {
 // of the same role — function responses after a model turn, or a user
 // prompt after function responses — merge into one turn, because parts of
 // one turn share its role.
-func toWireContents(messages []model.Message) (system *wireSystem, contents []wireContent) {
+func toWireContents(messages []model.Message) (system *wireSystem, contents []wireContent, err error) {
 	var systemParts []wirePart
 	for _, message := range messages {
 		var role string
@@ -173,10 +173,10 @@ func toWireContents(messages []model.Message) (system *wireSystem, contents []wi
 			parts = modelParts(message)
 		case model.RoleTool:
 			role = "user"
-			parts = []wirePart{{FunctionResponse: &wireFunctionResponse{
-				Name:     message.ToolName,
-				Response: json.RawMessage(`{"result":` + quoteJSON(message.Content) + `}`),
-			}}}
+			parts, err = toolResponseParts(message)
+			if err != nil {
+				return nil, nil, err
+			}
 		default:
 			role = "user"
 			parts = userParts(message)
@@ -190,7 +190,7 @@ func toWireContents(messages []model.Message) (system *wireSystem, contents []wi
 	if len(systemParts) > 0 {
 		system = &wireSystem{Parts: systemParts}
 	}
-	return system, contents
+	return system, contents, nil
 }
 
 // modelParts renders an assistant message: its reasoning parts first —
@@ -341,4 +341,49 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 		},
 		FinishReason: finishReason(wire.Candidates[0].FinishReason),
 	}, nil
+}
+
+// toolResponseParts renders one tool outcome: a functionResponse part
+// carrying the result text — or a JSON error object for a definitive
+// failure — plus any media the tool produced, framed with attribution
+// tags, because a function response carries a JSON object only.
+func toolResponseParts(message model.Message) ([]wirePart, error) {
+	value := `{"result":` + quoteJSON(message.Content) + `}`
+	if message.Failed {
+		value = `{"error":` + quoteJSON(message.Content) + `}`
+	}
+	parts := []wirePart{{FunctionResponse: &wireFunctionResponse{
+		Name:     message.ToolName,
+		Response: json.RawMessage(value),
+	}}}
+	if len(message.Parts) == 0 {
+		return parts, nil
+	}
+	parts = append(parts, wirePart{Text: fmt.Sprintf("<tool_result tool_name=%q tool_call_id=%q>\n", message.ToolName, message.ToolCallID)})
+	for i, part := range message.Parts {
+		media, err := mediaPart(i, part)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, media)
+	}
+	parts = append(parts, wirePart{Text: "\n</tool_result>"})
+	return parts, nil
+}
+
+// mediaPart renders one media part the way user parts render: a URL the
+// provider fetches becomes fileData; inline data becomes base64
+// inlineData.
+func mediaPart(i int, part model.Part) (wirePart, error) {
+	_ = i
+	if part.URL != "" {
+		return wirePart{FileData: &wireFileData{FileURI: part.URL, MimeType: part.MediaType}}, nil
+	}
+	if len(part.Data) == 0 {
+		return wirePart{}, fmt.Errorf("media part %d carries neither a URL nor inline data", i)
+	}
+	return wirePart{InlineData: &wireInlineData{
+		MimeType: part.MediaType,
+		Data:     base64.StdEncoding.EncodeToString(part.Data),
+	}}, nil
 }

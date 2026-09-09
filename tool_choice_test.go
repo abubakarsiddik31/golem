@@ -13,7 +13,7 @@ import (
 func TestWithToolChoiceAdvertisesOnlyChosenTool(t *testing.T) {
 	t.Parallel()
 	makeTool := func(name string) tool.Tool[struct{}] {
-		return tool.MustNew(tool.Tool[struct{}]{Name: name, Description: name, Schema: json.RawMessage(`{}`), Exec: func(context.Context, struct{}, json.RawMessage) (string, error) { return "", nil }})
+		return tool.MustNew(tool.Tool[struct{}]{Name: name, Description: name, Schema: json.RawMessage(`{}`), Exec: func(context.Context, struct{}, json.RawMessage) (tool.Result, error) { return tool.Result{}, nil }})
 	}
 	client := &queuedModel{responses: []model.Response{{Message: model.Message{Role: model.RoleAssistant, Content: "done"}}}}
 	agent, err := golem.New[struct{}, string](client, decoderOf(),

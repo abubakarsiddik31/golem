@@ -272,8 +272,9 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 		Name:        ToolName,
 		Description: catalogDescription(found),
 		Schema:      schema,
-		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (string, error) {
-			return l.load(ctx, args)
+		Exec: func(ctx context.Context, deps Deps, args json.RawMessage) (tool.Result, error) {
+			text, err := l.load(ctx, args)
+			return tool.Text(text), err
 		},
 	})
 }

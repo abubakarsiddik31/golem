@@ -25,8 +25,24 @@
   `PartialResult.Cost`, and `UsageLimit.Cost` enforces a post-response
   cost bound — the bound without a price fails construction.
 
+- **Tool-result parts and definitive tool failures.** `tool.Tool.Exec`
+  returns a `tool.Result` — result text plus `model.Part` evidence —
+  so a tool can hand the model the image or document it produced
+  (`tool.Text` migrates text-only tools; decision in ADR 0025).
+  Adapters place the parts where their API carries them: inside the
+  tool result on Anthropic and Bedrock, framed onto one attributed
+  user message on OpenAI, Azure, and Gemini; an adapter that cannot
+  carry a kind fails before the request rather than dropping it.
+  `&tool.Failed{Reason}` records a definitive failure as the tool's
+  result on a `model.Message` flagged `Failed` — the model sees it,
+  the run continues, and no retry budget is consumed.
+
 ### Changed
 
+- **`tool.Tool.Exec` now returns `(tool.Result, error)` instead of
+  `(string, error)`.** Wrap the returned string with `tool.Text(s)` to
+  migrate; the compiler finds every call site. See the Added entry on
+  tool-result parts.
 - **`UsageLimitError.Limit` and `.Actual` are now `float64`.** One error
   shape covers every bounded dimension, and cost bounds are dollar
   amounts; integer literals at existing call sites are unaffected.

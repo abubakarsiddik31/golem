@@ -16,13 +16,13 @@ func TestAgentRunExecutesParallelToolsAndPreservesEvidenceOrder(t *testing.T) {
 	makeTool := func(name string) tool.Tool[struct{}] {
 		return tool.MustNew(tool.Tool[struct{}]{
 			Name: name, Description: name, Schema: json.RawMessage(`{"type":"object"}`),
-			Exec: func(ctx context.Context, _ struct{}, _ json.RawMessage) (string, error) {
+			Exec: func(ctx context.Context, _ struct{}, _ json.RawMessage) (tool.Result, error) {
 				entered <- name
 				select {
 				case <-release:
-					return name + " result", nil
+					return tool.Text(name + " result"), nil
 				case <-ctx.Done():
-					return "", ctx.Err()
+					return tool.Result{}, ctx.Err()
 				}
 			},
 		})

@@ -154,17 +154,17 @@ func ExampleWithToolRetries() {
 		Name:        "roll",
 		Description: "Roll a die; n must be positive.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
-		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps struct{}, args json.RawMessage) (tool.Result, error) {
 			var input struct {
 				N int `json:"n"`
 			}
 			if err := json.Unmarshal(args, &input); err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			if input.N <= 0 {
-				return "", &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
+				return tool.Result{}, &model.ModelRetry{Err: fmt.Errorf("n must be positive, got %d", input.N)}
 			}
-			return fmt.Sprintf("rolled %d", input.N), nil
+			return tool.Text(fmt.Sprintf("rolled %d", input.N)), nil
 		},
 	})
 
@@ -407,8 +407,8 @@ func ExampleAgent() {
 		Name:        "get_player_name",
 		Description: "Get the player's name.",
 		Schema:      json.RawMessage(`{"type":"object"}`),
-		Exec: func(ctx context.Context, playerName string, args json.RawMessage) (string, error) {
-			return playerName, nil
+		Exec: func(ctx context.Context, playerName string, args json.RawMessage) (tool.Result, error) {
+			return tool.Text(playerName), nil
 		},
 	})
 

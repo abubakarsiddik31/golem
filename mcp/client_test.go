@@ -343,7 +343,7 @@ func TestAsToolsBridgesServerTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if result != "echo: hi" {
+	if result.Text != "echo: hi" {
 		t.Errorf("Exec result = %q, want %q", result, "echo: hi")
 	}
 }

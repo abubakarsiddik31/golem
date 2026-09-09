@@ -217,7 +217,37 @@ type chatErrorBody struct {
 
 func toWireMessages(messages []model.Message) ([]chatMessage, error) {
 	wire := make([]chatMessage, 0, len(messages))
-	for _, message := range messages {
+	for i := 0; i < len(messages); i++ {
+		message := messages[i]
+		if message.Role == model.RoleTool {
+			// Consecutive tool results stay adjacent to the assistant turn
+			// that requested them. Their media cannot ride the tool message
+			// — chat completions carry text only there — so every part in
+			// the run is framed onto one synthetic user message emitted
+			// after the results, each frame naming the call that produced
+			// the content.
+			j := i
+			var framed []chatContentPart
+			for ; j < len(messages) && messages[j].Role == model.RoleTool; j++ {
+				content, err := toolResultContent(messages[j])
+				if err != nil {
+					return nil, err
+				}
+				wire = append(wire, chatMessage{Role: "tool", Content: content, ToolCallID: messages[j].ToolCallID})
+				if len(messages[j].Parts) > 0 {
+					parts, err := framedToolParts(messages[j])
+					if err != nil {
+						return nil, err
+					}
+					framed = append(framed, parts...)
+				}
+			}
+			if len(framed) > 0 {
+				wire = append(wire, chatMessage{Role: "user", Content: framed})
+			}
+			i = j - 1
+			continue
+		}
 		content, err := toWireContent(message)
 		if err != nil {
 			return nil, err
@@ -230,6 +260,34 @@ func toWireMessages(messages []model.Message) ([]chatMessage, error) {
 		})
 	}
 	return wire, nil
+}
+
+// toolResultContent renders a tool message: the result text, or a JSON
+// error object for a definitive failure — the API has no native
+// failed-tool channel, so the failure is framed explicitly.
+func toolResultContent(message model.Message) (any, error) {
+	if message.Failed {
+		encoded, err := json.Marshal(map[string]string{"error": message.Content})
+		if err != nil {
+			return nil, &DecodeError{Stage: "encode request", Err: err}
+		}
+		return json.RawMessage(encoded), nil
+	}
+	return message.Content, nil
+}
+
+// framedToolParts renders one tool call's media as content parts wrapped
+// in attribution tags. The frame is request-build framing and is never
+// stored: the tool message in history keeps its parts unwrapped, so the
+// same evidence re-places under another provider's rules.
+func framedToolParts(message model.Message) ([]chatContentPart, error) {
+	parts := []chatContentPart{{Type: "text", Text: fmt.Sprintf("<tool_result tool_name=%q tool_call_id=%q>\n", message.ToolName, message.ToolCallID)}}
+	media, err := mediaContentParts(message.Parts)
+	if err != nil {
+		return nil, err
+	}
+	parts = append(parts, media...)
+	return append(parts, chatContentPart{Type: "text", Text: "\n</tool_result>"}), nil
 }
 
 // toWireContent renders message content: the text alone when no parts are
@@ -247,7 +305,22 @@ func toWireContent(message model.Message) (any, error) {
 	if message.Content != "" {
 		parts = append(parts, chatContentPart{Type: "text", Text: message.Content})
 	}
-	for i, part := range message.Parts {
+	media, err := mediaContentParts(message.Parts)
+	if err != nil {
+		return nil, err
+	}
+	return append(parts, media...), nil
+}
+
+// mediaContentParts converts non-text parts into chat content parts:
+// inline image data becomes a data URL; documents send base64 `file`
+// parts and audio sends `input_audio` parts. Unsupported combinations —
+// document or audio URLs, non-PDF documents, audio that is not wav or
+// mp3, and video, which the chat-completions content array cannot carry —
+// fail before any request.
+func mediaContentParts(partsIn []model.Part) ([]chatContentPart, error) {
+	parts := make([]chatContentPart, 0, len(partsIn))
+	for i, part := range partsIn {
 		switch part.Kind {
 		case model.PartImage:
 			url := part.URL

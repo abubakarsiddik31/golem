@@ -86,7 +86,7 @@ func TestFetchExtractsHTML(t *testing.T) {
 		t.Fatalf("Exec error = %v", err)
 	}
 	want := "Docs\nGolem\nTools & agents"
-	if result != want {
+	if result.Text != want {
 		t.Errorf("Exec result = %q, want %q", result, want)
 	}
 }
@@ -114,7 +114,7 @@ func TestFetchPassesThroughTextTypes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Exec error = %v", err)
 			}
-			if want := "body { passthrough: true }\n"; result != want {
+			if want := "body { passthrough: true }\n"; result.Text != want {
 				t.Errorf("Exec result = %q, want the body unchanged %q", result, want)
 			}
 		})
@@ -204,7 +204,7 @@ func TestFetchTruncatesLargeBodies(t *testing.T) {
 		t.Fatalf("Exec error = %v", err)
 	}
 	want := strings.Repeat("a", 16) + "\n\n[webfetch: response truncated at 16 bytes]"
-	if result != want {
+	if result.Text != want {
 		t.Errorf("Exec result = %q, want %q", result, want)
 	}
 }

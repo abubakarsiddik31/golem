@@ -94,7 +94,7 @@ func TestReadNestedTextFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
 	}
-	if result != "web fetch shipped\n" {
+	if result.Text != "web fetch shipped\n" {
 		t.Errorf("Exec result = %q, want the file unchanged", result)
 	}
 }
@@ -190,7 +190,7 @@ func TestReadTruncatesLargeFiles(t *testing.T) {
 		t.Fatalf("Exec error = %v", err)
 	}
 	want := strings.Repeat("a", 16) + "\n\n[fileread: file truncated at 16 bytes]"
-	if result != want {
+	if result.Text != want {
 		t.Errorf("Exec result = %q, want %q", result, want)
 	}
 }

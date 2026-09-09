@@ -59,18 +59,18 @@ func main() {
 			"properties": {"part": {"type": "string", "description": "The part name, e.g. memory or servo."}},
 			"required": ["part"]
 		}`),
-		Exec: func(ctx context.Context, deps workshop, args json.RawMessage) (string, error) {
+		Exec: func(ctx context.Context, deps workshop, args json.RawMessage) (tool.Result, error) {
 			var input struct {
 				Part string `json:"part"`
 			}
 			if err := json.Unmarshal(args, &input); err != nil {
-				return "", fmt.Errorf("decode lookup_part args: %w", err)
+				return tool.Result{}, fmt.Errorf("decode lookup_part args: %w", err)
 			}
 			note, ok := deps.Parts[input.Part]
 			if !ok {
-				return "", fmt.Errorf("no part named %q in the workshop", input.Part)
+				return tool.Result{}, fmt.Errorf("no part named %q in the workshop", input.Part)
 			}
-			return note, nil
+			return tool.Text(note), nil
 		},
 	})
 

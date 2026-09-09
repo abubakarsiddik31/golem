@@ -60,7 +60,10 @@ type countResponse struct {
 // failures return *APIError, network-level failures return
 // *TransportError, and unexpected response shapes return *DecodeError.
 func (c *Counter) CountTokens(ctx context.Context, input tokens.CountInput) (int, error) {
-	system, contents := toWireContents(input.Messages)
+	system, contents, err := toWireContents(input.Messages)
+	if err != nil {
+		return 0, err
+	}
 	body, err := json.Marshal(countRequest{
 		Contents:          contents,
 		SystemInstruction: system,

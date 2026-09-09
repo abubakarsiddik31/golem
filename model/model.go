@@ -46,10 +46,10 @@ type ToolCall struct {
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content,omitempty"`
-	// Parts carries non-text content appended after Content, such as
-	// images on a user message; see Part. Additive to the durable JSON
-	// contract: text stays in Content and older history decodes with no
-	// parts.
+	// Parts carries non-text content appended after Content — images on a
+	// user message, or evidence a tool produced on a tool message; see
+	// Part. Additive to the durable JSON contract: text stays in Content
+	// and older history decodes with no parts.
 	Parts []Part `json:"parts,omitempty"`
 	// ToolCalls holds executions requested by an assistant message. When a
 	// message carries both content and tool calls, the tool calls decide the
@@ -59,6 +59,12 @@ type Message struct {
 	// call. Meaningless on other roles.
 	ToolCallID string `json:"toolCallId,omitempty"`
 	ToolName   string `json:"toolName,omitempty"`
+	// Failed marks a tool message whose call completed but failed
+	// definitively (a *tool.Failed from the tool): Content states the
+	// failure and the model decides what to do next, without consuming a
+	// correction attempt. Only meaningful on tool messages; adapters
+	// surface it through each provider's native failure channel.
+	Failed bool `json:"failed,omitempty"`
 	// Thinking carries the model's reasoning blocks on an assistant
 	// message, in provider order; see ThinkingBlock. Adapters replay the
 	// blocks — signatures included — so the next turn verifies the
