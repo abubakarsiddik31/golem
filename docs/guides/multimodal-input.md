@@ -124,4 +124,6 @@ fmt.Println(result.Output)
   on the endpoint behind `BaseURL` — local runtimes may accept none of
   the media parts.
 - Deciding contracts: `docs/adr/0011-image-content-parts.md` and
-  `docs/adr/0022-media-input-parts.md`.
+  `docs/adr/0022-media-input-parts.md`. Parts a *tool* returns follow
+  their own placement rules — see
+  [tools and dependencies](tools-and-dependencies.md).

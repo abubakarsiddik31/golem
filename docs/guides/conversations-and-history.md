@@ -22,7 +22,9 @@ guidance never duplicates or goes stale. Instructions may depend on
 runtime state through a per-run function.
 
 `model.Message` JSON is a durable, additive-only contract: field names
-and shapes only gain fields, never rename or drop them. Storage stays the
+and shapes only gain fields, never rename or drop them. Tool messages
+carry their evidence on `parts` and a definitive failure on
+`failed` (see [tools](tools-and-dependencies.md)); storage stays the
 application's job — there is no session object.
 
 ### History repair
