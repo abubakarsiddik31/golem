@@ -66,42 +66,51 @@ type PartialResult struct {
 	Requests int
 	// ToolCalls counts tool executions the run attempted.
 	ToolCalls int
+	// Cost is the run's cumulative usage priced at the agent's WithPrice
+	// rates when one is wired; zero when no price is wired.
+	Cost float64
 }
 
 // check reports whether cumulative usage crossed any configured bound.
 // A zero limit is a no-op: only positive bounds are enforced.
-func (l UsageLimit) check(usage model.Usage, modelCalls, toolExecutions int) error {
+func (l UsageLimit) check(usage model.Usage, modelCalls, toolExecutions int, cost float64) error {
 	var crossed *UsageLimitError
 	switch {
 	case l.InputTokens > 0 && usage.InputTokens > l.InputTokens:
 		crossed = &UsageLimitError{
 			Kind:   "input token",
-			Limit:  l.InputTokens,
-			Actual: usage.InputTokens,
+			Limit:  float64(l.InputTokens),
+			Actual: float64(usage.InputTokens),
 		}
 	case l.OutputTokens > 0 && usage.OutputTokens > l.OutputTokens:
 		crossed = &UsageLimitError{
 			Kind:   "output token",
-			Limit:  l.OutputTokens,
-			Actual: usage.OutputTokens,
+			Limit:  float64(l.OutputTokens),
+			Actual: float64(usage.OutputTokens),
 		}
 	case l.TotalTokens > 0 && usage.InputTokens+usage.OutputTokens > l.TotalTokens:
 		crossed = &UsageLimitError{
 			Kind:   "total token",
-			Limit:  l.TotalTokens,
-			Actual: usage.InputTokens + usage.OutputTokens,
+			Limit:  float64(l.TotalTokens),
+			Actual: float64(usage.InputTokens + usage.OutputTokens),
 		}
 	case l.Requests > 0 && modelCalls > l.Requests:
 		crossed = &UsageLimitError{
 			Kind:   "request",
-			Limit:  l.Requests,
-			Actual: modelCalls,
+			Limit:  float64(l.Requests),
+			Actual: float64(modelCalls),
 		}
 	case l.ToolCalls > 0 && toolExecutions > l.ToolCalls:
 		crossed = &UsageLimitError{
 			Kind:   "tool call",
-			Limit:  l.ToolCalls,
-			Actual: toolExecutions,
+			Limit:  float64(l.ToolCalls),
+			Actual: float64(toolExecutions),
+		}
+	case l.Cost > 0 && cost > l.Cost:
+		crossed = &UsageLimitError{
+			Kind:   "cost",
+			Limit:  l.Cost,
+			Actual: cost,
 		}
 	}
 	if crossed == nil {
@@ -115,12 +124,13 @@ func (l UsageLimit) check(usage model.Usage, modelCalls, toolExecutions int) err
 type UsageLimitError struct {
 	// Kind names the crossed dimension, e.g. "output token".
 	Kind string
-	// Limit is the configured bound.
-	Limit int
+	// Limit is the configured bound. Token and activity limits are whole
+	// numbers; Cost is a USD amount.
+	Limit float64
 	// Actual is the run's cumulative value when the run failed.
-	Actual int
+	Actual float64
 }
 
 func (e *UsageLimitError) Error() string {
-	return fmt.Sprintf("run exceeded the %s limit of %d (used %d)", e.Kind, e.Limit, e.Actual)
+	return fmt.Sprintf("run exceeded the %s limit of %g (used %g)", e.Kind, e.Limit, e.Actual)
 }

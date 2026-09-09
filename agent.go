@@ -63,6 +63,7 @@ type Agent[Deps any, Output any] struct {
 	outputToolSpec    model.ToolSpec
 	usageLimit        UsageLimit
 	tokenCounter      tokens.Counter
+	price             model.Price
 	runEvents         func(RunEvent)
 }
 
@@ -238,6 +239,11 @@ type UsageLimit struct {
 	// and counts what the wired counter counts — see the tokens package
 	// for the per-provider support matrix.
 	PerRequestInputTokens int
+	// Cost bounds a run's cumulative priced cost in US dollars, computed
+	// at the WithPrice rates after each model response. It requires
+	// WithPrice; the estimate is only as good as the supplied rates and
+	// is not a billing guarantee.
+	Cost float64
 	// Requests bounds model calls, retried attempts included.
 	Requests int
 	// ToolCalls bounds tool executions.
@@ -335,6 +341,18 @@ func WithTokenCounter[Deps any, Output any](counter tokens.Counter) Option[Deps,
 	}
 }
 
+// WithPrice wires a model.Price so the run can report and bound cost:
+// Result.Cost and PartialResult.Cost carry the run's cumulative usage
+// priced at these rates, and UsageLimit.Cost turns the price into a
+// post-response bound checked with the other usage limits. Rates are the
+// application's or an adapter package's; Golem ships no price table. A
+// nil price leaves cost unpriced at zero.
+func WithPrice[Deps any, Output any](price model.Price) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.price = price
+	}
+}
+
 // New creates an Agent. A model and decoder are both required: Golem never
 // guesses how untrusted model output becomes a typed application value.
 func New[Deps any, Output any](
@@ -387,11 +405,15 @@ func New[Deps any, Output any](
 		}
 	}
 	if agent.usageLimit.InputTokens < 0 || agent.usageLimit.OutputTokens < 0 || agent.usageLimit.TotalTokens < 0 ||
-		agent.usageLimit.Requests < 0 || agent.usageLimit.ToolCalls < 0 || agent.usageLimit.PerRequestInputTokens < 0 {
+		agent.usageLimit.Requests < 0 || agent.usageLimit.ToolCalls < 0 || agent.usageLimit.PerRequestInputTokens < 0 ||
+		agent.usageLimit.Cost < 0 {
 		return nil, fmt.Errorf("golem: usage limit must not be negative, got %+v", agent.usageLimit)
 	}
 	if agent.usageLimit.PerRequestInputTokens > 0 && agent.tokenCounter == nil {
 		return nil, fmt.Errorf("golem: usage limit PerRequestInputTokens requires WithTokenCounter; wire a tokens.Counter to enforce a pre-send bound")
+	}
+	if agent.usageLimit.Cost > 0 && agent.price == nil {
+		return nil, fmt.Errorf("golem: usage limit Cost requires WithPrice; wire a model.Price to enforce a cost bound")
 	}
 	if err := validateTools(agent.tools); err != nil {
 		return nil, err
@@ -469,6 +491,10 @@ type Result[Output any] struct {
 	// deferred calls, and interrupted output-tool co-emissions do not
 	// count. An approved deferred call's re-run on resume does.
 	ToolCalls int
+	// Cost is the run's cumulative usage priced at the WithPrice rates in
+	// US dollars — a best-effort estimate, not a billing figure. Zero
+	// when no price is wired or the priced usage costs nothing.
+	Cost float64
 	// Pending is non-nil when the run paused awaiting deferred tool
 	// calls; see DeferredRequests for the resolution contract.
 	Pending *DeferredRequests
@@ -596,6 +622,12 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 
 	var usage model.Usage
 	var modelCalls, toolExecutions int
+	runCost := func() float64 {
+		if a.price == nil {
+			return 0
+		}
+		return a.price.Cost(usage)
+	}
 
 	for attempt := 0; ; attempt++ {
 		request := model.Request{Messages: messages, ToolSpecs: specs, OutputSchema: a.outputSchema}
@@ -613,18 +645,18 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			modelCalls += outcome.ModelCalls
 			toolExecutions += outcome.ToolExecutions
 			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage,
-				outcome.FinishReason, modelCalls, toolExecutions))
+				outcome.FinishReason, modelCalls, toolExecutions, runCost()))
 		}
 		addUsage(&usage, outcome.Usage)
 		modelCalls += outcome.ModelCalls
 		toolExecutions += outcome.ToolExecutions
-		if err := a.usageLimit.check(usage, modelCalls, toolExecutions); err != nil {
+		if err := a.usageLimit.check(usage, modelCalls, toolExecutions, runCost()); err != nil {
 			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions)}
+				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
 		}
 		if len(outcome.Pending) > 0 {
 			return Result[Output]{Messages: outcome.Messages, Usage: usage, FinishReason: outcome.FinishReason,
-				Requests: modelCalls, ToolCalls: toolExecutions,
+				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost(),
 				Pending: deferredRequests(outcome.Pending)}, nil
 		}
 
@@ -632,7 +664,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		if err == nil {
 			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response),
 				Usage: usage, FinishReason: outcome.FinishReason,
-				Requests: modelCalls, ToolCalls: toolExecutions}, nil
+				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost()}, nil
 		}
 		var rejection *model.ModelRetry
 		if !errors.As(err, &rejection) || attempt >= a.outputRetries {
@@ -640,7 +672,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
 			}
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions)}
+				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
 		}
 		if emit != nil {
 			emit(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
@@ -697,7 +729,7 @@ func (a *Agent[Deps, Output]) preSendCheck() func(ctx context.Context, req model
 			return fmt.Errorf("golem: token count failed before request: %w", err)
 		}
 		if count > limit {
-			return &UsageLimitError{Kind: "per-request input token", Limit: limit, Actual: count}
+			return &UsageLimitError{Kind: "per-request input token", Limit: float64(limit), Actual: float64(count)}
 		}
 		return nil
 	}
@@ -820,11 +852,11 @@ func addUsage(dst *model.Usage, src model.Usage) {
 	dst.ReasoningTokens += src.ReasoningTokens
 }
 
-func partialEvidence(messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int) *PartialResult {
+func partialEvidence(messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int, cost float64) *PartialResult {
 	if toolCalls == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && !hasAssistantTurn(messages) {
 		return nil
 	}
-	return &PartialResult{Messages: messages, Usage: usage, FinishReason: finish, Requests: requests, ToolCalls: toolCalls}
+	return &PartialResult{Messages: messages, Usage: usage, FinishReason: finish, Requests: requests, ToolCalls: toolCalls, Cost: cost}
 }
 
 // hasAssistantTurn reports whether any completed model turn is in the

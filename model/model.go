@@ -252,6 +252,19 @@ type Usage struct {
 	ReasoningTokens int
 }
 
+// Price prices recorded usage in US dollars. Golem ships no price table —
+// pricing data rots — so rates come from the application or from an
+// adapter package: each generation adapter's Price type knows how its own
+// usage fields combine ("inside" versus "beside" the input total), and an
+// application with negotiated or proxied pricing implements the port
+// itself. Implementations must be safe for concurrent use and must not
+// retain or mutate usage.
+type Price interface {
+	// Cost prices usage in US dollars. It is called with a run's
+	// cumulative usage after each model response and on the final result.
+	Cost(usage Usage) float64
+}
+
 // FinishReason is the provider's normalized terminal cause for one model
 // response: why the model stopped generating. Adapters translate their
 // provider's wire vocabulary onto the shared constants — each adapter's
