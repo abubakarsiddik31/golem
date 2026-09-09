@@ -32,5 +32,6 @@ example, and the README index agree.
 19. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
 20. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
 21. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-22. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
-23. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+22. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
+23. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+24. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.

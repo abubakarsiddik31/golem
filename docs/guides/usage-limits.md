@@ -18,7 +18,7 @@ limits when the bound must be about tokens or spend, not turns.
 
 ## How it works
 
-`golem.UsageLimit` carries five independent bounds; each zero value
+`golem.UsageLimit` carries six independent bounds; each zero value
 means unbounded and the zero struct disables the limit entirely. Usage is
 counted cumulatively across every model turn, retried call, and
 correction round, and checked after each model response: the response
@@ -34,6 +34,13 @@ are counted by the run itself: a request is one provider call, retried
 attempts included, and a tool execution is one tool run — rejected calls
 count, because the tool ran; unknown-tool requests and interrupted
 output-tool co-emissions do not.
+
+The sixth bound is about money: with `golem.WithPrice` wiring a
+`model.Price`, `UsageLimit.Cost` bounds the run's cumulative priced cost
+in US dollars, checked with the other bounds after each model response.
+The price is the application's — rates from an adapter package or your
+own terms — so the bound without a price fails construction. See
+[Cost](cost.md) for the pricing seam.
 
 The run surfaces those counts on every result, successful or not:
 `Result.Requests` and `Result.ToolCalls` carry the same numbers the
@@ -63,8 +70,10 @@ log.Printf("run used %d input and %d output tokens across %d requests and %d too
 ## API surface
 
 - `golem.WithUsageLimit[Deps, Output](limit UsageLimit)`
-- `golem.UsageLimit{InputTokens, OutputTokens, TotalTokens, Requests, ToolCalls int}`
-- `golem.UsageLimitError{Kind, Limit, Actual}` via `RunError{Stage: StageUsage}`
+- `golem.UsageLimit{InputTokens, OutputTokens, TotalTokens, Requests, ToolCalls int; PerRequestInputTokens int; Cost float64}`
+- `golem.UsageLimitError{Kind, Limit, Actual}` via `RunError{Stage: StageUsage}` —
+  the bounds are floats, whole numbers for tokens and activity, dollars
+  for cost
 - `golem.StageUsage`
 - `golem.Result.Requests`, `golem.Result.ToolCalls` — the counts a
   successful (or paused) run performed, shared with the limit's
@@ -83,3 +92,6 @@ log.Printf("run used %d input and %d output tokens across %d requests and %d too
   (`golem.WithTokenCounter`), the runner prices the request before it is
   sent and the oversized request never goes out — see
   [Token counting](token-counting.md).
+- A cost bound prices usage at the rates you supplied; it is an
+  estimate against your price snapshot, not a provider-enforced
+  ceiling — see the [cost guide](cost.md)'s gotchas.
