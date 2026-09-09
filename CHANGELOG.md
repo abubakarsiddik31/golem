@@ -37,6 +37,15 @@
   result on a `model.Message` flagged `Failed` — the model sees it,
   the run continues, and no retry budget is consumed.
 
+- **History normalization.** `golem.NormalizeHistory` runs the pairing
+  pass the request builder uses — synthesized interrupted results for
+  unanswered calls, orphaned results dropped — and reports every change
+  (decision in ADR 0026). It also detects tool calls whose arguments
+  are not a valid JSON object; the bytes stay verbatim in the history,
+  and every adapter now serializes such a call as
+  `{"truncated_args": "<verbatim bytes>"}` on the wire instead of
+  failing to encode or sending a request the provider rejects.
+
 ### Changed
 
 - **`tool.Tool.Exec` now returns `(tool.Result, error)` instead of
