@@ -31,6 +31,13 @@
   shape covers every bounded dimension, and cost bounds are dollar
   amounts; integer literals at existing call sites are unaffected.
   Error text renders bounds with `%g`.
+- **Test hardening.** The durable message-JSON contract carries a Go
+  fuzz target (`model.FuzzMessageJSONIsDurable`) whose seed corpus runs
+  in every `go test` and whose continuous fuzzing runs bounded in CI;
+  CI gains a `-race` test job, runs every `examples/` program requiring
+  exit 0 without credentials, and `scripts/smoke.sh` drives the
+  adapters' opt-in live tests as one matrix, skipping adapters whose
+  `GOLEM_*` keys are unset.
 
 ## v0.7.5 — 2026-09-08
 

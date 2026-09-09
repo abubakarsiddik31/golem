@@ -30,6 +30,28 @@ three things:
 Cover the primary failure path, not only success. Avoid assertions that
 need sleeps or scheduling luck.
 
+### Fuzzing the durable contracts
+
+The message-JSON shape is the v1 durability promise, so it carries a Go
+fuzz target: `model.FuzzMessageJSONIsDurable` feeds arbitrary bytes
+through decode → marshal → decode and pins two properties — anything
+Golem marshals must decode again, and the second marshaling must be
+byte-identical to the first (persisting what you read never rewrites
+meaning). Its seed corpus runs inside the normal `go test ./...`, so
+every PR exercises it; continuous fuzzing runs bounded (`-fuzztime 90s`)
+in a CI job on pushes to main, and any crasher lands in
+`model/testdata/fuzz/` as a regression entry every later run replays.
+To fuzz locally: `go test ./model -fuzz FuzzMessageJSONIsDurable -fuzztime 30s`.
+
+### Live smoke matrix
+
+The adapters' live tests (`TestLive*` in `providers/*/integration_test.go`)
+skip without credentials. `scripts/smoke.sh` runs the matrix: it checks
+each adapter's `GOLEM_*` keys, runs the tests where credentials exist,
+prints which adapters ran and which skipped, and exits nonzero only when
+a run test fails — an all-skip run is a clean pass. `scripts/smoke.sh
+openai bedrock` filters to named adapters.
+
 ## Example
 
 Run `examples/testing-without-a-provider` — a scripted model that
@@ -58,6 +80,10 @@ packages, and the opt-in `TestLive*` integration tests.
 - Never make core unit tests depend on a live model, network, clock, or
   environment variable; adapter integration tests stay in the adapter
   package and skip without keys.
+- CI runs every program in `examples/` and requires exit 0: keyed
+  examples must print instructions and exit when their API key is
+  unset, scripted ones must run their scenario — that house rule is
+  enforced, not aspirational.
 - For cancellation paths, cancel the context before the call and assert
   the error identity — no timers.
 - The contract test matrix lives in
