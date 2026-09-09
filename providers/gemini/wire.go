@@ -265,14 +265,31 @@ func toWireTools(specs []model.ToolSpec) []wireToolList {
 	return []wireToolList{{FunctionDeclarations: declarations}}
 }
 
-// normalizeArgs ensures function arguments are JSON objects: an empty
-// value maps to an empty object, matching the wire contract.
-func normalizeArgs(args json.RawMessage) json.RawMessage {
-	trimmed := strings.TrimSpace(string(args))
+// argsWrapper makes tool-call arguments sendable as the JSON object every
+// provider requires: an empty value maps to an empty object, and a call
+// whose arguments were truncated mid-stream — anything that is not a
+// valid JSON object — is wrapped as an object carrying the verbatim
+// bytes. The wrapper is deterministic, so replays stay prompt-cache
+// friendly, and the stored history keeps the raw value.
+func argsWrapper(input json.RawMessage) json.RawMessage {
+	trimmed := strings.TrimSpace(string(input))
 	if trimmed == "" {
 		return json.RawMessage("{}")
 	}
-	return json.RawMessage(trimmed)
+	if strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed)
+	}
+	wrapped, err := json.Marshal(map[string]string{"truncated_args": string(input)})
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return wrapped
+}
+
+// normalizeArgs ensures function arguments are JSON objects: an empty
+// value maps to an empty object, matching the wire contract.
+func normalizeArgs(args json.RawMessage) json.RawMessage {
+	return argsWrapper(args)
 }
 
 // quoteJSON renders s as a JSON string literal.
