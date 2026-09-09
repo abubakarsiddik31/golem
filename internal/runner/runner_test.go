@@ -788,7 +788,7 @@ func TestExecuteCountsModelCallsAndToolExecutions(t *testing.T) {
 	}}
 	outcome, err := runner.ExecuteWithToolConfig(context.Background(), m, tools, deps{},
 		model.Request{ToolSpecs: specsFor(t, tools...)}, 5,
-		runner.RetryConfig{MaxAttempts: 1}, runner.ToolConfig{}, "", nil)
+		runner.RetryConfig{MaxAttempts: 1}, runner.ToolConfig{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("ExecuteWithToolConfig() error = %v", err)
 	}
@@ -809,7 +809,7 @@ func TestExecuteCountsRetriedAttemptsAsModelCalls(t *testing.T) {
 	}
 	outcome, err := runner.ExecuteWithToolConfig(context.Background(), m, nil, deps{},
 		model.Request{}, 5,
-		runner.RetryConfig{MaxAttempts: 2}, runner.ToolConfig{}, "", nil)
+		runner.RetryConfig{MaxAttempts: 2}, runner.ToolConfig{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("ExecuteWithToolConfig() error = %v", err)
 	}

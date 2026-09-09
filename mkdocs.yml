@@ -49,6 +49,7 @@ nav:
   - Getting started: getting-started.md
   - Providers: providers.md
   - Embeddings: embeddings.md
+  - Token counting: token-counting.md
   - Tools and dependencies: tools-and-dependencies.md
   - Web fetch: web-fetch.md
   - File read: file-read.md

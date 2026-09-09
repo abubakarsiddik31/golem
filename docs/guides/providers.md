@@ -117,6 +117,24 @@ Anthropic has no embeddings API, so there is no Anthropic embedder.
 Bedrock's embedding models (Titan, Cohere on Bedrock) are likewise not
 covered yet; say the word if your index runs there.
 
+## Token counting
+
+The same asymmetry runs the other way for counting: where the provider
+offers a counting endpoint, an adapter implements the `tokens.Counter`
+port — covered end to end in [Token counting](token-counting.md) — and
+prices exactly what a generation request with the same builders would
+send:
+
+| Counter | Wire | Counts tools | Notes |
+| --- | --- | --- | --- |
+| `anthropic.Counter` | `POST {BaseURL}/v1/messages/count_tokens` | yes | same request schema as inference |
+| `gemini.Counter` | `POST {BaseURL}/v1beta/models/{model}:countTokens` | yes | |
+| `bedrock.Counter` | `POST {BaseURL}/model/{model}/count-tokens` | no — lower bound | free; base foundation-model IDs only |
+
+OpenAI, Azure OpenAI, and OpenAI-compatible endpoints have no counting
+API, so there is no counter for them; implement `tokens.Counter` with
+your own tokenizer there.
+
 ## Example
 
 - `examples/minimal` — OpenAI-compatible.
@@ -177,6 +195,9 @@ focusedClient, _ := openai.New(openai.Config{
 - `openai.Embedder` / `azure.Embedder` / `gemini.Embedder` — text
   embeddings beside generation; see the [Embeddings](embeddings.md)
   API surface (decision in ADR 0021).
+- `anthropic.Counter` / `gemini.Counter` / `bedrock.Counter` —
+  input-token counting beside generation; see the
+  [Token counting](token-counting.md) API surface (decision in ADR 0023).
 - Errors per adapter: `APIError|TransportError|DecodeError`
 
 ## Gotchas

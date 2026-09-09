@@ -78,4 +78,8 @@ log.Printf("run used %d input and %d output tokens across %d requests and %d too
   bounds count locally and always apply.
 - Negative values fail construction.
 - The check is post-response by design: one response may overshoot the
-  bound before the run stops.
+  bound before the run stops. The exception is
+  `UsageLimit.PerRequestInputTokens`: with a counter wired
+  (`golem.WithTokenCounter`), the runner prices the request before it is
+  sent and the oversized request never goes out — see
+  [Token counting](token-counting.md).

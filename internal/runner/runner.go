@@ -187,7 +187,7 @@ func Execute[Deps any](
 	outputTool string,
 ) (Outcome, error) {
 	return ExecuteWithToolConfig(ctx, m, tools, deps, req, maxIterations, retry,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, nil)
 }
 
 // ExecuteWithToolConfig runs the loop with explicit tool policy and an
@@ -203,11 +203,12 @@ func ExecuteWithToolConfig[Deps any](
 	toolConfig ToolConfig,
 	outputTool string,
 	emit Observer,
+	preSend func(ctx context.Context, req model.Request) error,
 ) (Outcome, error) {
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit,
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend,
 		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
 			return generate(ctx, m, request, retry, turn, emit)
 		})
@@ -235,7 +236,7 @@ func ExecuteStream[Deps any](
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
 	return ExecuteStreamWithToolConfig(ctx, m, tools, deps, req, maxIterations,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, onDelta)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, onDelta, nil)
 }
 
 // ExecuteStreamWithToolConfig runs streamed turns with explicit tool
@@ -252,12 +253,13 @@ func ExecuteStreamWithToolConfig[Deps any](
 	outputTool string,
 	emit Observer,
 	onDelta func(model.Delta) error,
+	preSend func(ctx context.Context, req model.Request) error,
 ) (Outcome, error) {
 	streamer, ok := m.(model.StreamingModel)
 	if !ok {
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit,
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend,
 		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
 			emitEvent(emit, Event{Kind: EventModelStart, Turn: turn, Attempt: 1})
 			response, err := streamer.GenerateStream(ctx, request, onDelta)
@@ -286,7 +288,9 @@ type runCounts struct {
 // execute is the shared loop of Execute and ExecuteStream: identical
 // turn limits, tool execution, rejection feedback, and evidence order.
 // outputTool, when non-empty, names the synthesized output tool: the
-// model's first call to it ends the run.
+// model's first call to it ends the run. preSend, when non-nil, runs
+// before every model call; a non-nil error ends the run before the
+// request is sent, with the evidence accumulated so far.
 func execute[Deps any](
 	ctx context.Context,
 	tools []tool.Tool[Deps],
@@ -296,6 +300,7 @@ func execute[Deps any](
 	toolConfig ToolConfig,
 	outputTool string,
 	emit Observer,
+	preSend func(ctx context.Context, req model.Request) error,
 	call turnCall,
 ) (Outcome, error) {
 	var counts runCounts
@@ -327,6 +332,11 @@ func execute[Deps any](
 		}
 		if turn >= maxIterations {
 			return partialOutcome(messages, usage, counts, lastFinish), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
+		}
+		if preSend != nil {
+			if err := preSend(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}); err != nil {
+				return partialOutcome(messages, usage, counts, lastFinish), err
+			}
 		}
 
 		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}, turn)
