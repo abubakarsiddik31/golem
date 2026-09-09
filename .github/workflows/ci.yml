@@ -24,3 +24,42 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      # Every example must exit 0 with no credentials: keyed ones print
+      # instructions and exit, scripted ones run their scenario.
+      - name: Run the examples
+        run: |
+          status=0
+          for dir in examples/*/; do
+            name=$(basename "$dir")
+            echo "::group::$name"
+            go run "./$dir" || { echo "example $name failed"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
+  # The race build roughly doubles test time; it gates main the same as
+  # the plain build but stays a separate job so it can be read apart.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test with the race detector
+        run: go test -race ./...
+  # Continuous bounded fuzzing of the message-JSON contract. Runs on main
+  # pushes only: pull requests exercise the seed corpus through the Test
+  # step above, and a crasher found here lands as a regression entry that
+  # every later run replays.
+  fuzz:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Fuzz the message-JSON contract
+        run: go test ./model -run FuzzMessageJSONIsDurable -fuzz FuzzMessageJSONIsDurable -fuzztime 90s
