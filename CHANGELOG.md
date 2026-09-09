@@ -15,6 +15,23 @@
   history by token budget as the counting sibling of `TrimHistory`.
   `testmodel.CountFunc` fakes the port offline.
 
+- **Cost.** A `model.Price` port turns provider-reported usage into
+  dollars: each generation adapter ships a `Price` struct with
+  per-million-token rates encoding how its own usage fields combine
+  (cached input inside the total on OpenAI-compatible APIs and Gemini,
+  beside it on Anthropic and Bedrock), applications implement the port
+  for negotiated or proxied pricing, and no price table ships (decision
+  in ADR 0024). `golem.WithPrice` feeds `Result.Cost` and
+  `PartialResult.Cost`, and `UsageLimit.Cost` enforces a post-response
+  cost bound — the bound without a price fails construction.
+
+### Changed
+
+- **`UsageLimitError.Limit` and `.Actual` are now `float64`.** One error
+  shape covers every bounded dimension, and cost bounds are dollar
+  amounts; integer literals at existing call sites are unaffected.
+  Error text renders bounds with `%g`.
+
 ## v0.7.5 — 2026-09-08
 
 This patch widens what a run can take in and adds the retrieval

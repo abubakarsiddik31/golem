@@ -98,6 +98,29 @@ last completed turn's when a run failed: a `length` cause on a decode
 failure means the provider truncated the output, not that the model
 wrote bad JSON.
 
+## Pricing
+
+Each generation adapter ships a `Price` struct implementing
+`model.Price`: per-million-token USD rates you supply, combined by the
+rule that adapter's own usage semantics require. Wire one with
+`golem.WithPrice` and runs report `Result.Cost` (and enforce
+`UsageLimit.Cost`); see [Cost](cost.md) for the full contract. Golem
+ships no price table — the rates are your snapshot of the provider's
+price list.
+
+| Price | Cached input | Cache writes | Rates |
+| --- | --- | --- | --- |
+| `openai.Price` | inside the input total — `Input − CacheRead` bills at the input rate | — (implicit caching) | input, output, cache read |
+| `azure.Price` | inside the input total | — (implicit caching) | input, output, cache read |
+| `anthropic.Price` | beside the input total — billed at its own rate | beside input, premium rate | input, output, cache read, cache write |
+| `bedrock.Price` | beside the input total | beside input | input, output, cache read, cache write |
+| `gemini.Price` | inside the input total | — (implicit caching) | input, output, cache read |
+
+With no cache-read rate set, the inside-input prices bill cached input
+at the input rate rather than free; the beside-input prices bill the
+input total in full by construction. Reasoning tokens are part of
+billed output on every adapter and take no separate rate.
+
 ## Embeddings
 
 Generation adapters are not the only port: the same providers serve

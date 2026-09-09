@@ -13,7 +13,7 @@ It takes inspiration from the ergonomics of Python agent frameworks such as Pyda
 
 ## Status
 
-v0.7.5 — the core execution contract includes typed agents, evidence-preserving runs — successful and failed alike, via `RunError.Partial`, with activity counts, the provider's finish reason, and the provider's cache and reasoning token breakdown on every outcome — self-correction, retries with fallback models, streaming on every adapter including Bedrock, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal input spanning images, documents, audio, and video, thinking content carried end to end with provider signatures, deferred tools that pause a run for human approval or external results, bounded history by count or token budget, token/request/tool-call usage bounds with optional pre-send input estimation, request tuning, run events, and agent delegation. The common tools (web fetch, file read, command execution, agent skills) ship alongside an MCP client that bridges server tools over stdio or streamable HTTP, with provider adapters for OpenAI-compatible APIs (twelve services plus the local Ollama and LM Studio runtimes), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock, plus an embeddings port with adapters for OpenAI-compatible APIs (including Azure and the local runtimes) and Gemini, and token-counting ports for Anthropic, Gemini, and Bedrock. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
+v0.7.5 — the core execution contract includes typed agents, evidence-preserving runs — successful and failed alike, via `RunError.Partial`, with activity counts, the provider's finish reason, and the provider's cache and reasoning token breakdown on every outcome — self-correction, retries with fallback models, streaming on every adapter including Bedrock, structured output, explicit tool deadlines and choice, opt-in ordered parallel tool execution, multimodal input spanning images, documents, audio, and video, thinking content carried end to end with provider signatures, deferred tools that pause a run for human approval or external results, bounded history by count or token budget, token/request/tool-call usage bounds with optional pre-send input estimation, request tuning, run events, and agent delegation. The common tools (web fetch, file read, command execution, agent skills) ship alongside an MCP client that bridges server tools over stdio or streamable HTTP, with provider adapters for OpenAI-compatible APIs (twelve services plus the local Ollama and LM Studio runtimes), Anthropic, Google Gemini, Azure OpenAI, and AWS Bedrock, plus an embeddings port with adapters for OpenAI-compatible APIs (including Azure and the local runtimes) and Gemini, token-counting ports for Anthropic, Gemini, and Bedrock, and user-supplied pricing that reports and bounds a run's dollar cost. The guides publish as a documentation site. The public API remains intentionally small; additive changes only until v1.
 
 ## Direction
 
@@ -76,6 +76,7 @@ Guides are the source of truth for each capability; this README only indexes the
 | [Thinking](docs/guides/thinking.md) | Reasoning models: requesting thinking, keeping signatures, replay |
 | [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
 | [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
+| [Cost](docs/guides/cost.md) | User-supplied pricing: `Result.Cost` and cost bounds |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
 | [Deferred tools](docs/guides/deferred-tools.md) | Approvals and external results: pausing a run and resuming it |
 
@@ -90,6 +91,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
 | [`embeddings`](examples/embeddings/main.go) | Semantic search over the `embedding.Embedder` port |
 | [`token-counting`](examples/token-counting/main.go) | Pre-send limits and budget-bounded history over the `tokens.Counter` port |
+| [`cost`](examples/cost/main.go) | User-supplied pricing: `Result.Cost` and cost-bounded runs, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
