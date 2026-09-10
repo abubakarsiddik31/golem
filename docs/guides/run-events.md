@@ -42,6 +42,20 @@ per-request tracing coexist. Accepted by `Run` and its history,
 streaming, and deferred-resume variants; a nil observer observes
 nothing.
 
+### Run and conversation identity
+
+Every event carries the emitting run's `RunID` and the
+`ConversationID` it continues, constant across the run — the same pair
+the run's `Result` and, on failure, `RunError.Partial` report. That is
+what makes one construction-scoped observer enough for a shared agent:
+interleaved runs' events sort by `event.RunID` without per-run
+closures, and events from the runs of one conversation group by
+`event.ConversationID`. The minting and inheritance rules — run IDs are
+never inherited, conversation IDs travel through history and storage —
+are documented in [Conversations and
+history](conversations-and-history.md#run-and-conversation-identity)
+and decided in ADR 0027.
+
 Events arrive in deterministic execution order, and that order is a
 compatibility promise:
 
@@ -85,9 +99,10 @@ agent, err := golem.New[string, string](client,
 
 - `golem.WithRunEvents[Deps, Output](onEvent func(RunEvent)) Option[Deps, Output]`
 - `golem.WithRunObserver(onEvent func(RunEvent)) RunOption`
-- `golem.RunEvent{Kind, Turn, Attempt, CallID, ToolName, Args, Result, Err, Usage}`
+- `golem.RunEvent{Kind, Turn, Attempt, CallID, ToolName, Args, Result, Err, Usage, RunID, ConversationID}`
 - `golem.EventKind` — `golem.EventModelStart`, `golem.EventModelEnd`,
   `golem.EventToolStart`, `golem.EventToolEnd`, `golem.EventOutputRejected`
+- `golem.WithRunID(id string) RunOption`, `golem.WithConversationID(id string) RunOption`, `golem.NewID()` — see [Conversations and history](conversations-and-history.md#run-and-conversation-identity)
 
 ## Gotchas
 

@@ -68,6 +68,31 @@ wire, deterministic so replays stay prompt-cache friendly. The model
 sees a shaped call naming the failure instead of a rejected request.
 The deciding design record is ADR 0026.
 
+### Run and conversation identity
+
+Every run carries two identifiers, stamped on the run's events, its
+`Result`, and every message the run adds to the conversation — never on
+the history it received:
+
+- `Result.RunID` is minted fresh per run and never inherited. Pass
+  `golem.WithRunID(id)` to align a run with a trace or request ID your
+  infrastructure already has; a shared agent's interleaved event streams
+  stay attributable because every event repeats it.
+- `Result.ConversationID` identifies the conversation: `WithConversationID`
+  wins when set; otherwise the most recent identified message of the
+  supplied history donates its own; otherwise one is minted, starting a
+  new conversation. Because the identifier rides `model.Message` JSON
+  (`runId`, `conversationId` — additive fields), `RunWithHistory`
+  chains runs into one conversation by construction, and the
+  association survives storage round-trips with no session object.
+
+Both come from `golem.NewID()`, a time-ordered UUID version 7. Fork a
+conversation — continue the same history under a new identity — by
+passing a fresh `golem.NewID()` to `WithConversationID`; a failed run's
+`RunError.Partial` reports the same pair, so telemetry can join a
+failure to the conversation it interrupted. The deciding design record
+is ADR 0027.
+
 ### Resuming a failed run
 
 A failed run does not have to be a dead end. When a run errors after it
@@ -137,6 +162,21 @@ golem.WithInstructionsFunc[MyDeps, string](
 golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(20))
 ```
 
+`examples/run-ids` shows run and conversation identity across chained
+and forked runs (offline):
+
+```bash
+go run ./examples/run-ids
+```
+
+```go
+first, _ := agent.Run(ctx, runCtx, "hi")
+continued, _ := agent.RunWithHistory(ctx, runCtx, first.Messages, "and then?")
+// continued.RunID is fresh; continued.ConversationID == first.ConversationID
+fork, _ := agent.RunWithHistory(ctx, runCtx, first.Messages, "fork this",
+    golem.WithConversationID(golem.NewID()))
+```
+
 ## API surface
 
 - `(*Agent).RunWithHistory(ctx, runCtx, history []model.Message, prompt) (Result[Output], error)`
@@ -145,6 +185,11 @@ golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(20))
 - `golem.WithInstructionsFunc[Deps, Output](InstructionsFunc[Deps])`
 - `golem.WithHistoryProcessor[Deps, Output](HistoryProcessor)`
 - `golem.TrimHistory(maxMessages int) HistoryProcessor`
+- `golem.NormalizeHistory(history []model.Message) ([]model.Message, HistoryRepair)` — see [Normalizing history explicitly](#normalizing-history-explicitly)
+- `golem.NewID() string`
+- `golem.WithRunID(id string) RunOption`, `golem.WithConversationID(id string) RunOption`
+- `Result.RunID`, `Result.ConversationID`, `PartialResult.RunID`, `PartialResult.ConversationID`
+- `model.Message.RunID`, `model.Message.ConversationID` (`runId`, `conversationId` in JSON)
 
 ## Gotchas
 
@@ -157,6 +202,10 @@ golem.WithHistoryProcessor[struct{}, string](golem.TrimHistory(20))
 - Repair pairs calls and results by call ID; calls without an ID cannot
   be paired and pass through unrepaired. Duplicate results for one call
   keep the first and drop the rest.
+- Run identity stamps only what a run adds: re-supplied history keeps
+  the stamps it carried in, and repair-synthesized results carry none.
+- Identifiers are opaque values: match and store them, don't parse
+  meaning out of them beyond the UUID's timestamp.
 - The history processor runs on exactly what the caller supplies and
   once per run: nothing re-runs it, so a summarizing processor cannot
   build on its own earlier output within one run.
