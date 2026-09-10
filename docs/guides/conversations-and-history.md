@@ -47,6 +47,27 @@ timestamps, so repairing already-repaired history leaves it unchanged and
 repeated resumes stay prompt-cache friendly. Repaired messages become part
 of the run's canonical `result.Messages`.
 
+### Normalizing history explicitly
+
+The in-run repair is silent by design. When the history crosses an
+application boundary — a client-supplied conversation, stored history
+being resumed, a context-evicting pipeline — run
+`golem.NormalizeHistory` first and read the report:
+
+- `Synthesized` and `Dropped` name what the pass changed, so logging or
+  telemetry can show a client exactly which turns were repaired.
+- `Truncated` names tool calls whose arguments are not a valid JSON
+  object — a stream that died mid-arguments. This is detection, not a
+  change: the bytes stay verbatim in the returned history (repairing
+  stored arguments would corrupt evidence), and the same call stays
+  listed on every pass.
+
+Truncated arguments never block a run: every adapter serializes a
+non-object call as `{"truncated_args": "<verbatim bytes>"}` on the
+wire, deterministic so replays stay prompt-cache friendly. The model
+sees a shaped call naming the failure instead of a rejected request.
+The deciding design record is ADR 0026.
+
 ### Resuming a failed run
 
 A failed run does not have to be a dead end. When a run errors after it

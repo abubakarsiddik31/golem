@@ -408,14 +408,31 @@ func toWireToolConfig(specs []model.ToolSpec) *wireToolConfig {
 	return &wireToolConfig{Tools: declarations}
 }
 
-// normalizeInput ensures tool inputs are JSON objects: an empty value maps
-// to an empty object, matching the wire contract.
-func normalizeInput(input json.RawMessage) json.RawMessage {
+// argsWrapper makes tool-call arguments sendable as the JSON object every
+// provider requires: an empty value maps to an empty object, and a call
+// whose arguments were truncated mid-stream — anything that is not a
+// valid JSON object — is wrapped as an object carrying the verbatim
+// bytes. The wrapper is deterministic, so replays stay prompt-cache
+// friendly, and the stored history keeps the raw value.
+func argsWrapper(input json.RawMessage) json.RawMessage {
 	trimmed := strings.TrimSpace(string(input))
 	if trimmed == "" {
 		return json.RawMessage("{}")
 	}
-	return json.RawMessage(trimmed)
+	if strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed)
+	}
+	wrapped, err := json.Marshal(map[string]string{"truncated_args": string(input)})
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return wrapped
+}
+
+// normalizeInput ensures tool inputs are JSON objects: an empty value maps
+// to an empty object, matching the wire contract.
+func normalizeInput(input json.RawMessage) json.RawMessage {
+	return argsWrapper(input)
 }
 
 // fromWireResponse normalizes a Converse body: text blocks join into the

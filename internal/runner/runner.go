@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -652,6 +653,44 @@ const interruptedToolResult = "Tool call was interrupted before execution; no re
 // unchanged, and repeated resumes stay prompt-cache friendly. Pairing is by
 // call ID; calls without an ID cannot be paired and are left as-is.
 func RepairHistory(history []model.Message) []model.Message {
+	repaired, _ := RepairHistoryWithReport(history)
+	return repaired
+}
+
+// HistoryRepair reports what one normalization pass changed, so an
+// application boundary can act on a damaged history instead of discovering
+// it from a provider rejection.
+type HistoryRepair struct {
+	// Synthesized lists, in call order, the IDs of tool calls that
+	// received the synthesized interrupted result.
+	Synthesized []string
+	// Dropped lists the tool-call IDs of orphaned results removed.
+	Dropped []string
+	// Truncated lists, in call order, the IDs of tool calls whose
+	// arguments are not a valid JSON object. The arguments stay verbatim
+	// in the history — this is detection, not a change, so the call stays
+	// listed on every pass; adapters make it sendable on the wire.
+	Truncated []string
+}
+
+// RepairHistoryWithReport is RepairHistory with a report: the history it
+// returns is identical to RepairHistory's. Synthesized and Dropped name
+// what this pass changed; Truncated names the damage the pass leaves in
+// place by design — arguments stay verbatim, so a truncated call remains
+// in the report on every pass, and adapters make it sendable on the wire.
+func RepairHistoryWithReport(history []model.Message) ([]model.Message, HistoryRepair) {
+	var report HistoryRepair
+	for _, message := range history {
+		if message.Role != model.RoleAssistant {
+			continue
+		}
+		for _, call := range message.ToolCalls {
+			if call.ID != "" && !argsAreObject(call.Args) {
+				report.Truncated = append(report.Truncated, call.ID)
+			}
+		}
+	}
+
 	pending := make(map[string]struct{}, len(history))
 	repaired := make([]model.Message, 0, len(history))
 	dropped := false
@@ -670,22 +709,24 @@ func RepairHistory(history []model.Message) []model.Message {
 				repaired = append(repaired, message)
 			} else {
 				dropped = true
+				report.Dropped = append(report.Dropped, message.ToolCallID)
 			}
 		default:
 			repaired = append(repaired, message)
 		}
 	}
 	if len(pending) == 0 && !dropped {
-		return history
+		return history, report
 	}
 	if len(pending) == 0 {
-		return repaired
+		return repaired, report
 	}
 	withResults := make([]model.Message, 0, len(repaired)+len(pending))
 	for _, message := range repaired {
 		withResults = append(withResults, message)
 		for _, call := range message.ToolCalls {
 			if _, unanswered := pending[call.ID]; unanswered {
+				report.Synthesized = append(report.Synthesized, call.ID)
 				withResults = append(withResults, model.Message{
 					Role:       model.RoleTool,
 					ToolCallID: call.ID,
@@ -695,7 +736,14 @@ func RepairHistory(history []model.Message) []model.Message {
 			}
 		}
 	}
-	return withResults
+	return withResults, report
+}
+
+// argsAreObject reports whether args is a valid JSON object, the shape
+// every provider requires for tool-call arguments.
+func argsAreObject(args json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(args))
+	return strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed))
 }
 
 // generate calls the model once per turn, retrying retryable failures up to

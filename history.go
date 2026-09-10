@@ -4,9 +4,38 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/tokens"
 )
+
+// HistoryRepair reports what one NormalizeHistory pass changed, so an
+// application boundary can act on a damaged history instead of
+// discovering it from a provider rejection.
+type HistoryRepair = runner.HistoryRepair
+
+// NormalizeHistory restores the call/result pairing providers require
+// and reports every change. A crashed or cancelled run leaves tool calls
+// without results — each receives a synthesized interrupted result,
+// placed directly after the assistant message that requested it. A
+// context-evicting pipeline leaves results without calls — each is
+// dropped. A stream that died mid-arguments leaves a tool call whose
+// JSON is not an object — reported as truncated; the arguments stay
+// verbatim in the returned history, and adapters make them sendable on
+// the wire.
+//
+// The pass only adds or removes pairing evidence; it never rewrites
+// messages. Synthesized and Dropped name what this pass changed;
+// Truncated names the damage the pass leaves in place by design — a
+// truncated call stays listed on every pass. The pass is deterministic
+// and idempotent — normalizing a normalized history returns it unchanged
+// — and synthesized results carry no wall-clock data, so repeated passes
+// stay prompt-cache friendly. Runs also self-heal pairing at request
+// build time, silently; NormalizeHistory is the explicit pass for
+// application boundaries that want to see the damage first.
+func NormalizeHistory(history []model.Message) ([]model.Message, HistoryRepair) {
+	return runner.RepairHistoryWithReport(history)
+}
 
 // HistoryProcessor rewrites the history of one run before the request is
 // built. It receives the history exactly as the caller supplied it —
