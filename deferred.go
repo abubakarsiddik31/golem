@@ -83,9 +83,14 @@ func (a *Agent[Deps, Output]) RunWithDeferredResults(ctx context.Context, runCtx
 	if err != nil {
 		return Result[Output]{}, err
 	}
+	identity := resolveIdentity(history, runOpts)
+	for id, resolution := range resolutions {
+		identity.Stamp(&resolution)
+		resolutions[id] = resolution
+	}
 	messages := a.resumeMessages(a.resolveInstructions(ctx, runCtx),
-		mergeResolutions(history, resolutions), prompt, runOpts.promptParts)
-	return a.runLoop(ctx, runCtx, messages, nil, a.observerFor(runOpts))
+		mergeResolutions(history, resolutions), prompt, runOpts.promptParts, identity)
+	return a.runLoop(ctx, runCtx, messages, nil, identity, a.observerFor(runOpts))
 }
 
 // prepareRun applies run options and the history processor, then
@@ -323,8 +328,10 @@ func sortedKeys(resolutions map[string]model.Message) []string {
 // resumeMessages builds the resumed request conversation: the run's
 // resolved instructions, the repaired history — now fully paired — and
 // the optional new user prompt. An empty prompt with no parts adds no
-// user message: the resolutions alone re-open the conversation.
-func (a *Agent[Deps, Output]) resumeMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part) []model.Message {
+// user message: the resolutions alone re-open the conversation. The
+// optional prompt, like the resolutions, is the resuming run's addition
+// to the conversation and carries its identity.
+func (a *Agent[Deps, Output]) resumeMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
 	repaired := runner.RepairHistory(history)
 	messages := make([]model.Message, 0, len(repaired)+2)
 	if instructions != "" {
@@ -340,7 +347,9 @@ func (a *Agent[Deps, Output]) resumeMessages(instructions string, history []mode
 		messages = append(messages, message)
 	}
 	if prompt != "" || len(promptParts) > 0 {
-		messages = append(messages, model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts})
+		promptMessage := model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts}
+		identity.Stamp(&promptMessage)
+		messages = append(messages, promptMessage)
 	}
 	return messages
 }

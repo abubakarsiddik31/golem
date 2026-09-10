@@ -46,6 +46,18 @@
   `{"truncated_args": "<verbatim bytes>"}` on the wire instead of
   failing to encode or sending a request the provider rejects.
 
+- **Run and conversation identity.** Every run carries a `RunID` —
+  minted fresh per run, never inherited, overridable with
+  `golem.WithRunID` — stamped on its events, its `Result`, and every
+  message it adds to the conversation; `RunWithHistory` chains run into
+  one conversation under a shared `ConversationID`, inherited from the
+  supplied history's most recent identified message, pinnable or
+  forkable with `golem.WithConversationID`, and minted by
+  `golem.NewID()` (a time-ordered UUID version 7) otherwise. Both ride
+  the durable message JSON as additive `runId` and `conversationId`
+  fields, so the association survives storage with no session object
+  (decision in ADR 0027).
+
 ### Changed
 
 - **`tool.Tool.Exec` now returns `(tool.Result, error)` instead of

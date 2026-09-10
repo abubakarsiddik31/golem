@@ -38,11 +38,12 @@ Two surfaces, one core pass:
   is the explicit, opt-in pass for application boundaries — accepting a
   client-supplied conversation, loading stored history, resuming after
   a crash. It runs the same deterministic pairing pass the request
-  builder uses and reports everything it did: `Synthesized` names the
-  call IDs that received the interrupted result, `Dropped` names the
-  orphaned results removed, and `Truncated` names the calls whose
-  arguments are not a valid JSON object. The pass is idempotent and
-  never rewrites message content.
+  builder uses and reports what it did: `Synthesized` names the call
+  IDs that received the interrupted result and `Dropped` the orphaned
+  results removed. `Truncated` is detection, not a change: it names the
+  calls whose arguments are not a valid JSON object, and because the
+  bytes stay verbatim the same call stays listed on every pass. The
+  pass is idempotent and never rewrites message content.
 - **Truncated arguments become sendable at request build, per adapter.**
   A tool call whose arguments are not a valid JSON object — cut off
   mid-stream, or a scalar or array where the providers require an
