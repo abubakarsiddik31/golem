@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.7.6 — 2026-09-11
+
+This release completes six items of the pre-v1 feature series: a run
+can be priced before it is sent and after it completes, tools can
+return media and fail definitively, damaged histories can be
+normalized explicitly, and every run and conversation carries an
+identity — with the test suite hardened around the durable message
+contract while all of it landed. One breaking change ships, compiler-
+enforced and mechanical (the tool `Exec` signature).
 
 ### Added
 
