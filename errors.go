@@ -69,6 +69,12 @@ type PartialResult struct {
 	// Cost is the run's cumulative usage priced at the agent's WithPrice
 	// rates when one is wired; zero when no price is wired.
 	Cost float64
+	// RunID and ConversationID are the failed run's identity — the same
+	// values its events carried and its Result would have reported — so
+	// telemetry can join a failure to the conversation it interrupted
+	// even when the failure predates any recoverable evidence.
+	RunID          string
+	ConversationID string
 }
 
 // check reports whether cumulative usage crossed any configured bound.

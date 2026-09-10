@@ -252,8 +252,10 @@ type UsageLimit struct {
 
 // runOptions carries per-run input configuration.
 type runOptions struct {
-	promptParts []model.Part
-	runObserver func(RunEvent)
+	promptParts    []model.Part
+	runObserver    func(RunEvent)
+	runID          string
+	conversationID string
 }
 
 // RunOption customizes a single run. Options are evaluated once, at run
@@ -284,6 +286,30 @@ func WithPromptImageURL(url string) RunOption {
 // attached.
 func WithPromptImageData(mediaType string, data []byte) RunOption {
 	return WithPromptParts(model.ImageData(mediaType, data))
+}
+
+// WithRunID supplies this run's identifier; the default mints one with
+// golem.NewID. An empty value mints too — pass an identifier only to
+// align a run's identity with one your infrastructure already has, such
+// as a trace or request ID. The identifier rides the run's events, its
+// Result, and every message the run adds to the conversation.
+func WithRunID(id string) RunOption {
+	return func(opts *runOptions) {
+		opts.runID = id
+	}
+}
+
+// WithConversationID pins the identifier of the conversation this run
+// continues; the default resolves it from the supplied history — the
+// most recent message carrying one — and mints a fresh identifier when
+// none applies, starting a new conversation. An empty value resolves
+// like the default. To fork: continue a history under a NEW identity by
+// passing golem.NewID(), which the history's identifiers cannot
+// override.
+func WithConversationID(id string) RunOption {
+	return func(opts *runOptions) {
+		opts.conversationID = id
+	}
 }
 
 // validatePromptInput checks the parts this run attaches: every part is
@@ -500,6 +526,18 @@ type Result[Output any] struct {
 	// Pending is non-nil when the run paused awaiting deferred tool
 	// calls; see DeferredRequests for the resolution contract.
 	Pending *DeferredRequests
+	// RunID identifies this run: minted fresh per run — never inherited
+	// from history — unless WithRunID supplies one. It rides every event
+	// the run emits and every message the run added to Messages, so a
+	// shared agent's interleaved events stay attributable.
+	RunID string
+	// ConversationID identifies the conversation the run continued:
+	// inherited from the most recent identified message of the supplied
+	// history, pinned or forked with WithConversationID, and minted when
+	// none applies. Chained RunWithHistory calls share it; messages
+	// carrying it on Result.Messages re-identify the conversation after
+	// storage round-trips, no session object required.
+	ConversationID string
 }
 
 // Run executes the agent: it asks the configured model to answer prompt,
@@ -572,8 +610,33 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 	if err != nil {
 		return Result[Output]{}, err
 	}
-	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts)
-	return a.runLoop(ctx, runCtx, messages, onDelta, a.observerFor(runOpts))
+	identity := resolveIdentity(history, runOpts)
+	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity)
+	return a.runLoop(ctx, runCtx, messages, onDelta, identity, a.observerFor(runOpts))
+}
+
+// resolveIdentity resolves the run's identity: the run ID minted fresh
+// unless supplied, and the conversation ID pinned by option, else
+// inherited from the most recent identified message of the prepared
+// history — what the caller actually sent, a processor's output
+// included — else minted to start a new conversation.
+func resolveIdentity(history []model.Message, opts runOptions) runner.RunIdentity {
+	identity := runner.RunIdentity{RunID: opts.runID, ConversationID: opts.conversationID}
+	if identity.RunID == "" {
+		identity.RunID = NewID()
+	}
+	if identity.ConversationID == "" {
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].ConversationID != "" {
+				identity.ConversationID = history[i].ConversationID
+				break
+			}
+		}
+	}
+	if identity.ConversationID == "" {
+		identity.ConversationID = NewID()
+	}
+	return identity
 }
 
 // observerFor composes the run's event observers: the agent's
@@ -600,8 +663,10 @@ func (a *Agent[Deps, Output]) observerFor(opts runOptions) func(RunEvent) {
 // decode-or-correct boundary. It also returns a paused run: an outcome
 // carrying pending deferred calls skips decoding — a pause has no final
 // answer to validate — and surfaces them on Result.Pending. emit is the
-// run's composed event observer; see observerFor.
-func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error, emit func(RunEvent)) (Result[Output], error) {
+// run's composed event observer; see observerFor. identity is the run's
+// resolved identity (see resolveIdentity): it stamps the correction
+// messages this loop builds, the events it emits, and the run's Result.
+func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error, identity runner.RunIdentity, emit func(RunEvent)) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
 		if a.toolChoice != "" && t.Name != a.toolChoice {
@@ -637,16 +702,16 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		var err error
 		if onDelta != nil {
 			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta, preSend)
+				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta, preSend, identity)
 		} else {
 			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, preSend)
+				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, preSend, identity)
 		}
 		if err != nil {
 			addUsage(&usage, outcome.Usage)
 			modelCalls += outcome.ModelCalls
 			toolExecutions += outcome.ToolExecutions
-			return Result[Output]{}, classifyRunError(err, partialEvidence(outcome.Messages, usage,
+			return Result[Output]{}, classifyRunError(err, partialEvidence(identity, outcome.Messages, usage,
 				outcome.FinishReason, modelCalls, toolExecutions, runCost()))
 		}
 		addUsage(&usage, outcome.Usage)
@@ -654,11 +719,12 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		toolExecutions += outcome.ToolExecutions
 		if err := a.usageLimit.check(usage, modelCalls, toolExecutions, runCost()); err != nil {
 			return Result[Output]{}, &RunError{Stage: StageUsage, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
+				Partial: partialEvidence(identity, outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
 		}
 		if len(outcome.Pending) > 0 {
 			return Result[Output]{Messages: outcome.Messages, Usage: usage, FinishReason: outcome.FinishReason,
 				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost(),
+				RunID: identity.RunID, ConversationID: identity.ConversationID,
 				Pending: deferredRequests(outcome.Pending)}, nil
 		}
 
@@ -666,7 +732,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		if err == nil {
 			return Result[Output]{Output: output, Messages: a.closeOutputCall(outcome.Messages, outcome.Response),
 				Usage: usage, FinishReason: outcome.FinishReason,
-				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost()}, nil
+				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost(),
+				RunID: identity.RunID, ConversationID: identity.ConversationID}, nil
 		}
 		var rejection *model.ModelRetry
 		if !errors.As(err, &rejection) || attempt >= a.outputRetries {
@@ -674,29 +741,36 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				err = fmt.Errorf("golem: output failed validation after %d attempts: %w", attempt+1, err)
 			}
 			return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
-				Partial: partialEvidence(outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
+				Partial: partialEvidence(identity, outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
 		}
 		if emit != nil {
-			emit(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection})
+			emit(RunEvent{Kind: EventOutputRejected, Attempt: attempt + 1, Err: rejection,
+				RunID: identity.RunID, ConversationID: identity.ConversationID})
 		}
 		// Correction round: keep the rejected response as
 		// evidence, tell the model why it was rejected, and run again.
 		// In tool mode the rejection binds to the output call, so the
-		// correction round keeps the pairing providers require.
+		// correction round keeps the pairing providers require. The
+		// correction message is this run's addition to the conversation,
+		// so it carries the run's identity like every other added turn.
 		if call, ok := findOutputCall(outcome.Response.Message.ToolCalls, a.outputToolName); ok {
-			messages = append(outcome.Messages, model.Message{
+			correction := model.Message{
 				Role:       model.RoleTool,
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
 				Content: fmt.Sprintf("Your result was rejected: %v. "+
 					"Correct the arguments and call %s again.", rejection.Err, a.outputToolName),
-			})
+			}
+			identity.Stamp(&correction)
+			messages = append(outcome.Messages, correction)
 			continue
 		}
-		messages = append(outcome.Messages, model.Message{
+		correction := model.Message{
 			Role:    model.RoleUser,
 			Content: fmt.Sprintf("Your previous response was rejected: %v. Correct it and respond again.", rejection.Err),
-		})
+		}
+		identity.Stamp(&correction)
+		messages = append(outcome.Messages, correction)
 	}
 }
 
@@ -787,8 +861,10 @@ func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx Ru
 // requestMessages builds the ordered request conversation: the run's
 // resolved instructions when set, the repaired history with system messages
 // removed (instructions govern every run), and the new user prompt with
-// its attached parts.
-func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part) []model.Message {
+// its attached parts. The user prompt is the run's first addition to the
+// conversation, so it carries the run's identity; history passes through
+// with the identity it already had.
+func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
 	repaired := runner.RepairHistory(history)
 	messages := make([]model.Message, 0, len(repaired)+2)
 	if instructions != "" {
@@ -803,7 +879,9 @@ func (a *Agent[Deps, Output]) requestMessages(instructions string, history []mod
 		}
 		messages = append(messages, message)
 	}
-	return append(messages, model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts})
+	promptMessage := model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts}
+	identity.Stamp(&promptMessage)
+	return append(messages, promptMessage)
 }
 
 // exponentialBackoff paces enabled retries: 500 ms after the first failed
@@ -854,11 +932,13 @@ func addUsage(dst *model.Usage, src model.Usage) {
 	dst.ReasoningTokens += src.ReasoningTokens
 }
 
-func partialEvidence(messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int, cost float64) *PartialResult {
+func partialEvidence(identity runner.RunIdentity, messages []model.Message, usage model.Usage, finish model.FinishReason, requests, toolCalls int, cost float64) *PartialResult {
 	if toolCalls == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && !hasAssistantTurn(messages) {
 		return nil
 	}
-	return &PartialResult{Messages: messages, Usage: usage, FinishReason: finish, Requests: requests, ToolCalls: toolCalls, Cost: cost}
+	return &PartialResult{Messages: messages, Usage: usage, FinishReason: finish,
+		Requests: requests, ToolCalls: toolCalls, Cost: cost,
+		RunID: identity.RunID, ConversationID: identity.ConversationID}
 }
 
 // hasAssistantTurn reports whether any completed model turn is in the

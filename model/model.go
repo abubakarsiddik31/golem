@@ -71,6 +71,16 @@ type Message struct {
 	// reasoning. Ignored on other roles, and rejected by the agent's
 	// history validation there.
 	Thinking []ThinkingBlock `json:"thinking,omitempty"`
+	// RunID identifies the run that added this message to the
+	// conversation, and is empty on messages a caller supplied as
+	// history — a run never rewrites the identity of what it received.
+	// Identity metadata only: adapters never send it to the provider.
+	RunID string `json:"runId,omitempty"`
+	// ConversationID groups the messages of one conversation across the
+	// runs that share its history; the most recent non-empty value in a
+	// history is what the next run inherits. Pair it with RunID to tell
+	// which turn of a stored conversation each message came from.
+	ConversationID string `json:"conversationId,omitempty"`
 }
 
 // ThinkingBlock is one block of model reasoning on an assistant message:

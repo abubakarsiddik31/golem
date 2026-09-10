@@ -150,6 +150,28 @@ type Event struct {
 	Err error
 	// Usage is the provider-recorded consumption of one attempt.
 	Usage model.Usage
+	// RunID and ConversationID identify the emitting run and the
+	// conversation it continues; constant across every event of one
+	// run, so a shared agent's interleaved event streams stay
+	// attributable.
+	RunID          string
+	ConversationID string
+}
+
+// RunIdentity is the identity a run stamps on its evidence: the run
+// itself and the conversation it continues. The agent resolves both
+// before the loop — the run ID minted per run unless supplied, the
+// conversation ID inherited from history unless pinned — and the runner
+// applies them to every message it adds and every event it emits.
+type RunIdentity struct {
+	RunID          string
+	ConversationID string
+}
+
+// Stamp marks a run-created message with the run's identity.
+func (ids RunIdentity) Stamp(message *model.Message) {
+	message.RunID = ids.RunID
+	message.ConversationID = ids.ConversationID
 }
 
 // Observer receives run events synchronously, in deterministic
@@ -191,11 +213,13 @@ func Execute[Deps any](
 	outputTool string,
 ) (Outcome, error) {
 	return ExecuteWithToolConfig(ctx, m, tools, deps, req, maxIterations, retry,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, nil)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, nil, RunIdentity{})
 }
 
 // ExecuteWithToolConfig runs the loop with explicit tool policy and an
 // optional event observer; see Observer for the ordering guarantees.
+// ids stamps every message the loop adds and every event it emits with
+// the run's identity.
 func ExecuteWithToolConfig[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -208,11 +232,13 @@ func ExecuteWithToolConfig[Deps any](
 	outputTool string,
 	emit Observer,
 	preSend func(ctx context.Context, req model.Request) error,
+	ids RunIdentity,
 ) (Outcome, error) {
 	if retry.MaxAttempts < 1 {
 		return Outcome{}, fmt.Errorf("runner: retry MaxAttempts must be at least 1, got %d", retry.MaxAttempts)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend,
+	emit = observeIdentity(emit, ids)
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend, ids,
 		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
 			return generate(ctx, m, request, retry, turn, emit)
 		})
@@ -240,12 +266,13 @@ func ExecuteStream[Deps any](
 	onDelta func(model.Delta) error,
 ) (Outcome, error) {
 	return ExecuteStreamWithToolConfig(ctx, m, tools, deps, req, maxIterations,
-		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, onDelta, nil)
+		ToolConfig{DefaultRetries: toolRetries}, outputTool, nil, onDelta, nil, RunIdentity{})
 }
 
 // ExecuteStreamWithToolConfig runs streamed turns with explicit tool
 // policy and an optional event observer; see Observer for the ordering
-// guarantees.
+// guarantees. ids stamps every message the loop adds and every event it
+// emits with the run's identity.
 func ExecuteStreamWithToolConfig[Deps any](
 	ctx context.Context,
 	m model.Model,
@@ -258,12 +285,14 @@ func ExecuteStreamWithToolConfig[Deps any](
 	emit Observer,
 	onDelta func(model.Delta) error,
 	preSend func(ctx context.Context, req model.Request) error,
+	ids RunIdentity,
 ) (Outcome, error) {
 	streamer, ok := m.(model.StreamingModel)
 	if !ok {
 		return Outcome{}, fmt.Errorf("runner: model %T does not support streaming", m)
 	}
-	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend,
+	emit = observeIdentity(emit, ids)
+	return execute(ctx, tools, deps, req, maxIterations, toolConfig, outputTool, emit, preSend, ids,
 		func(ctx context.Context, request model.Request, turn int) (model.Response, int, error) {
 			emitEvent(emit, Event{Kind: EventModelStart, Turn: turn, Attempt: 1})
 			response, err := streamer.GenerateStream(ctx, request, onDelta)
@@ -274,6 +303,20 @@ func ExecuteStreamWithToolConfig[Deps any](
 			emitEvent(emit, event)
 			return response, 1, err
 		})
+}
+
+// observeIdentity binds a run's identity to its observer: every event
+// the run emits carries the same RunID and ConversationID. A nil
+// observer stays nil.
+func observeIdentity(emit Observer, ids RunIdentity) Observer {
+	if emit == nil {
+		return nil
+	}
+	base := emit
+	return func(event Event) {
+		event.RunID, event.ConversationID = ids.RunID, ids.ConversationID
+		base(event)
+	}
 }
 
 // turnCall produces one model response for a turn and reports how many
@@ -294,7 +337,10 @@ type runCounts struct {
 // outputTool, when non-empty, names the synthesized output tool: the
 // model's first call to it ends the run. preSend, when non-nil, runs
 // before every model call; a non-nil error ends the run before the
-// request is sent, with the evidence accumulated so far.
+// request is sent, with the evidence accumulated so far. ids stamps
+// the messages the loop adds — assistant turns and the tool results —
+// with the run's identity; the request's own messages pass through
+// untouched.
 func execute[Deps any](
 	ctx context.Context,
 	tools []tool.Tool[Deps],
@@ -305,6 +351,7 @@ func execute[Deps any](
 	outputTool string,
 	emit Observer,
 	preSend func(ctx context.Context, req model.Request) error,
+	ids RunIdentity,
 	call turnCall,
 ) (Outcome, error) {
 	var counts runCounts
@@ -350,6 +397,7 @@ func execute[Deps any](
 		}
 		counts.modelCalls += providerCalls
 		lastFinish = response.FinishReason
+		ids.Stamp(&response.Message)
 		messages = append(messages, response.Message)
 		usage.InputTokens += response.Usage.InputTokens
 		usage.OutputTokens += response.Usage.OutputTokens
@@ -376,6 +424,9 @@ func execute[Deps any](
 		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
 			return partialOutcome(messages, usage, counts, lastFinish), err
+		}
+		for i := range toolMessages {
+			ids.Stamp(&toolMessages[i])
 		}
 		messages = append(messages, toolMessages...)
 		if len(pending) > 0 {
