@@ -22,6 +22,12 @@ so observation can never fail a run; an observer that must stop the run
 cancels the run context. `Run`, `RunWithHistory`, and both streaming
 variants emit the same events.
 
+Two kinds mark lifecycle boundaries rather than executions:
+`EventDeferred` replaces a deferred call's tool end when the run pauses
+on it, and `EventCanceled` follows the tool end of the call that ended
+the run with `&tool.Canceled` — the boundary after which nothing else
+executes, and calls the stop prevented never emit at all.
+
 ### Run-scoped observers
 
 `WithRunObserver` registers the same observation for a single run, as a
@@ -101,7 +107,8 @@ agent, err := golem.New[string, string](client,
 - `golem.WithRunObserver(onEvent func(RunEvent)) RunOption`
 - `golem.RunEvent{Kind, Turn, Attempt, CallID, ToolName, Args, Result, Err, Usage, RunID, ConversationID}`
 - `golem.EventKind` — `golem.EventModelStart`, `golem.EventModelEnd`,
-  `golem.EventToolStart`, `golem.EventToolEnd`, `golem.EventOutputRejected`
+  `golem.EventToolStart`, `golem.EventToolEnd`, `golem.EventOutputRejected`,
+  `golem.EventDeferred`, `golem.EventCanceled`
 - `golem.WithRunID(id string) RunOption`, `golem.WithConversationID(id string) RunOption`, `golem.NewID()` — see [Conversations and history](conversations-and-history.md#run-and-conversation-identity)
 
 ## Gotchas

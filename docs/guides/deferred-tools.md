@@ -50,7 +50,9 @@ Resume with `RunWithDeferredResults`, passing the paused run's
 - **Approved** — the tool re-executes under the configured timeout with
   the approved marker set, and its return value becomes the call's tool
   result. A re-run that fails, or defers again, fails the resume run at
-  the tool stage.
+  the tool stage; a re-run that returns `&tool.Canceled` ends the resume
+  run deliberately at the cancellation stage. Both happen before any
+  model call.
 - **Denied** — no re-execution; the model receives a denial message
   stating the decision and the optional reason.
 - **External** — the provided text becomes the call's tool result,
@@ -63,8 +65,10 @@ exactly once, no unknown call IDs) fails the resume before any model
 call. An empty prompt resumes on the resolutions alone, adding no user
 message.
 
-Cancellation during an approved re-run surfaces as the context error,
-not a tool error, matching every other stage.
+An external stop during an approved re-run — the caller's context
+cancelling — surfaces as the context error, not a tool error, matching
+every other stage. The tool's own `&tool.Canceled` is the deliberate
+surface: it ends the resume run at the cancellation stage.
 
 ## Example
 

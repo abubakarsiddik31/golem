@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **In-tool run cancellation.** A tool can now end the run
+  deliberately: returning `&tool.Canceled{Reason}` from `Exec` stops
+  the run at the new `canceled` stage — not a failure, no retry budget
+  touched — with the sentinel reachable through `RunError` via
+  `errors.As` and the evidence on `RunError.Partial`. Inside the batch,
+  calls before the stop keep their recorded results; the stopping call
+  and everything after it are closed with the synthesized no-result
+  result, so the transcript resumes through `RunWithHistory` without
+  repair. Later calls never start; a pending pause is discarded in
+  favor of the stop. A delegated sub-agent that cancels cancels the
+  delegating run, and an approved deferred re-run that returns the
+  sentinel ends the resume run before any model call. Observers gain
+  the additive `EventCanceled` boundary marker (decision in ADR 0028).
+
 ## v0.7.6 — 2026-09-11
 
 This release completes six items of the pre-v1 feature series: a run

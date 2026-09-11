@@ -110,6 +110,14 @@ synthesizes results for its unanswered calls, exactly as for a crashed
 run. `Partial` is nil when the run failed before completing anything,
 so a first-call failure needs no recovery path.
 
+A tool's deliberate stop (`&tool.Canceled`, the `canceled` stage) is
+the one kind whose batch survives: results recorded before the stop
+stay in the transcript, and every call left unanswered — the stopping
+call, its concurrent siblings, everything after it — is closed with the
+synthesized no-result result at once. Repair finds nothing to do, so a
+cancelled run resumes with zero repair. See
+[Tools and dependencies](tools-and-dependencies.md#cancelling-the-run-from-a-tool).
+
 ```go
 result, err := agent.Run(ctx, runCtx, "go")
 var runErr *golem.RunError
