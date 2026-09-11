@@ -44,6 +44,24 @@ without consuming the tool's retry budget. Returning
 consume budget; any other error still aborts the run at the `tool`
 stage.
 
+### Cancelling the run from a tool
+
+A tool that must end the whole run — a policy veto, an exhausted
+budget, a stop gesture forwarded through the dependencies — returns
+`&tool.Canceled{Reason}`. The run stops deliberately, not as a
+failure: `Run` reports `RunError` with `StageCanceled` (match the
+sentinel with `errors.As` to read the reason), no retry budget is
+touched, and the evidence stays on `RunError.Partial`. Inside the
+batch, execution order governs: calls before the cancelling call keep
+their recorded results, the cancelling call and everything after it
+are closed with a synthesized no-result result, and later calls never
+start. The transcript is provider-valid immediately, so
+`RunWithHistory` resumes it without repair — see [Resuming a failed
+run](conversations-and-history.md#resuming-a-failed-run). A tool
+cannot be force-stopped once running — the group it runs in finishes,
+and only work that had not started is prevented. A delegated sub-agent
+that cancels cancels the delegating run the same way.
+
 ## Example
 
 Run `examples/tools`:
@@ -83,12 +101,18 @@ result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "A
   the text-only helper.
 - `&tool.Failed{Reason}` — a definitive failure recorded as the tool's
   result; the retry budget is untouched.
+- `&tool.Canceled{Reason}` — a deliberate stop: the run ends at the
+  cancellation stage with evidence on `RunError.Partial`.
 
 ## Gotchas
 
 - `Exec` must honor `ctx` and return errors rather than logging them.
 - Tool failures abort the run at the `tool` stage unless they wrap
   `model.ModelRetry` (correction; see
-  [Self-correction](self-correction.md)) or are a `*tool.Failed`
-  (definitive; recorded as the result, budget untouched).
+  [Self-correction](self-correction.md)), are a `*tool.Failed`
+  (definitive; recorded as the result, budget untouched), or are a
+  `*tool.Canceled` (deliberate stop; ends the run at the `canceled`
+  stage).
 - Tool metadata must be inspectable without executing the tool.
+- Any tool that can return `*tool.Canceled` holds the authority to end
+  the run; read a tool returning it as part of that tool's contract.

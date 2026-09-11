@@ -33,6 +33,13 @@ const (
 	// the run pauses with the call pending on Result.Pending. It replaces
 	// the call's tool-end event.
 	EventDeferred = runner.EventDeferred
+	// EventCanceled marks the tool call that ended the run with the
+	// &tool.Canceled sentinel: the boundary after which nothing else
+	// executes. It follows the cancelling call's tool-end event; CallID
+	// and ToolName identify the call and Err carries the sentinel. A run
+	// that ends this way reports RunError with StageCanceled, evidence on
+	// RunError.Partial.
+	EventCanceled = runner.EventCanceled
 )
 
 // WithRunEvents registers an observer invoked for every observable point

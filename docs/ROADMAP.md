@@ -40,8 +40,9 @@ series ends in the freeze, not a date.
 
 - ~~**Run and conversation IDs.**~~ Shipped in v0.7.6 (ADR 0027).
 
-- **In-tool run cancellation.** A typed way for a tool to end the run
-  cleanly, preserving evidence through `RunError.Partial`.
+- ~~**In-tool run cancellation.**~~ Shipped as `&tool.Canceled{}`: a
+  tool ends the run deliberately at the `canceled` stage, evidence
+  preserved and resume-ready on `RunError.Partial` (ADR 0028).
 
 - **Untrusted-history sanitization.** A validation pass for
   client-supplied histories: foreign system prompts, dangling tool

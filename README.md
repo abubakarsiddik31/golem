@@ -95,6 +95,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`tool-results`](examples/tool-results/main.go) | Tools returning parts and definitive failures, offline |
 | [`history-repair`](examples/history-repair/main.go) | Normalizing a damaged conversation with a report, offline |
 | [`run-ids`](examples/run-ids/main.go) | Run and conversation identity across chained and forked runs, offline |
+| [`run-cancellation`](examples/run-cancellation/main.go) | A tool ending the run deliberately with `tool.Canceled`, resuming the evidence, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |

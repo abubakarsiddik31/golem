@@ -60,8 +60,10 @@ func WithAgentResult[Deps any, Output any](fn func(ctx context.Context, output O
 // budget governs correction. Every other sub-agent failure fails the
 // delegating run at the tool stage with the inner RunError preserved in
 // the chain; cancellation keeps its identity through the chain for
-// errors.Is. The sub-agent's own messages and usage are not part of the
-// delegating run's evidence — only the rendered result is.
+// errors.Is, and a sub-agent run ended by &tool.Canceled cancels the
+// delegating run at the cancellation stage the same way. The sub-agent's
+// own messages and usage are not part of the delegating run's evidence —
+// only the rendered result is.
 func (a *Agent[Deps, Output]) AsTool(name, description string, options ...AgentToolOption[Deps, Output]) (tool.Tool[Deps], error) {
 	if a == nil {
 		return tool.Tool[Deps]{}, fmt.Errorf("golem: agent is required")

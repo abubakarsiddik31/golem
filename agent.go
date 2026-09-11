@@ -553,7 +553,10 @@ type Result[Output any] struct {
 // executed tools — carries it as RunError.Partial; a failure before any
 // activity leaves Partial nil. Cancellation and deadline errors are
 // wrapped like every other failure and remain matchable with errors.Is
-// through RunError.Unwrap.
+// through RunError.Unwrap. A tool that returns &tool.Canceled ends the
+// run deliberately at the cancellation stage instead: not a failure, the
+// sentinel stays reachable with errors.As, and Partial keeps the tool
+// results recorded before the stop in a resume-ready transcript.
 func (a *Agent[Deps, Output]) Run(ctx context.Context, runCtx RunContext[Deps], prompt string, opts ...RunOption) (Result[Output], error) {
 	return a.execute(ctx, runCtx, nil, prompt, nil, opts...)
 }
@@ -900,13 +903,18 @@ func exponentialBackoff(attempt int) time.Duration {
 // classifyRunError maps runner outcomes to public stages, attaching the
 // run's partial evidence. Cancellation and deadline errors ride a RunError
 // like every other failure — Unwrap keeps them matchable with errors.Is —
-// because wrapping is the only way their evidence survives. A crossed
-// usage bound — post-response, or the pre-send per-request estimate —
-// lands at the usage stage.
+// because wrapping is the only way their evidence survives. A deliberate
+// in-tool stop (&tool.Canceled) lands at the cancellation stage, with the
+// sentinel still reachable through errors.As. A crossed usage bound —
+// post-response, or the pre-send per-request estimate — lands at the
+// usage stage.
 func classifyRunError(err error, partial *PartialResult) error {
 	var toolErr *runner.ToolError
+	var canceledErr *runner.CanceledError
 	var limitErr *UsageLimitError
 	switch {
+	case errors.As(err, &canceledErr):
+		return &RunError{Stage: StageCanceled, Err: err, Partial: partial}
 	case errors.As(err, &toolErr):
 		return &RunError{Stage: StageTool, Err: err, Partial: partial}
 	case errors.As(err, &limitErr):

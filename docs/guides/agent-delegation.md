@@ -44,9 +44,12 @@ rejected with `*model.ModelRetry`, so the delegating run's tool retry
 budget (`WithToolRetries`, or the tool's `MaxRetries`) governs
 correction like any tool rejection. Every other sub-agent failure fails
 the delegating run at the tool stage with the inner `RunError`
-preserved in the chain, and cancellation propagates unwrapped. The
-sub-agent's own usage limits, iteration bounds, and timeouts bound its
-run; a tool timeout on the agent tool bounds the whole delegation.
+preserved in the chain, and cancellation propagates unwrapped. A
+sub-agent run ended deliberately by its own tools — `&tool.Canceled` —
+cancels the delegating run too: the sentinel surfaces through the
+chain and the parent ends at the cancellation stage. The sub-agent's
+own usage limits, iteration bounds, and timeouts bound its run; a tool
+timeout on the agent tool bounds the whole delegation.
 
 ## Example
 
