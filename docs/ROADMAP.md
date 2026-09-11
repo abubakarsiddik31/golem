@@ -44,9 +44,10 @@ series ends in the freeze, not a date.
   tool ends the run deliberately at the `canceled` stage, evidence
   preserved and resume-ready on `RunError.Partial` (ADR 0028).
 
-- **Untrusted-history sanitization.** A validation pass for
-  client-supplied histories: foreign system prompts, dangling tool
-  calls, unsafe URL schemes.
+- ~~**Untrusted-history sanitization.**~~ Shipped as
+  `golem.SanitizeHistory`: drops system messages and non-http(s) URL
+  parts, repairs pairing, and reports every change at the trust
+  boundary (ADR 0029).
 
 - **Tool search / deferred tool loading.** Model-driven discovery over
   large tool lists. Needs an ADR; may slip behind v1 if skills already
