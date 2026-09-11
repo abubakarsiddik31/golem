@@ -21,6 +21,12 @@ const (
 	StageLoop Stage = "loop"
 	// StageUsage means the run crossed a configured usage bound.
 	StageUsage Stage = "usage"
+	// StageCanceled means a tool ended the run on purpose by returning
+	// &tool.Canceled — a deliberate stop, not a failure. The sentinel is
+	// reachable through RunError.Unwrap with errors.As, and RunError.Partial
+	// preserves the evidence, including the tool results recorded before
+	// the stop.
+	StageCanceled Stage = "canceled"
 )
 
 // RunError adds an inspectable execution stage while preserving the source
@@ -50,8 +56,11 @@ func (e *RunError) Unwrap() error {
 // Messages ending at the assistant turn that requested the batch — its
 // executed results are observable through run events — and any tool call
 // left without a result is repaired on resume, exactly as for a crashed
-// run. Feed Partial.Messages to RunWithHistory to continue a failed
-// conversation.
+// run. A cancellation is the one exception: the tool results recorded
+// before the stop stay in Messages, every unanswered call of the batch is
+// closed with a synthesized no-result result, and the transcript is
+// resumable without repair. Feed Partial.Messages to RunWithHistory to
+// continue a failed conversation.
 type PartialResult struct {
 	// Messages is the ordered conversation evidence, ending at the last
 	// completed model turn.

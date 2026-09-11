@@ -41,12 +41,32 @@ func (e *ToolError) Unwrap() error {
 	return e.Err
 }
 
+// CanceledError reports that a tool ended the run on purpose by returning
+// the *tool.Canceled sentinel. The core maps it to the cancellation stage;
+// the sentinel stays reachable through Unwrap for errors.As.
+type CanceledError struct {
+	ToolName string
+	CallID   string
+	Err      error
+}
+
+func (e *CanceledError) Error() string {
+	return fmt.Sprintf("runner: tool %q (call %q) canceled the run: %v", e.ToolName, e.CallID, e.Err)
+}
+
+// Unwrap exposes the *tool.Canceled sentinel.
+func (e *CanceledError) Unwrap() error {
+	return e.Err
+}
+
 // Outcome is the terminal state of a loop: the final response, the full
 // ordered conversation evidence, usage summed across turns, the last
 // turn's terminal cause, and activity counts for usage bounds. An error
 // return keeps the evidence the loop accumulated: Messages runs through
 // the last completed model turn — a failed provider call contributes
-// nothing, and a tool batch that fails contributes none of its results —
+// nothing, a tool batch that fails contributes none of its results, and
+// a tool batch ended by the *tool.Canceled sentinel keeps the results
+// recorded before the stop plus the synthesized closings after it —
 // Usage sums the completed turns, FinishReason is the last completed
 // turn's cause, and the counts include the failed provider attempt.
 // Callers surface that partial evidence; a run that failed before any
@@ -122,6 +142,11 @@ const (
 	// the run pauses with the call pending, surfaced in Outcome.Pending.
 	// No EventToolEnd follows for a deferred call.
 	EventDeferred EventKind = "deferred"
+	// EventCanceled marks the tool call that ended the run with the
+	// *tool.Canceled sentinel: the boundary after which nothing else
+	// executes. It follows the cancelling call's tool-end event; CallID
+	// and ToolName identify the call and Err carries the sentinel.
+	EventCanceled EventKind = "canceled"
 )
 
 // Event is one observation of an executing run. The fields a kind
@@ -180,8 +205,11 @@ func (ids RunIdentity) Stamp(message *model.Message) {
 // model emission order before the group runs and ends in the same order
 // after it completes. A call whose execution returns a deferred sentinel
 // reports EventDeferred in place of its tool end, in emission order
-// within its group. Observers run inline with execution and must not
-// block; cancel the run context to stop the run from an observer.
+// within its group. A call whose execution returns the *tool.Canceled
+// sentinel reports EventCanceled right after its tool end, as the final
+// tool event of the run; calls of groups the stop prevented from
+// starting emit nothing. Observers run inline with execution and must
+// not block; cancel the run context to stop the run from an observer.
 type Observer func(Event)
 
 // emitEvent forwards event to emit when one is registered.
@@ -423,6 +451,16 @@ func execute[Deps any](
 
 		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
+			// A canceled run keeps the batch's recorded results and
+			// synthesized closings as evidence; every other failure
+			// contributes none of its results.
+			var canceled *CanceledError
+			if errors.As(err, &canceled) && len(toolMessages) > 0 {
+				for i := range toolMessages {
+					ids.Stamp(&toolMessages[i])
+				}
+				messages = append(messages, toolMessages...)
+			}
 			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 		for i := range toolMessages {
@@ -457,8 +495,14 @@ type toolCallResult[Deps any] struct {
 // in emission order regardless of completion order. A call whose execution
 // returns a *tool.Deferred sentinel is not executed to a result: it is
 // recorded as pending, reported with EventDeferred, and the batch's other
-// calls still run. The returned messages carry results for the executed
-// calls only; pending lists every deferred call in emission order.
+// calls still run. A call whose execution returns the *tool.Canceled
+// sentinel ends the run: executed calls before it in emission order keep
+// their recorded results, the cancelling call and everything after it —
+// same-group siblings included — are closed with the synthesized
+// interrupted result, later groups never start, and a pause is discarded.
+// The returned messages carry results for the executed calls plus those
+// synthesized closings; pending lists every deferred call in emission
+// order, nil when the run was canceled.
 func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, []PendingCall, error) {
 	results := make([]toolCallResult[Deps], len(calls))
 	for i, call := range calls {
@@ -476,11 +520,20 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 			}
 		}
 		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1, counts, turn, emit)
+		if groupCanceled(results[start:end]) {
+			// The stop ends the batch: work that had not started never
+			// runs, so the caller's stop gesture cannot launch it.
+			break
+		}
 		start = end
 	}
 	messages := make([]model.Message, 0, len(results))
 	var pending []PendingCall
+	var canceledErr *CanceledError
 	for _, item := range results {
+		if canceledErr != nil {
+			break
+		}
 		var deferred *tool.Deferred
 		if item.err != nil && errors.As(item.err, &deferred) {
 			if deferred.Kind != tool.DeferApproval && deferred.Kind != tool.DeferExternal {
@@ -508,6 +561,14 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 		if errors.Is(item.err, context.Canceled) || errors.Is(item.err, context.DeadlineExceeded) {
 			return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: item.err}
 		}
+		// A deliberate stop is the tool's authority over the run, not a
+		// failure: close out the batch cleanly instead of aborting.
+		var stopped *tool.Canceled
+		if errors.As(item.err, &stopped) {
+			canceledErr = &CanceledError{ToolName: item.call.Name, CallID: item.call.ID, Err: item.err}
+			emitEvent(emit, Event{Kind: EventCanceled, Turn: turn, CallID: item.call.ID, ToolName: item.call.Name, Err: item.err})
+			continue
+		}
 		// A definitive failure is the tool's result, not a correction
 		// request: record it, let the model decide what to do next, and
 		// leave the retry budget alone.
@@ -530,7 +591,47 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 		}
 		return nil, nil, &ToolError{ToolName: item.call.Name, CallID: item.call.ID, Err: terminalToolError(feedbacks[item.declared.Name], item.err)}
 	}
+	if canceledErr != nil {
+		// The run ends here, so nothing past the stop reaches the model as
+		// a result — and nothing stays unanswered: every call without a
+		// recorded result (the cancelling call, same-group siblings after
+		// it, calls of groups that never ran, deferred calls) is closed
+		// with the same synthesized no-result message history repair
+		// uses, keeping the transcript resumable without repair. A pause
+		// is discarded: the run ends canceled, not pending.
+		pending = nil
+		for _, item := range results {
+			if !hasResultMessage(messages, item.call.ID) {
+				messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: item.call.ID,
+					ToolName: item.call.Name, Content: interruptedToolResult})
+			}
+		}
+		return messages, nil, canceledErr
+	}
 	return messages, pending, nil
+}
+
+// groupCanceled reports whether any executed call in the group returned
+// the cancellation sentinel.
+func groupCanceled[Deps any](group []toolCallResult[Deps]) bool {
+	var stopped *tool.Canceled
+	for _, item := range group {
+		if item.err != nil && errors.As(item.err, &stopped) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasResultMessage reports whether the recorded messages already answer
+// the call.
+func hasResultMessage(messages []model.Message, callID string) bool {
+	for _, message := range messages {
+		if message.ToolCallID == callID {
+			return true
+		}
+	}
+	return false
 }
 
 // runToolGroup executes one sequential or barrier-separated group,

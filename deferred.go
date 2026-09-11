@@ -63,7 +63,9 @@ type DeferredResults struct {
 //
 // Approved calls re-execute their tool with the approved marker set (see
 // tool.CallApproved) under the configured tool timeout; a re-run that
-// fails — or defers again — fails the resume run at the tool stage.
+// fails — or defers again — fails the resume run at the tool stage, and
+// a re-run that returns &tool.Canceled ends the resume run at the
+// cancellation stage, both before any model call.
 // Denied calls and external results become the calls' tool results, in
 // the model's emission order. The resumed run continues through the
 // ordinary loop and may itself pause again.
@@ -223,6 +225,13 @@ func (a *Agent[Deps, Output]) resolvePending(ctx context.Context, runCtx RunCont
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return nil, classifyRunError(err, nil)
+				}
+				// The approved re-run is a full execution: its sentinel
+				// ends the resume run cleanly, before any model call.
+				var stopped *tool.Canceled
+				if errors.As(err, &stopped) {
+					return nil, &RunError{Stage: StageCanceled,
+						Err: fmt.Errorf("approved re-run of %q: %w", call.Name, err)}
 				}
 				return nil, classifyRunError(&runner.ToolError{ToolName: call.Name, CallID: call.ID,
 					Err: fmt.Errorf("approved re-run failed: %w", err)}, nil)

@@ -49,6 +49,24 @@ func (f *Failed) Error() string {
 	return "tool failed: " + f.Reason
 }
 
+// Canceled is a deliberate stop: the tool decided the run must not
+// continue — a policy veto, an exhausted budget, a stop gesture the
+// application forwarded through its dependencies. Returning it ends the
+// run cleanly with the stage-canceled RunError: executed calls before
+// this one keep their recorded results, later calls are closed with a
+// synthesized no-result message so the transcript stays resumable, and
+// RunError.Partial preserves the evidence. It is not a failure and does
+// not touch any retry budget. Only return it from tools the application
+// trusts with the authority to end the run.
+type Canceled struct {
+	// Reason is the application-visible cancellation description.
+	Reason string
+}
+
+func (c *Canceled) Error() string {
+	return "tool canceled the run: " + c.Reason
+}
+
 // Tool is one executable capability offered to a model. Deps is the agent's
 // declared dependency type; the same value flows to every tool in a run.
 //
@@ -67,7 +85,8 @@ type Tool[Deps any] struct {
 	// tool retry budget configured, the run feeds the rejection back to the
 	// model. Returning &tool.Failed records the failure as the tool's
 	// result — the model sees it, the run continues, the retry budget is
-	// untouched.
+	// untouched. Returning &tool.Canceled ends the run cleanly with its
+	// evidence preserved; see Canceled.
 	Exec func(ctx context.Context, deps Deps, args json.RawMessage) (Result, error)
 	// MaxRetries overrides the agent's tool-rejection budget for this tool.
 	// Nil inherits the agent setting; a pointer to zero permits no correction.
