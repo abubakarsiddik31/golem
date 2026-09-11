@@ -65,6 +65,15 @@ exactly once, no unknown call IDs) fails the resume before any model
 call. An empty prompt resumes on the resolutions alone, adding no user
 message.
 
+When the paused state itself arrived from the client — the browser
+holds the conversation and submits it back to resume — sanitize it
+first (`golem.SanitizeHistory`): a fabricated pending call in
+submitted history would otherwise present itself as a genuine approval
+request, and the sanitization report names the fabrication before any
+resolution is asked for. See
+[Conversations and history](conversations-and-history.md#sanitizing-untrusted-history)
+for the trust rules.
+
 An external stop during an approved re-run — the caller's context
 cancelling — surfaces as the context error, not a tool error, matching
 every other stage. The tool's own `&tool.Canceled` is the deliberate
