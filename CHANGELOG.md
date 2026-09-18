@@ -4,6 +4,22 @@
 
 ### Added
 
+- **Untrusted-history sanitization.** `golem.SanitizeHistory` is the
+  explicit pass for history that arrived over a trust boundary — a
+  browser request resuming a conversation, a client-submitted paused
+  run: it drops system messages, drops URL parts whose scheme is not
+  http or https (the one wire-visible gap this closes; inline data is
+  untouched), repairs call/result pairing, and reports every change —
+  `SanitizeReport.SystemPrompts`, `UnsafeParts` (message index, kind,
+  rejected scheme), and the pairing `Repair` — so an endpoint can log,
+  reject, or bill for what a client tried to assert. The pass never
+  rewrites content, is deterministic and idempotent, and never
+  mutates the input. Runs never sanitize automatically: the trust
+  boundary is the application's, and the guide now states the
+  accompanying rules — transport authentication, per-caller toolsets,
+  server-side re-validation of high-stakes effects (decision in ADR
+  0029).
+
 - **In-tool run cancellation.** A tool can now end the run
   deliberately: returning `&tool.Canceled{Reason}` from `Exec` stops
   the run at the new `canceled` stage — not a failure, no retry budget

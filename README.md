@@ -94,6 +94,7 @@ Runnable programs live in [examples/](examples/); provider-backed ones print ins
 | [`cost`](examples/cost/main.go) | User-supplied pricing: `Result.Cost` and cost-bounded runs, offline |
 | [`tool-results`](examples/tool-results/main.go) | Tools returning parts and definitive failures, offline |
 | [`history-repair`](examples/history-repair/main.go) | Normalizing a damaged conversation with a report, offline |
+| [`history-sanitization`](examples/history-sanitization/main.go) | Sanitizing a client-submitted history at the trust boundary, offline |
 | [`run-ids`](examples/run-ids/main.go) | Run and conversation identity across chained and forked runs, offline |
 | [`run-cancellation`](examples/run-cancellation/main.go) | A tool ending the run deliberately with `tool.Canceled`, resuming the evidence, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |

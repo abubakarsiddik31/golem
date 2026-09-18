@@ -68,6 +68,53 @@ wire, deterministic so replays stay prompt-cache friendly. The model
 sees a shaped call naming the failure instead of a rejected request.
 The deciding design record is ADR 0026.
 
+### Sanitizing untrusted history
+
+A history that arrives over a trust boundary — a browser request
+resuming a conversation, another service's transcript, a
+client-submitted paused run — can assert anything: a system prompt
+carrying operator authority, an image URL naming `file:///etc/passwd`,
+a fabricated tool call awaiting "approval". Runs already neutralize
+the model-visible part silently (instructions replace history system
+prompts; repair fixes pairing), but a boundary that cannot see the
+attempt cannot log, reject, or bill for it — and the URL-scheme case
+was never handled at all.
+
+`golem.SanitizeHistory(history)` is the explicit boundary pass, before
+`Run`, `RunWithHistory`, or `RunWithDeferredResults` on history you
+did not author. It drops system messages, drops URL parts whose
+scheme is not `http` or `https` (inline-data parts are untouched),
+repairs pairing — and reports everything:
+
+- `SystemPrompts` counts the dropped system messages — an attempt
+  reported, since the model never saw them anyway.
+- `UnsafeParts` names each dropped URL part with its original message
+  index, kind, and rejected scheme. A user message left empty by the
+  drops is removed; tool results are never removed, so pairing
+  evidence survives.
+- `Repair` is the pairing report — a fabricated dangling call is
+  synthesized and named here rather than surfacing as a resume-time
+  approval prompt.
+
+The pass never rewrites content: thinking blocks, failure flags, call
+arguments, and identity stamps pass through, and it is deterministic
+and idempotent. Runs never sanitize automatically — the boundary is
+the application's, and trusted server-side history has nothing to
+strip. What sanitization narrows is reach, not trust. The rules that
+actually keep a server honest live outside the history:
+
+- Authenticate and authorize at the transport; treat every caller as
+  able to submit any history it likes.
+- Scope the toolset to the caller — build the tools per run from the
+  authenticated user.
+- Re-validate high-stakes effects inside the tool against
+  server-side state; an approval in a client's history attests
+  nothing.
+- Never read history framing as proof — a fabricated message is
+  ordinary content wearing a uniform.
+
+The deciding design record is ADR 0029.
+
 ### Run and conversation identity
 
 Every run carries two identifiers, stamped on the run's events, its
@@ -194,6 +241,7 @@ fork, _ := agent.RunWithHistory(ctx, runCtx, first.Messages, "fork this",
 - `golem.WithHistoryProcessor[Deps, Output](HistoryProcessor)`
 - `golem.TrimHistory(maxMessages int) HistoryProcessor`
 - `golem.NormalizeHistory(history []model.Message) ([]model.Message, HistoryRepair)` — see [Normalizing history explicitly](#normalizing-history-explicitly)
+- `golem.SanitizeHistory(history []model.Message) ([]model.Message, SanitizeReport)` and `golem.UnsafePart{MessageIndex, Kind, Scheme}` — see [Sanitizing untrusted history](#sanitizing-untrusted-history)
 - `golem.NewID() string`
 - `golem.WithRunID(id string) RunOption`, `golem.WithConversationID(id string) RunOption`
 - `Result.RunID`, `Result.ConversationID`, `PartialResult.RunID`, `PartialResult.ConversationID`
@@ -214,6 +262,9 @@ fork, _ := agent.RunWithHistory(ctx, runCtx, first.Messages, "fork this",
   the stamps it carried in, and repair-synthesized results carry none.
 - Identifiers are opaque values: match and store them, don't parse
   meaning out of them beyond the UUID's timestamp.
+- History a client submitted is untrusted until `SanitizeHistory` has
+  run on it, and even then sanitization narrows reach, not trust: the
+  endpoint's authentication is the real boundary.
 - The history processor runs on exactly what the caller supplies and
   once per run: nothing re-runs it, so a summarizing processor cannot
   build on its own earlier output within one run.
