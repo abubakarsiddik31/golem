@@ -899,7 +899,9 @@ func (d *PDFDoc) parseFont(dict pdfDict) *pdfFont {
 }
 
 func (f *pdfFont) parseToUnicodeCMap(data []byte) {
-	lines := strings.Split(string(data), "\n")
+	dataStr := strings.ReplaceAll(string(data), "\r\n", "\n")
+	dataStr = strings.ReplaceAll(dataStr, "\r", "\n")
+	lines := strings.Split(dataStr, "\n")
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		if strings.HasSuffix(line, "beginbfchar") {
@@ -911,12 +913,13 @@ func (f *pdfFont) parseToUnicodeCMap(data []byte) {
 					break
 				}
 				fields := strings.Fields(entry)
-				if len(fields) >= 2 {
-					srcHex := strings.Trim(fields[0], "<>")
-					dstHex := strings.Trim(fields[1], "<>")
-					srcCode, _ := strconv.ParseUint(srcHex, 16, 32)
-					dstText := decodeHexUTF16(dstHex)
-					f.ToUnicode[uint32(srcCode)] = dstText
+				for k := 0; k+1 < len(fields); k += 2 {
+					srcHex := strings.Trim(fields[k], "<>")
+					dstHex := strings.Trim(fields[k+1], "<>")
+					srcCode, err := strconv.ParseUint(srcHex, 16, 32)
+					if err == nil {
+						f.ToUnicode[uint32(srcCode)] = decodeHexUTF16(dstHex)
+					}
 				}
 			}
 		} else if strings.HasSuffix(line, "beginbfrange") {
@@ -931,15 +934,63 @@ func (f *pdfFont) parseToUnicodeCMap(data []byte) {
 				if len(fields) >= 3 {
 					startHex := strings.Trim(fields[0], "<>")
 					endHex := strings.Trim(fields[1], "<>")
-					dstHex := strings.Trim(fields[2], "<>")
 					startCode, _ := strconv.ParseUint(startHex, 16, 32)
 					endCode, _ := strconv.ParseUint(endHex, 16, 32)
-					baseDst, _ := strconv.ParseUint(dstHex, 16, 32)
-					offset := uint32(0)
-					for code := startCode; code <= endCode; code++ {
-						r := rune(uint32(baseDst) + offset)
-						f.ToUnicode[uint32(code)] = string(r)
-						offset++
+
+					if strings.HasPrefix(fields[2], "[") {
+						// Form 2: <start> <end> [ <dst1> <dst2> ... ]
+						var dstTokens []string
+						for k := 2; k < len(fields); k++ {
+							tok := strings.Trim(fields[k], "[]<>")
+							if tok != "" {
+								dstTokens = append(dstTokens, tok)
+							}
+						}
+						for !strings.Contains(lines[i], "]") && i+1 < len(lines) {
+							i++
+							more := strings.Fields(lines[i])
+							for _, tok := range more {
+								cleaned := strings.Trim(tok, "[]<>")
+								if cleaned != "" {
+									dstTokens = append(dstTokens, cleaned)
+								}
+							}
+						}
+						for idx, tok := range dstTokens {
+							code := startCode + uint64(idx)
+							if code > endCode {
+								break
+							}
+							f.ToUnicode[uint32(code)] = decodeHexUTF16(tok)
+						}
+					} else {
+						// Form 1: Sequential destination
+						dstHex := strings.Trim(fields[2], "<>")
+						runes := decodeHexUTF16Runes(dstHex)
+						if len(runes) == 1 {
+							baseRune := runes[0]
+							offset := rune(0)
+							for code := startCode; code <= endCode; code++ {
+								f.ToUnicode[uint32(code)] = string(baseRune + offset)
+								offset++
+							}
+						} else if len(runes) > 1 {
+							offset := rune(0)
+							for code := startCode; code <= endCode; code++ {
+								copyRunes := make([]rune, len(runes))
+								copy(copyRunes, runes)
+								copyRunes[len(copyRunes)-1] += offset
+								f.ToUnicode[uint32(code)] = string(copyRunes)
+								offset++
+							}
+						} else {
+							baseDst, _ := strconv.ParseUint(dstHex, 16, 32)
+							offset := uint32(0)
+							for code := startCode; code <= endCode; code++ {
+								f.ToUnicode[uint32(code)] = string(rune(uint32(baseDst) + offset))
+								offset++
+							}
+						}
 					}
 				}
 			}
@@ -948,19 +999,30 @@ func (f *pdfFont) parseToUnicodeCMap(data []byte) {
 }
 
 func decodeHexUTF16(hexStr string) string {
-	b, err := hex.DecodeString(hexStr)
-	if err != nil || len(b) == 0 {
+	runes := decodeHexUTF16Runes(hexStr)
+	if len(runes) == 0 {
 		return ""
 	}
+	return string(runes)
+}
+
+func decodeHexUTF16Runes(hexStr string) []rune {
+	b, err := hex.DecodeString(hexStr)
+	if err != nil || len(b) == 0 {
+		return nil
+	}
 	if len(b)%2 != 0 {
-		return string(b)
+		r := make([]rune, len(b))
+		for i, v := range b {
+			r[i] = rune(v)
+		}
+		return r
 	}
 	u16 := make([]uint16, len(b)/2)
 	for i := 0; i < len(u16); i++ {
 		u16[i] = binary.BigEndian.Uint16(b[i*2 : i*2+2])
 	}
-	runes := utf16.Decode(u16)
-	return string(runes)
+	return utf16.Decode(u16)
 }
 
 func (f *pdfFont) DecodeString(b []byte) string {

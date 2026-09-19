@@ -505,3 +505,14 @@ func TestMathAndUnicodeCleaning(t *testing.T) {
 		t.Errorf("Expected equation tag '\\tag{1}', got:\n%s", md)
 	}
 }
+
+func TestCMapSurrogateAndMathNormalization(t *testing.T) {
+	// Test CleanText normalization of mathematical symbols
+	// U+1D434 is Math Italic A, U+1D707 is Math Greek mu
+	raw := "\U0001D434 = \U0001D707 \U0001D440 + \U0001D437"
+	cleaned := pdfextract.CleanText(raw)
+	expected := "A = μ M + D"
+	if cleaned != expected {
+		t.Errorf("Expected %q, got %q", expected, cleaned)
+	}
+}
