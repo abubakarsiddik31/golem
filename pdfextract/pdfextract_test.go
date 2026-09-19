@@ -196,6 +196,193 @@ func TestExtractRuledTableLattice(t *testing.T) {
 	}
 }
 
+func TestRejectEmptyTableGrid(t *testing.T) {
+	// Construct a PDF with a vector line grid (e.g. 3x3 cells) representing a chart/diagram
+	// with NO text inside any cell.
+	var sb strings.Builder
+	// Horizontal lines
+	sb.WriteString("100 500 m 300 500 l S\n")
+	sb.WriteString("100 475 m 300 475 l S\n")
+	sb.WriteString("100 450 m 300 450 l S\n")
+	sb.WriteString("100 425 m 300 425 l S\n")
+	// Vertical lines
+	sb.WriteString("100 425 m 100 500 l S\n")
+	sb.WriteString("166 425 m 166 500 l S\n")
+	sb.WriteString("233 425 m 233 500 l S\n")
+	sb.WriteString("300 425 m 300 500 l S\n")
+
+	// Only external text outside the grid
+	sb.WriteString("BT /F1 10 Tf 100 380 Td (Figure 1: Chart description) Tj ET\n")
+
+	pdfBytes := buildSimplePDF(sb.String())
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if len(doc.Tables) != 0 {
+		t.Fatalf("Expected 0 tables for empty vector grid, got %d. Markdown:\n%s", len(doc.Tables), doc.Markdown)
+	}
+	if strings.Contains(doc.Markdown, "| Col 1") || strings.Contains(doc.Markdown, "|:---") {
+		t.Fatalf("Markdown should not contain empty table markup, got:\n%s", doc.Markdown)
+	}
+	if !strings.Contains(doc.Markdown, "Figure 1: Chart description") {
+		t.Fatalf("External text should still be present, got:\n%s", doc.Markdown)
+	}
+}
+
+func TestRejectSingleRowFalsePositiveTable(t *testing.T) {
+	// Construct a PDF where a single sentence (e.g. Theorem statement) is boxed by lines
+	var sb strings.Builder
+	// Horizontal lines
+	sb.WriteString("100 500 m 400 500 l S\n")
+	sb.WriteString("100 470 m 400 470 l S\n")
+	sb.WriteString("100 440 m 400 440 l S\n")
+	// Vertical lines
+	sb.WriteString("100 440 m 100 500 l S\n")
+	sb.WriteString("250 440 m 250 500 l S\n")
+	sb.WriteString("400 440 m 400 500 l S\n")
+
+	// Text only in row 0, row 1 is completely empty
+	sb.WriteString("BT /F1 10 Tf 110 480 Td (Theorem 1) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 260 480 Td (Given X = Y) Tj ET\n")
+
+	pdfBytes := buildSimplePDF(sb.String())
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if len(doc.Tables) != 0 {
+		t.Fatalf("Expected 0 tables for single-row boxed text, got %d", len(doc.Tables))
+	}
+	// The theorem text should NOT be lost or swallowed
+	if !strings.Contains(doc.Markdown, "Theorem 1") || !strings.Contains(doc.Markdown, "Given X = Y") {
+		t.Fatalf("Text inside rejected single-row box must be retained as normal text, got:\n%s", doc.Markdown)
+	}
+}
+
+func TestPrunePhantomEmptyColumns(t *testing.T) {
+	// 3-column grid where middle column has no text in any row
+	var sb strings.Builder
+	// Horizontal lines
+	sb.WriteString("100 500 m 400 500 l S\n")
+	sb.WriteString("100 470 m 400 470 l S\n")
+	sb.WriteString("100 440 m 400 440 l S\n")
+	// Vertical lines: 100, 200, 300, 400
+	sb.WriteString("100 440 m 100 500 l S\n")
+	sb.WriteString("200 440 m 200 500 l S\n")
+	sb.WriteString("300 440 m 300 500 l S\n")
+	sb.WriteString("400 440 m 400 500 l S\n")
+
+	// Text in Col 0 and Col 2, but Col 1 has NO text
+	sb.WriteString("BT /F1 10 Tf 110 480 Td (Header A) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 480 Td (Header B) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 110 450 Td (Val A) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 450 Td (Val B) Tj ET\n")
+
+	pdfBytes := buildSimplePDF(sb.String())
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if len(doc.Tables) != 1 {
+		t.Fatalf("Expected 1 table, got %d", len(doc.Tables))
+	}
+	tbl := doc.Tables[0]
+	if len(tbl.Rows[0]) != 2 {
+		t.Fatalf("Expected 2 columns after pruning empty column, got %d: %v", len(tbl.Rows[0]), tbl.Rows[0])
+	}
+	if strings.Contains(tbl.Markdown, "Col 2") {
+		t.Fatalf("Markdown table should not contain dummy fallback header for pruned column, got:\n%s", tbl.Markdown)
+	}
+}
+
+func TestExtractBooktabsTable(t *testing.T) {
+	// Construct a PDF with horizontal rules only (no vertical lines):
+	// Top rule at Y=500, mid rule at Y=475, bottom rule at Y=400
+	var sb strings.Builder
+	// Horizontal lines
+	sb.WriteString("100 500 m 400 500 l S\n")
+	sb.WriteString("100 475 m 400 475 l S\n")
+	sb.WriteString("100 400 m 400 400 l S\n")
+
+	// Header row between 500 and 475
+	sb.WriteString("BT /F1 10 Tf 110 485 Td (Model) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 485 Td (Accuracy) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 485 Td (Latency) Tj ET\n")
+
+	// Data rows between 475 and 400
+	sb.WriteString("BT /F1 10 Tf 110 450 Td (GPT-4) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 450 Td (92.5%) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 450 Td (120ms) Tj ET\n")
+
+	sb.WriteString("BT /F1 10 Tf 110 420 Td (Claude-3) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 420 Td (93.1%) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 420 Td (95ms) Tj ET\n")
+
+	pdfBytes := buildSimplePDF(sb.String())
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if len(doc.Tables) != 1 {
+		t.Fatalf("Expected 1 booktabs table, got %d. Markdown:\n%s", len(doc.Tables), doc.Markdown)
+	}
+	tbl := doc.Tables[0]
+	if len(tbl.Rows) != 3 || len(tbl.Rows[0]) != 3 {
+		t.Fatalf("Expected 3x3 table, got %dx%d: %v", len(tbl.Rows), len(tbl.Rows[0]), tbl.Rows)
+	}
+	if tbl.Rows[0][0] != "Model" || tbl.Rows[0][1] != "Accuracy" || tbl.Rows[0][2] != "Latency" {
+		t.Fatalf("Header row incorrect, got: %v", tbl.Rows[0])
+	}
+	if tbl.Rows[1][0] != "GPT-4" || tbl.Rows[2][0] != "Claude-3" {
+		t.Fatalf("Data rows incorrect, got: %v", tbl.Rows)
+	}
+}
+
+func TestSparseTableAccepted(t *testing.T) {
+	// 4x3 table where some cells are empty (sparse data)
+	var sb strings.Builder
+	sb.WriteString("100 500 m 400 500 l S\n")
+	sb.WriteString("100 475 m 400 475 l S\n")
+	sb.WriteString("100 380 m 400 380 l S\n")
+
+	// Header row
+	sb.WriteString("BT /F1 10 Tf 110 485 Td (Feature) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 485 Td (Basic) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 485 Td (Pro) Tj ET\n")
+
+	// Row 1: only Pro has value
+	sb.WriteString("BT /F1 10 Tf 110 450 Td (SSO) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 450 Td (Yes) Tj ET\n")
+
+	// Row 2: only Basic has value
+	sb.WriteString("BT /F1 10 Tf 110 420 Td (Free Trial) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 420 Td (Yes) Tj ET\n")
+
+	// Row 3: both have values
+	sb.WriteString("BT /F1 10 Tf 110 395 Td (Support) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 210 395 Td (Email) Tj ET\n")
+	sb.WriteString("BT /F1 10 Tf 310 395 Td (24/7) Tj ET\n")
+
+	pdfBytes := buildSimplePDF(sb.String())
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if len(doc.Tables) != 1 {
+		t.Fatalf("Expected 1 sparse table accepted, got %d", len(doc.Tables))
+	}
+	tbl := doc.Tables[0]
+	if len(tbl.Rows) != 4 || len(tbl.Rows[0]) != 3 {
+		t.Fatalf("Expected 4x3 table, got %dx%d: %v", len(tbl.Rows), len(tbl.Rows[0]), tbl.Rows)
+	}
+}
+
 func TestExtractImageWithCaptionProximity(t *testing.T) {
 	// Build a PDF with an image XObject and adjacent caption text
 	// 1 0 obj: Catalog

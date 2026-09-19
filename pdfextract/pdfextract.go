@@ -355,6 +355,9 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 			case BlockList:
 				pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
 			case BlockTable:
+				if pageMD.Len() > 0 && !strings.HasSuffix(pageMD.String(), "\n\n") {
+					pageMD.WriteString("\n")
+				}
 				pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
 			case BlockImage:
 				pageMD.WriteString(fmt.Sprintf("%s\n\n", b.Text))
