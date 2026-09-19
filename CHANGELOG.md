@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.8.1 — 2026-09-19
+
+This release ships high-performance, multi-format document extraction
+(`package docextract` and the `extract_doc` common tool) supporting Word
+(.docx), Excel (.xlsx), PowerPoint (.pptx), Markdown (.md), CSV (.csv),
+TSV (.tsv), and plain text documents alongside PDF routing.
+
+### Added
+
+- **Multi-format document extraction.** `package docextract` and the
+  `extract_doc` common tool extract clean, structured Markdown from Word
+  documents (.docx), Excel spreadsheets (.xlsx), PowerPoint presentations
+  (.pptx), Markdown specifications (.md), CSVs, and text files. The
+  implementation is pure Go with zero external dependencies (using standard
+  library `archive/zip`, `encoding/xml`, and `encoding/csv`). It preserves
+  headings, bulleted/numbered lists, inline text styles (bold, italic,
+  strike, monospace), external hyperlinks, intact GitHub-Flavored Markdown
+  tables (including nested tables), slide-by-slide speaker notes, and
+  worksheet grids.
+- **Outline and structural navigation.** `docextract` supports `outline: true`
+  mode for hierarchical tables of contents, slide lists, and sheet inventories
+  without loading full document bodies, protecting agent context budgets.
+- **Section and query filtering.** Models can query specific heading sections
+  (`query: "Installation"`), slide titles, or filter spreadsheet/CSV rows
+  before token consumption.
+- **Unified document tool routing.** PDFs are automatically routed to
+  `pdfextract` while preserving security confinement inside the configured
+  root directory.
+
 ## v0.8.0 — 2026-09-19
 
 This release ships three major capabilities: high-performance layout-aware
