@@ -55,6 +55,10 @@ interfaces, and keep provider-specific types behind the `model` package.
 Decisions that shape public contracts are recorded as ADRs in
 [docs/adr/](docs/adr/); expect a short ADR for anything difficult to reverse.
 
+## Community standards
+
+Participation in the Golem community is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). All participants, contributors, and maintainers are expected to adhere to its standards to maintain a welcoming, inclusive, and constructive environment.
+
 ## Reporting issues
 
 Open a GitHub issue with the Golem version, the provider and model if
