@@ -226,15 +226,15 @@ fmt.Printf("%s: %.1f°C (%s)\n", result.Output.City, result.Output.Temperature, 
 
 Golem ships with standard-library-only adapters for all major frontier and open-weight models:
 
-| Provider | Adapter Package | Models Tested | Streaming | Thinking / Reasoning | Multimodal | Embeddings | Token Counting |
-| --- | --- | --- | :---: | :---: | :---: | :---: | :---: |
-| **OpenAI** | `providers/openai` | GPT-4o, o1, o3-mini | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
-| **Anthropic** | `providers/anthropic` | Claude 3.5 Sonnet, Claude 3.7 Sonnet | :white_check_mark: | :white_check_mark: | :white_check_mark: | — | :white_check_mark: |
-| **Google Gemini** | `providers/gemini` | Gemini 2.0 Flash/Pro, Gemini 1.5 | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| **AWS Bedrock** | `providers/bedrock` | Claude, Llama 3 via Converse API (SigV4) | :white_check_mark: | :white_check_mark: | :white_check_mark: | — | :white_check_mark: |
-| **Azure OpenAI** | `providers/azure` | Deployed GPT-4o & Azure deployments | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
-| **Ollama / Local** | `providers/openai` | Llama 3, Qwen 2.5, DeepSeek, Mistral | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
-| **OpenAI-Compatible** | `providers/openai` | Groq, Together, Mistral, DeepSeek, vLLM | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
+| Provider | Adapter Package | Streaming | Thinking / Reasoning | Multimodal | Embeddings | Token Counting |
+| --- | --- | :---: | :---: | :---: | :---: | :---: |
+| **OpenAI** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
+| **Anthropic** | `providers/anthropic` | :white_check_mark: | :white_check_mark: | :white_check_mark: | — | :white_check_mark: |
+| **Google Gemini** | `providers/gemini` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| **AWS Bedrock** | `providers/bedrock` | :white_check_mark: | :white_check_mark: | :white_check_mark: | — | :white_check_mark: |
+| **Azure OpenAI** | `providers/azure` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
+| **Ollama / Local** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
+| **OpenAI-Compatible** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
 
 ---
 
