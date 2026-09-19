@@ -1497,10 +1497,11 @@ func (ci *contentInterpreter) emitText(raw string, page *ParsedPage) {
 }
 
 func (ci *contentInterpreter) emitDecodedText(text string, page *ParsedPage) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+	trimmed := strings.Trim(text, "\r\n")
+	if strings.TrimSpace(trimmed) == "" {
 		return
 	}
+	text = trimmed
 
 	// Calculate text position in page coordinates
 	// Final matrix = Tm * CTM
@@ -1516,8 +1517,8 @@ func (ci *contentInterpreter) emitDecodedText(text string, page *ParsedPage) {
 		fname = ci.currFont.BaseFont
 	}
 
-	// Estimate approximate string width. Proportional body fonts have average char width ~0.42 * fontSize
-	charFactor := 0.42
+	// Estimate approximate string width. Proportional body fonts have average char width ~0.35 * fontSize
+	charFactor := 0.35
 	lName := strings.ToLower(fname)
 	if strings.Contains(lName, "mono") || strings.Contains(lName, "courier") || strings.Contains(lName, "cmtt") {
 		charFactor = 0.60
@@ -1561,7 +1562,7 @@ func (ci *contentInterpreter) emitTJ(arrayToken string, page *ParsedPage) {
 			// Numeric displacement in thousandths of a unit of text space.
 			// Negative number is subtracted, moving the cursor to the right (space between words).
 			if num, err := strconv.ParseFloat(elem, 64); err == nil {
-				if num <= -100.0 {
+				if num <= -40.0 {
 					if sb.Len() > 0 && !strings.HasSuffix(sb.String(), " ") {
 						sb.WriteString(" ")
 					}

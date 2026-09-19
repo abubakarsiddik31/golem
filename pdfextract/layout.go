@@ -378,12 +378,22 @@ func groupSpansIntoLines(spans []TextSpan, mediaBox Rect) []TextLine {
 				prev := l.Spans[idx-1]
 				gap := s.BBox.X0 - prev.BBox.X1
 				// Add space unless adjacent, punctuation, or attached sub/superscript
-				if !isSuper && !isSub && gap > s.FontSize*0.18 &&
+				isWordSeparated := gap > s.FontSize*0.06 || (s.BBox.X0 > prev.BBox.X0+float64(len(prev.Text))*prev.FontSize*0.28 && gap > -s.FontSize*0.5)
+				if !isSuper && !isSub && isWordSeparated &&
 					!strings.HasSuffix(sb.String(), " ") &&
+					!strings.HasPrefix(formatted, " ") &&
 					!strings.HasPrefix(formatted, ",") &&
 					!strings.HasPrefix(formatted, ".") &&
 					!strings.HasPrefix(formatted, ")") &&
+					!strings.HasPrefix(formatted, ";") &&
+					!strings.HasPrefix(formatted, ":") &&
+					!strings.HasPrefix(formatted, "!") &&
+					!strings.HasPrefix(formatted, "?") &&
+					!strings.HasPrefix(formatted, "]") &&
+					!strings.HasPrefix(formatted, "}") &&
 					!strings.HasSuffix(sb.String(), "(") &&
+					!strings.HasSuffix(sb.String(), "[") &&
+					!strings.HasSuffix(sb.String(), "{") &&
 					!strings.HasSuffix(sb.String(), "_") &&
 					!strings.HasSuffix(sb.String(), "^") {
 					sb.WriteString(" ")
