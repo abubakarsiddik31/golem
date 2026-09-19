@@ -3,8 +3,14 @@ package pdfextract
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
+)
+
+var (
+	codeOrSyntaxRegex   = regexp.MustCompile(`(?m)(^\s*(def|class|func|import|return|package|const|var|public|private|void|interface|let|function)\b|[{};]\s*$|^\s*"[a-zA-Z0-9_-]+"\s*:|\b(console\.log|println|printf|tool_calls|arguments)\b|^\s*(\/\*|\/\/|#\s*[a-zA-Z]))`)
+	sectionHeadingRegex = regexp.MustCompile(`^\s*\d+(\.\d+)+\s+`)
 )
 
 // Table represents an extracted structured table.
@@ -23,10 +29,14 @@ func ExtractTables(page *ParsedPage) ([]Table, []TextSpan) {
 
 	// 1. Try Lattice Table Extraction (vector stroke grid)
 	latticeTables := extractLatticeTables(page)
-	tables = append(tables, latticeTables...)
+	for _, t := range latticeTables {
+		if isTablePopulated(t) {
+			tables = append(tables, t)
+		}
+	}
 
 	var occupiedBBoxes []Rect
-	for _, t := range latticeTables {
+	for _, t := range tables {
 		occupiedBBoxes = append(occupiedBBoxes, Rect{
 			X0: t.BBox[0],
 			Y0: t.BBox[1],
@@ -38,30 +48,32 @@ func ExtractTables(page *ParsedPage) ([]Table, []TextSpan) {
 	// 2. Try Booktabs Table Extraction (horizontal rules without vertical lines, common in papers)
 	allHLines := extractAllHLines(page)
 	booktabsTables := extractBooktabsTables(page, allHLines, occupiedBBoxes)
-	tables = append(tables, booktabsTables...)
-
 	for _, t := range booktabsTables {
-		occupiedBBoxes = append(occupiedBBoxes, Rect{
-			X0: t.BBox[0],
-			Y0: t.BBox[1],
-			X1: t.BBox[2],
-			Y1: t.BBox[3],
-		})
-	}
-
-	// 3. Try Stream Table Extraction only if no ruled or booktabs tables found on this page
-	// and candidate cells are strictly compact tabular tokens (not multi-column prose)
-	if len(tables) == 0 {
-		streamTables := extractStreamTables(page, occupiedBBoxes)
-		tables = append(tables, streamTables...)
-
-		for _, t := range streamTables {
+		if isTablePopulated(t) {
+			tables = append(tables, t)
 			occupiedBBoxes = append(occupiedBBoxes, Rect{
 				X0: t.BBox[0],
 				Y0: t.BBox[1],
 				X1: t.BBox[2],
 				Y1: t.BBox[3],
 			})
+		}
+	}
+
+	// 3. Try Stream Table Extraction only if no ruled or booktabs tables found on this page
+	// and candidate cells are strictly compact tabular tokens (not multi-column prose)
+	if len(tables) == 0 {
+		streamTables := extractStreamTables(page, occupiedBBoxes)
+		for _, t := range streamTables {
+			if isTablePopulated(t) {
+				tables = append(tables, t)
+				occupiedBBoxes = append(occupiedBBoxes, Rect{
+					X0: t.BBox[0],
+					Y0: t.BBox[1],
+					X1: t.BBox[2],
+					Y1: t.BBox[3],
+				})
+			}
 		}
 	}
 
@@ -134,7 +146,7 @@ func extractBooktabsTables(page *ParsedPage, hLines []hSegment, excludedBBoxes [
 		bottomIdx := -1
 		for j := i + 1; j < len(mergedH); j++ {
 			cand := mergedH[j]
-			if topLine.y-cand.y > 450.0 {
+			if topLine.y-cand.y > 650.0 {
 				break
 			}
 			if math.Abs(cand.x0-topLine.x0) <= 35.0 && math.Abs(cand.x1-topLine.x1) <= 35.0 {
@@ -162,6 +174,11 @@ func extractBooktabsTables(page *ParsedPage, hLines []hSegment, excludedBBoxes [
 				continue
 			}
 
+			var interRules []float64
+			for k := i + 1; k < bottomIdx; k++ {
+				interRules = append(interRules, mergedH[k].y)
+			}
+
 			var spansInside []TextSpan
 			for _, s := range page.Spans {
 				midX := (s.BBox.X0 + s.BBox.X1) / 2
@@ -172,25 +189,206 @@ func extractBooktabsTables(page *ParsedPage, hLines []hSegment, excludedBBoxes [
 			}
 
 			if len(spansInside) >= 4 {
-				lines := groupSpansIntoLines(spansInside, tblBBox)
-				if len(lines) >= 2 {
-					var cands []multiSpanLine
-					for _, l := range lines {
-						cands = append(cands, multiSpanLine{line: l, spans: l.Spans})
-					}
-					t := buildStreamTable(cands, page.Index)
-					if len(t.Rows) >= 2 && len(t.Rows[0]) >= 2 {
-						t.Ruled = true
-						t.BBox = [4]float64{tblBBox.X0, tblBBox.Y0, tblBBox.X1, tblBBox.Y1}
-						tables = append(tables, t)
-						excludedBBoxes = append(excludedBBoxes, tblBBox)
-						i = bottomIdx
-					}
+				t := buildBooktabsTable(spansInside, interRules, tblBBox, page.Index)
+				if isTablePopulated(t) {
+					t.Ruled = true
+					tables = append(tables, t)
+					excludedBBoxes = append(excludedBBoxes, tblBBox)
+					i = bottomIdx
 				}
 			}
 		}
 	}
 	return tables
+}
+
+// buildBooktabsTable constructs a table bounded by horizontal rules, resolving column
+// positions from text span alignment and combining multi-line text into logical rows.
+func buildBooktabsTable(spans []TextSpan, interRules []float64, tblBBox Rect, pageNum int) Table {
+	if len(spans) < 4 {
+		return Table{}
+	}
+
+	// 1. Group spans into baseline bands
+	sorted := make([]TextSpan, len(spans))
+	copy(sorted, spans)
+	sort.Slice(sorted, func(i, j int) bool {
+		if math.Abs(sorted[i].BBox.Y0-sorted[j].BBox.Y0) > 3.0 {
+			return sorted[i].BBox.Y0 > sorted[j].BBox.Y0
+		}
+		return sorted[i].BBox.X0 < sorted[j].BBox.X0
+	})
+
+	type tableBand struct {
+		y     float64
+		spans []TextSpan
+	}
+	var bands []tableBand
+	for _, s := range sorted {
+		placed := false
+		for i := range bands {
+			if math.Abs(bands[i].y-s.BBox.Y0) <= 3.0 {
+				bands[i].spans = append(bands[i].spans, s)
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			bands = append(bands, tableBand{y: s.BBox.Y0, spans: []TextSpan{s}})
+		}
+	}
+
+	if len(bands) < 2 {
+		return Table{}
+	}
+
+	// 2. Identify column start coordinates by clustering X0 positions
+	var allX []float64
+	for _, s := range spans {
+		allX = append(allX, s.BBox.X0)
+	}
+	sort.Float64s(allX)
+	cols := clusterFloats(allX, 20.0)
+	if len(cols) < 2 {
+		return Table{}
+	}
+
+	// 3. Map spans to band grid
+	bandGrid := make([][]string, len(bands))
+	for b, band := range bands {
+		bandGrid[b] = make([]string, len(cols))
+		for _, s := range band.spans {
+			bestCol := 0
+			bestDist := math.Abs(s.BBox.X0 - cols[0])
+			for c := 1; c < len(cols); c++ {
+				d := math.Abs(s.BBox.X0 - cols[c])
+				if d < bestDist {
+					bestDist = d
+					bestCol = c
+				}
+			}
+			if bandGrid[b][bestCol] != "" {
+				bandGrid[b][bestCol] += " " + s.Text
+			} else {
+				bandGrid[b][bestCol] = s.Text
+			}
+		}
+	}
+
+	// Sort intermediate rules descending (from top of table to bottom)
+	sort.Slice(interRules, func(i, j int) bool { return interRules[i] > interRules[j] })
+
+	// Average vertical gap between baseline bands
+	avgGap := 14.0
+	if len(bands) >= 2 {
+		totalGap := 0.0
+		for i := 1; i < len(bands); i++ {
+			totalGap += bands[i-1].y - bands[i].y
+		}
+		avgGap = totalGap / float64(len(bands)-1)
+	}
+
+	var rows [][]string
+	var currentRow []string
+
+	crossesRule := func(y1, y2 float64) bool {
+		for _, rY := range interRules {
+			if (y1 >= rY && y2 <= rY) || (y2 >= rY && y1 <= rY) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Check if column 0 acts as a row anchor / key
+	col0Count := 0
+	for b := range bands {
+		if strings.TrimSpace(bandGrid[b][0]) != "" {
+			col0Count++
+		}
+	}
+	col0HasKeys := col0Count >= 2
+
+	// Header boundary is defined by the first intermediate rule (e.g. \midrule)
+	headerBoundaryY := 0.0
+	if len(interRules) > 0 {
+		headerBoundaryY = interRules[0]
+	}
+
+	for b := 0; b < len(bands); b++ {
+		currY := bands[b].y
+		isNewRow := false
+
+		if b == 0 {
+			isNewRow = true
+		} else {
+			prevY := bands[b-1].y
+			vGap := prevY - currY
+
+			if headerBoundaryY > 0 && prevY >= headerBoundaryY && currY < headerBoundaryY {
+				// Transition from header to body
+				isNewRow = true
+			} else if headerBoundaryY > 0 && prevY >= headerBoundaryY && currY >= headerBoundaryY {
+				// Continuation of multi-line header
+				isNewRow = false
+			} else if crossesRule(prevY, currY) {
+				isNewRow = true
+			} else if col0HasKeys && strings.TrimSpace(bandGrid[b][0]) != "" {
+				isNewRow = true
+			} else if vGap > avgGap*1.7 {
+				isNewRow = true
+			} else if !col0HasKeys {
+				for c := 0; c < len(cols); c++ {
+					if strings.TrimSpace(currentRow[c]) != "" && strings.TrimSpace(bandGrid[b][c]) != "" {
+						isNewRow = true
+						break
+					}
+				}
+			}
+		}
+
+		if isNewRow {
+			if len(currentRow) > 0 {
+				rows = append(rows, currentRow)
+			}
+			currentRow = make([]string, len(cols))
+			for c := 0; c < len(cols); c++ {
+				currentRow[c] = strings.TrimSpace(bandGrid[b][c])
+			}
+		} else {
+			for c := 0; c < len(cols); c++ {
+				txt := strings.TrimSpace(bandGrid[b][c])
+				if txt != "" {
+					if currentRow[c] != "" {
+						currentRow[c] += " " + txt
+					} else {
+						currentRow[c] = txt
+					}
+				}
+			}
+		}
+	}
+	if len(currentRow) > 0 {
+		rows = append(rows, currentRow)
+	}
+
+	cleaned, _, _, _, ok := cleanAndValidateGrid(rows)
+	if !ok {
+		return Table{}
+	}
+
+	md := formatMarkdownTable(cleaned)
+	if md == "" {
+		return Table{}
+	}
+
+	return Table{
+		Page:     pageNum,
+		BBox:     [4]float64{tblBBox.X0, tblBBox.Y0, tblBBox.X1, tblBBox.Y1},
+		Rows:     cleaned,
+		Markdown: md,
+		Ruled:    true,
+	}
 }
 
 type hSegment struct {
@@ -260,7 +458,7 @@ func extractLatticeTables(page *ParsedPage) []Table {
 
 	for _, cluster := range tableClusters {
 		tbl := buildLatticeTable(cluster, page)
-		if len(tbl.Rows) >= 2 && len(tbl.Rows[0]) >= 2 {
+		if isTablePopulated(tbl) {
 			outTables = append(outTables, tbl)
 		}
 	}
@@ -457,14 +655,185 @@ func buildLatticeTable(cluster gridCluster, page *ParsedPage) Table {
 		}
 	}
 
-	md := formatMarkdownTable(grid)
+	cleanedGrid, keptCols, startRow, endRow, ok := cleanAndValidateGrid(grid)
+	if !ok {
+		return Table{}
+	}
+
+	bbox := [4]float64{
+		xCoords[keptCols[0]],
+		yCoords[endRow+1],
+		xCoords[keptCols[len(keptCols)-1]+1],
+		yCoords[startRow],
+	}
+
+	md := formatMarkdownTable(cleanedGrid)
+	if md == "" {
+		return Table{}
+	}
+
 	return Table{
 		Page:     page.Index,
-		BBox:     [4]float64{cluster.bbox.X0, cluster.bbox.Y0, cluster.bbox.X1, cluster.bbox.Y1},
-		Rows:     grid,
+		BBox:     bbox,
+		Rows:     cleanedGrid,
 		Markdown: md,
 		Ruled:    true,
 	}
+}
+
+// cleanAndValidateGrid strips phantom empty columns and leading/trailing empty rows,
+// then verifies that the grid has sufficient populated content to constitute a real table.
+func cleanAndValidateGrid(grid [][]string) (cleaned [][]string, keptCols []int, startRow, endRow int, ok bool) {
+	if len(grid) == 0 || len(grid[0]) == 0 {
+		return nil, nil, 0, 0, false
+	}
+
+	numCols := len(grid[0])
+
+	// 1. Identify columns that contain at least one cell with non-empty text.
+	for c := 0; c < numCols; c++ {
+		colHasText := false
+		for r := range grid {
+			if strings.TrimSpace(grid[r][c]) != "" {
+				colHasText = true
+				break
+			}
+		}
+		if colHasText {
+			keptCols = append(keptCols, c)
+		}
+	}
+	if len(keptCols) < 2 {
+		return nil, nil, 0, 0, false
+	}
+
+	// 2. Filter columns
+	var colFiltered [][]string
+	for r := range grid {
+		row := make([]string, len(keptCols))
+		for i, c := range keptCols {
+			row[i] = strings.TrimSpace(grid[r][c])
+		}
+		colFiltered = append(colFiltered, row)
+	}
+
+	// 3. Strip leading completely empty rows
+	startRow = 0
+	for startRow < len(colFiltered) {
+		rowHasText := false
+		for _, cell := range colFiltered[startRow] {
+			if cell != "" {
+				rowHasText = true
+				break
+			}
+		}
+		if rowHasText {
+			break
+		}
+		startRow++
+	}
+
+	// Strip trailing completely empty rows
+	endRow = len(colFiltered) - 1
+	for endRow >= startRow {
+		rowHasText := false
+		for _, cell := range colFiltered[endRow] {
+			if cell != "" {
+				rowHasText = true
+				break
+			}
+		}
+		if rowHasText {
+			break
+		}
+		endRow--
+	}
+
+	if startRow > endRow {
+		return nil, nil, 0, 0, false
+	}
+
+	cleaned = colFiltered[startRow : endRow+1]
+	if len(cleaned) < 2 {
+		return nil, nil, 0, 0, false
+	}
+
+	// 4. Validate content richness
+	nonEmpty := 0
+	rowsWithText := 0
+	colsWithText := make([]bool, len(cleaned[0]))
+	for _, row := range cleaned {
+		hasText := false
+		for c, cell := range row {
+			if cell != "" {
+				nonEmpty++
+				hasText = true
+				colsWithText[c] = true
+			}
+		}
+		if hasText {
+			rowsWithText++
+		}
+	}
+
+	activeCols := 0
+	for _, has := range colsWithText {
+		if has {
+			activeCols++
+		}
+	}
+
+	// A valid table must span at least 2 rows with text and 2 columns with text
+	if rowsWithText < 2 || activeCols < 2 {
+		return nil, nil, 0, 0, false
+	}
+
+	totalCells := len(cleaned) * len(cleaned[0])
+	minRequired := 3
+	if totalCells <= 4 {
+		minRequired = 2
+	}
+	if nonEmpty < minRequired {
+		return nil, nil, 0, 0, false
+	}
+
+	// Discard large grids that are mostly empty (e.g. chart/figure grids where < 10% of cells have text)
+	density := float64(nonEmpty) / float64(totalCells)
+	if totalCells >= 25 && density < 0.10 {
+		return nil, nil, 0, 0, false
+	}
+
+	return cleaned, keptCols, startRow, endRow, true
+}
+
+// isTablePopulated ensures a table is non-empty, properly shaped, and contains genuine tabular data.
+func isTablePopulated(t Table) bool {
+	if len(t.Rows) < 2 || len(t.Rows[0]) < 2 || strings.TrimSpace(t.Markdown) == "" {
+		return false
+	}
+	nonEmpty := 0
+	rowsWithText := 0
+	colsWithText := make([]bool, len(t.Rows[0]))
+	for _, row := range t.Rows {
+		hasText := false
+		for c, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				nonEmpty++
+				hasText = true
+				colsWithText[c] = true
+			}
+		}
+		if hasText {
+			rowsWithText++
+		}
+	}
+	activeCols := 0
+	for _, has := range colsWithText {
+		if has {
+			activeCols++
+		}
+	}
+	return rowsWithText >= 2 && activeCols >= 2 && nonEmpty >= 2
 }
 
 func clusterFloats(vals []float64, tol float64) []float64 {
@@ -533,9 +902,11 @@ func extractStreamTables(page *ParsedPage, excludedBBoxes []Rect) []Table {
 
 	flushBlock := func() {
 		if len(currentBlock) >= 3 {
-			t := buildStreamTable(currentBlock, page.Index)
-			if len(t.Rows) >= 3 && len(t.Rows[0]) >= 2 {
-				tables = append(tables, t)
+			if !isCodeOrHeadingBlock(currentBlock) {
+				t := buildStreamTable(currentBlock, page.Index)
+				if len(t.Rows) >= 3 && len(t.Rows[0]) >= 2 {
+					tables = append(tables, t)
+				}
 			}
 		}
 		currentBlock = nil
@@ -568,6 +939,17 @@ func extractStreamTables(page *ParsedPage, excludedBBoxes []Rect) []Table {
 	flushBlock()
 
 	return tables
+}
+
+func isCodeOrHeadingBlock(block []multiSpanLine) bool {
+	codeLines := 0
+	for _, row := range block {
+		txt := strings.TrimSpace(row.line.Text)
+		if codeOrSyntaxRegex.MatchString(txt) || sectionHeadingRegex.MatchString(txt) {
+			codeLines++
+		}
+	}
+	return float64(codeLines)/float64(len(block)) >= 0.25
 }
 
 func buildStreamTable(block []multiSpanLine, pageNum int) Table {
@@ -636,11 +1018,20 @@ func buildStreamTable(block []multiSpanLine, pageNum int) Table {
 		}
 	}
 
-	md := formatMarkdownTable(grid)
+	cleanedGrid, _, _, _, ok := cleanAndValidateGrid(grid)
+	if !ok {
+		return Table{}
+	}
+
+	md := formatMarkdownTable(cleanedGrid)
+	if md == "" {
+		return Table{}
+	}
+
 	return Table{
 		Page:     pageNum,
 		BBox:     [4]float64{minX, minY, maxX, maxY},
-		Rows:     grid,
+		Rows:     cleanedGrid,
 		Markdown: md,
 		Ruled:    false,
 	}
@@ -649,6 +1040,22 @@ func buildStreamTable(block []multiSpanLine, pageNum int) Table {
 // formatMarkdownTable formats a 2D string grid into a clean Markdown table.
 func formatMarkdownTable(rows [][]string) string {
 	if len(rows) == 0 || len(rows[0]) == 0 {
+		return ""
+	}
+
+	hasContent := false
+	for _, row := range rows {
+		for _, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				hasContent = true
+				break
+			}
+		}
+		if hasContent {
+			break
+		}
+	}
+	if !hasContent {
 		return ""
 	}
 

@@ -7,7 +7,7 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.8.1 — eight of the nine pre-freeze items have landed: in-tool
+v0.8.2 — eight of the nine pre-freeze items have landed: in-tool
 run cancellation cleanly stops a run with evidence on
 `RunError.Partial`; `golem.SanitizeHistory` sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`

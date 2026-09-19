@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.2 — 2026-09-19
+
+This patch release generalizes PDF table extraction in `package pdfextract`, eliminating empty and spurious tables from vector graphics and diagrams, while improving multi-column and multi-line row reconstruction for Booktabs and stream tables.
+
+### Fixed
+
+- **Suppressed empty and spurious table grids in PDF extraction.** Discards empty vector grids (such as chart axes, plot frames, and subfigure borders) that contain no text, preventing tables with dummy headers (`Col 1 | Col 2`) and empty rows from polluting Markdown output.
+- **Enhanced Booktabs table reconstruction.** Accurately groups text spans by horizontal baseline bands and clusters column start coordinates. Multi-line headers (e.g. above `\midrule`) and multi-line wrapped cells are now unified into clean, coherent table records instead of being split into fragmented single-cell rows.
+- **Phantom empty column and row pruning.** Automatically removes empty columns caused by vector dividers and tick marks, and trims empty border rows while updating bounding boxes.
+- **Table block formatting.** Guarantees proper blank-line separation before Markdown tables so standard Markdown renderers (such as `remark-gfm`) parse tables correctly.
+
 ## v0.8.1 — 2026-09-19
 
 This release ships high-performance, multi-format document extraction
