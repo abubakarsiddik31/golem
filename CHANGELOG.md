@@ -1,8 +1,26 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 — 2026-09-19
+
+This release ships three major capabilities: high-performance layout-aware
+PDF extraction (`package pdfextract`), explicit sanitization for histories
+crossing untrusted boundaries (`golem.SanitizeHistory`), and deliberate
+in-tool run cancellation (`&tool.Canceled{Reason}`). All changes are opt-in
+and additive; existing call sites and serialized message JSON are unchanged.
 
 ### Added
+
+- **High-performance layout-aware PDF extraction.** `package pdfextract`
+  and the `extract_pdf` common tool extract structured Markdown from PDF
+  documents in milliseconds without Python, Tesseract, or LLMs. Features
+  include recursive XY-cut multi-column sequencing, geometric fraction
+  reconstruction (`\frac{...}{...}`), display math detection (`$$ ... \tag{N} $$`),
+  subscript and superscript baseline attachment, intact table extraction (Lattice and
+  Booktabs), high-resolution image extraction with spatial author-caption
+  proximity matching (`model.PartImage`), and pluggable OCR fallback (`OCREngine`).
+  Inherited page tree attributes, page rotation (`/Rotate`), standard
+  non-Unicode encodings (`/WinAnsiEncoding`, `/Differences`), and Adobe Glyph
+  List mappings are supported natively.
 
 - **Untrusted-history sanitization.** `golem.SanitizeHistory` is the
   explicit pass for history that arrived over a trust boundary — a

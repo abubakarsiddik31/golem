@@ -7,15 +7,18 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.7.6 — six of the nine pre-freeze items have landed: a
-`tokens.Counter` port prices a request before it is sent and bounds
-history by token budget; user-supplied `model.Price` rates report and
-bound a run's dollar cost; tools return image and document parts as
-evidence and can fail definitively without consuming retry budget;
-`golem.NormalizeHistory` repairs and reports damaged pairings while
-keeping truncated arguments verbatim; every run stamps a fresh `RunID`
-on its events, result, and messages, and conversations carry a
-`ConversationID` through history and storage; and the durable
+v0.8.0 — eight of the nine pre-freeze items have landed: in-tool
+run cancellation cleanly stops a run with evidence on
+`RunError.Partial`; `golem.SanitizeHistory` sanitizes histories at
+untrusted boundaries; `package pdfextract` provides layout-aware
+PDF extraction; a `tokens.Counter` port prices a request before it is
+sent and bounds history by token budget; user-supplied `model.Price`
+rates report and bound a run's dollar cost; tools return image and
+document parts as evidence and can fail definitively without consuming
+retry budget; `golem.NormalizeHistory` repairs and reports damaged
+pairings while keeping truncated arguments verbatim; every run stamps
+a fresh `RunID` on its events, result, and messages, and conversations
+carry a `ConversationID` through history and storage; and the durable
 message-JSON contract is under continuous fuzz, with `-race` CI and
 the offline examples running on every check.
 
