@@ -56,6 +56,7 @@ nav:
   - File read: file-read.md
   - Command execution: command-execution.md
   - PDF extract: pdf-extract.md
+  - Document extract: doc-extract.md
   - Agent skills: skills.md
   - MCP client: mcp-client.md
   - Agent delegation: agent-delegation.md
