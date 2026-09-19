@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/pdfextract"
@@ -512,6 +513,68 @@ func TestCMapSurrogateAndMathNormalization(t *testing.T) {
 	raw := "\U0001D434 = \U0001D707 \U0001D440 + \U0001D437"
 	cleaned := pdfextract.CleanText(raw)
 	expected := "A = μ M + D"
+	if cleaned != expected {
+		t.Errorf("Expected %q, got %q", expected, cleaned)
+	}
+}
+
+func TestInheritedPageAttributesAndRotation(t *testing.T) {
+	// Craft a PDF where MediaBox, Resources, and Rotate are set on the /Pages parent node
+	var objects []string
+	objects = append(objects, "<</Type/Catalog/Pages 2 0 R>>")
+	objects = append(objects, "<</Type/Pages/Kids[3 0 R]/Count 1/MediaBox[0 0 612 792]/Rotate 90/Resources<</Font<</F1 5 0 R>>>>>>")
+	objects = append(objects, "<</Type/Page/Parent 2 0 R/Contents 4 0 R>>") // No MediaBox/Resources on Page!
+	content := "BT /F1 14 Tf 1 0 0 1 50 700 Tm (Inherited Title) Tj ET\n"
+	objects = append(objects, fmt.Sprintf("<</Length %d>>\nstream\n%s\nendstream", len(content), content))
+	objects = append(objects, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding<</Type/Encoding/Differences[128 /bullet 129 /emdash]>>>>")
+
+	var sb strings.Builder
+	sb.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, obj := range objects {
+		offsets[i] = sb.Len()
+		sb.WriteString(fmt.Sprintf("%d 0 obj\n%s\nendobj\n", i+1, obj))
+	}
+	xrefOffset := sb.Len()
+	sb.WriteString(fmt.Sprintf("xref\n0 %d\n0000000000 65535 f \n", len(objects)+1))
+	for _, off := range offsets {
+		sb.WriteString(fmt.Sprintf("%010d 00000 n \n", off))
+	}
+	sb.WriteString(fmt.Sprintf("trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefOffset))
+
+	doc, err := pdfextract.ExtractBytes(context.Background(), []byte(sb.String()), pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed on inherited attributes PDF: %v", err)
+	}
+
+	if !strings.Contains(doc.Markdown, "Inherited Title") {
+		t.Errorf("Expected 'Inherited Title' in markdown, got:\n%s", doc.Markdown)
+	}
+}
+
+func TestContentStreamDelimiterRobustness(t *testing.T) {
+	// Content stream with stray/unexpected delimiters: ')' outside string, '}', '{'
+	strayContent := "BT ) } { /F1 12 Tf 1 0 0 1 100 700 Tm (Safe Text) Tj ET\n"
+	pdfBytes := buildSimplePDF(strayContent)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	doc, err := pdfextract.ExtractBytes(ctx, pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed on stray delimiters: %v", err)
+	}
+
+	if !strings.Contains(doc.Markdown, "Safe Text") {
+		t.Errorf("Expected 'Safe Text' in markdown, got:\n%s", doc.Markdown)
+	}
+}
+
+func TestUnicodePunctuationAndFullwidth(t *testing.T) {
+	// Test full-width ASCII, soft-hyphens, and non-breaking spaces
+	raw := "Hello\u00A0World\u00AD! \uFF08Fullwidth\uFF09"
+	cleaned := pdfextract.CleanText(raw)
+	expected := "Hello World! (Fullwidth)"
 	if cleaned != expected {
 		t.Errorf("Expected %q, got %q", expected, cleaned)
 	}

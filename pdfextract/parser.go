@@ -750,6 +750,61 @@ func (d *PDFDoc) collectPages(dict pdfDict) error {
 	return nil
 }
 
+// resolvePageAttribute walks up the /Pages tree through /Parent references
+// to find inherited attributes (MediaBox, CropBox, Resources, Rotate).
+func (d *PDFDoc) resolvePageAttribute(dict pdfDict, key string) any {
+	curr := dict
+	visited := make(map[pdfRef]bool)
+	for {
+		if val, ok := curr[key]; ok {
+			if resolved, err := d.Resolve(val); err == nil && resolved != nil {
+				return resolved
+			}
+		}
+		parentVal, ok := curr["Parent"]
+		if !ok {
+			break
+		}
+		if ref, ok := parentVal.(pdfRef); ok {
+			if visited[ref] {
+				break
+			}
+			visited[ref] = true
+		}
+		parentObj, err := d.Resolve(parentVal)
+		if err != nil || parentObj == nil {
+			break
+		}
+		parentDict, ok := parentObj.(pdfDict)
+		if !ok {
+			break
+		}
+		curr = parentDict
+	}
+	return nil
+}
+
+// pageRotationMatrix computes the 2D transformation matrix and display bounds for a rotated page.
+func pageRotationMatrix(rotate int, mb Rect) (Matrix, Rect) {
+	switch rotate {
+	case 90:
+		// 90 deg clockwise: x' = y - Y0, y' = X1 - x
+		rotM := Matrix{0, -1, 1, 0, -mb.Y0, mb.X1}
+		newMB := Rect{X0: 0, Y0: 0, X1: mb.Height(), Y1: mb.Width()}
+		return rotM, newMB
+	case 180:
+		rotM := Matrix{-1, 0, 0, -1, mb.X1 + mb.X0, mb.Y1 + mb.Y0}
+		return rotM, mb
+	case 270:
+		// 270 deg clockwise: x' = Y1 - y, y' = x - X0
+		rotM := Matrix{0, 1, -1, 0, mb.Y1, -mb.X0}
+		newMB := Rect{X0: 0, Y0: 0, X1: mb.Height(), Y1: mb.Width()}
+		return rotM, newMB
+	default:
+		return IdentityMatrix(), mb
+	}
+}
+
 // ExtractPage parses and extracts all text, lines, rects, and images on page index (0-based).
 func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
 	if pageIndex < 0 || pageIndex >= len(d.pages) {
@@ -758,32 +813,55 @@ func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
 
 	pageDict := d.pages[pageIndex]
 
-	// Determine MediaBox
+	// Determine MediaBox (checking inherited attribute up the /Pages tree)
 	mediaBox := Rect{0, 0, 612, 792} // default US Letter
-	if mbVal, ok := pageDict["MediaBox"]; ok {
-		if mbResolved, err := d.Resolve(mbVal); err == nil {
-			if mbArr, ok := mbResolved.(pdfArray); ok && len(mbArr) >= 4 {
-				x0, _ := toFloat(mbArr[0])
-				y0, _ := toFloat(mbArr[1])
-				x1, _ := toFloat(mbArr[2])
-				y1, _ := toFloat(mbArr[3])
-				mediaBox = Rect{
-					X0: math.Min(x0, x1),
-					Y0: math.Min(y0, y1),
-					X1: math.Max(x0, x1),
-					Y1: math.Max(y0, y1),
-				}
+	if mbResolved := d.resolvePageAttribute(pageDict, "MediaBox"); mbResolved != nil {
+		if mbArr, ok := mbResolved.(pdfArray); ok && len(mbArr) >= 4 {
+			x0, _ := toFloat(mbArr[0])
+			y0, _ := toFloat(mbArr[1])
+			x1, _ := toFloat(mbArr[2])
+			y1, _ := toFloat(mbArr[3])
+			mediaBox = Rect{
+				X0: math.Min(x0, x1),
+				Y0: math.Min(y0, y1),
+				X1: math.Max(x0, x1),
+				Y1: math.Max(y0, y1),
 			}
 		}
 	}
 
-	// Resolve Resources
-	resourcesDict := make(pdfDict)
-	if resVal, ok := pageDict["Resources"]; ok {
-		if resResolved, err := d.Resolve(resVal); err == nil {
-			if rDict, ok := resResolved.(pdfDict); ok {
-				resourcesDict = rDict
+	// CropBox override if specified
+	if cbResolved := d.resolvePageAttribute(pageDict, "CropBox"); cbResolved != nil {
+		if cbArr, ok := cbResolved.(pdfArray); ok && len(cbArr) >= 4 {
+			x0, _ := toFloat(cbArr[0])
+			y0, _ := toFloat(cbArr[1])
+			x1, _ := toFloat(cbArr[2])
+			y1, _ := toFloat(cbArr[3])
+			cropBox := Rect{
+				X0: math.Min(x0, x1),
+				Y0: math.Min(y0, y1),
+				X1: math.Max(x0, x1),
+				Y1: math.Max(y0, y1),
 			}
+			if cropBox.Width() > 0 && cropBox.Height() > 0 {
+				mediaBox = cropBox
+			}
+		}
+	}
+
+	// Resolve page rotation (0, 90, 180, 270)
+	rotate := 0
+	if rotResolved := d.resolvePageAttribute(pageDict, "Rotate"); rotResolved != nil {
+		if rotInt, ok := toInt(rotResolved); ok {
+			rotate = int((rotInt%360 + 360) % 360)
+		}
+	}
+
+	// Resolve Resources (inherited)
+	resourcesDict := make(pdfDict)
+	if resResolved := d.resolvePageAttribute(pageDict, "Resources"); resResolved != nil {
+		if rDict, ok := resResolved.(pdfDict); ok {
+			resourcesDict = rDict
 		}
 	}
 
@@ -847,13 +925,15 @@ func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
 		}
 	}
 
+	rotMatrix, visualMediaBox := pageRotationMatrix(rotate, mediaBox)
+
 	page := &ParsedPage{
 		Index:    pageIndex,
-		MediaBox: mediaBox,
+		MediaBox: visualMediaBox,
 	}
 
 	if len(contentBytes) > 0 {
-		interpreter := newContentInterpreter(contentBytes, fonts, xobjects, mediaBox)
+		interpreter := newContentInterpreter(contentBytes, fonts, xobjects, visualMediaBox, rotMatrix)
 		interpreter.interpret(page)
 	}
 
@@ -895,7 +975,162 @@ func (d *PDFDoc) parseFont(dict pdfDict) *pdfFont {
 			}
 		}
 	}
+
+	// Fallback to /Encoding and /Differences for non-ToUnicode fonts
+	if len(font.ToUnicode) == 0 {
+		d.applyFontEncoding(font, dict)
+	}
+
 	return font
+}
+
+var standardAdobeGlyphs = map[string]string{
+	"quotesingle":    "'",
+	"quotedbl":       "\"",
+	"quoteleft":      "‘",
+	"quoteright":     "’",
+	"quotedblleft":   "“",
+	"quotedblright":  "”",
+	"quotesinglbase": "‚",
+	"quotedblbase":   "„",
+	"guilsinglleft":  "‹",
+	"guilsinglright": "›",
+	"guillemotleft":  "«",
+	"guillemotright": "»",
+	"bullet":         "•",
+	"endash":         "–",
+	"emdash":         "—",
+	"minus":          "-",
+	"hyphen":         "-",
+	"periodcentered": "·",
+	"dagger":         "†",
+	"daggerdbl":      "‡",
+	"section":        "§",
+	"paragraph":      "¶",
+	"ellipsis":       "…",
+	"fraction":       "/",
+	"copyright":      "©",
+	"registered":     "®",
+	"trademark":      "™",
+	"degree":         "°",
+	"plusminus":      "±",
+	"multiply":       "×",
+	"divide":         "÷",
+	"fi":             "fi",
+	"fl":             "fl",
+	"ff":             "ff",
+	"ffi":            "ffi",
+	"ffl":            "ffl",
+	"cent":           "¢",
+	"sterling":       "£",
+	"yen":            "¥",
+	"euro":           "€",
+	"currency":       "¤",
+	"onehalf":        "½",
+	"onequarter":     "¼",
+	"threequarters":  "¾",
+	"Delta":          "Δ",
+	"Omega":          "Ω",
+	"mu":             "μ",
+	"pi":             "π",
+	"radical":        "√",
+	"infinity":       "∞",
+	"summation":      "∑",
+	"integral":       "∫",
+	"notequal":       "≠",
+	"lessequal":      "≤",
+	"greaterequal":   "≥",
+	"approxequal":    "≈",
+}
+
+var winAnsiHighBytes = map[byte]rune{
+	0x80: '€',
+	0x82: '‚',
+	0x83: 'ƒ',
+	0x84: '„',
+	0x85: '…',
+	0x86: '†',
+	0x87: '‡',
+	0x88: 'ˆ',
+	0x89: '‰',
+	0x8A: 'Š',
+	0x8B: '‹',
+	0x8C: 'Œ',
+	0x8E: 'Ž',
+	0x91: '‘',
+	0x92: '’',
+	0x93: '“',
+	0x94: '”',
+	0x95: '•',
+	0x96: '–',
+	0x97: '—',
+	0x98: '˜',
+	0x99: '™',
+	0x9A: 'š',
+	0x9B: '›',
+	0x9C: 'œ',
+	0x9E: 'ž',
+	0x9F: 'Ÿ',
+}
+
+func adobeGlyphToUnicode(name string) string {
+	if r, ok := standardAdobeGlyphs[name]; ok {
+		return r
+	}
+	if strings.HasPrefix(name, "uni") && len(name) == 7 {
+		if val, err := strconv.ParseUint(name[3:], 16, 32); err == nil {
+			return string(rune(val))
+		}
+	}
+	if strings.HasPrefix(name, "u") && len(name) == 5 {
+		if val, err := strconv.ParseUint(name[1:], 16, 32); err == nil {
+			return string(rune(val))
+		}
+	}
+	return ""
+}
+
+func (d *PDFDoc) applyFontEncoding(f *pdfFont, dict pdfDict) {
+	// Baseline: ASCII 0x20..0x7E + WinAnsi / Latin-1 for 0x80..0xFF
+	for b := 0x20; b <= 0xFF; b++ {
+		byteVal := byte(b)
+		if r, ok := winAnsiHighBytes[byteVal]; ok {
+			f.ToUnicode[uint32(b)] = string(r)
+		} else {
+			f.ToUnicode[uint32(b)] = string(rune(b))
+		}
+	}
+
+	encVal, ok := dict["Encoding"]
+	if !ok {
+		return
+	}
+	encObj, err := d.Resolve(encVal)
+	if err != nil || encObj == nil {
+		return
+	}
+
+	if encDict, ok := encObj.(pdfDict); ok {
+		if diffVal, ok := encDict["Differences"]; ok {
+			diffObj, err := d.Resolve(diffVal)
+			if err == nil {
+				if diffArr, ok := diffObj.(pdfArray); ok {
+					currentCode := uint32(0)
+					for _, item := range diffArr {
+						if num, ok := toInt(item); ok {
+							currentCode = uint32(num)
+						} else if gName, ok := item.(pdfName); ok {
+							str := adobeGlyphToUnicode(string(gName))
+							if str != "" {
+								f.ToUnicode[currentCode] = str
+							}
+							currentCode++
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func (f *pdfFont) parseToUnicodeCMap(data []byte) {
@@ -1084,7 +1319,7 @@ type contentInterpreter struct {
 	currPath []Point
 }
 
-func newContentInterpreter(content []byte, fonts map[string]*pdfFont, xobjects map[string]pdfStream, mediaBox Rect) *contentInterpreter {
+func newContentInterpreter(content []byte, fonts map[string]*pdfFont, xobjects map[string]pdfStream, mediaBox Rect, initialCTM Matrix) *contentInterpreter {
 	tokens := tokenizeContentStream(content)
 	return &contentInterpreter{
 		tokens:     tokens,
@@ -1092,7 +1327,7 @@ func newContentInterpreter(content []byte, fonts map[string]*pdfFont, xobjects m
 		xobjects:   xobjects,
 		mediaBox:   mediaBox,
 		ctmStack:   nil,
-		ctm:        IdentityMatrix(),
+		ctm:        initialCTM,
 		tm:         IdentityMatrix(),
 		tlm:        IdentityMatrix(),
 		currFontSz: 12.0,
@@ -1452,6 +1687,10 @@ func (p *parser) nextNonSpaceToken() (string, error) {
 			break
 		}
 		p.pos++
+	}
+	if start == p.pos {
+		p.pos++
+		return string(ch), nil
 	}
 	return string(p.data[start:p.pos]), nil
 }

@@ -316,7 +316,20 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 			}
 		}
 
-		// 3. Reconstruct mathematical fractions from vector lines and text spans
+		// 3. Convert thin horizontal rectangles into vector lines (fraction bars in LaTeX/Word PDFs)
+		for _, r := range parsedPage.Rects {
+			w := r.BBox.Width()
+			h := r.BBox.Height()
+			if h <= 2.5 && w >= 6.0 && w <= 140.0 {
+				midY := (r.BBox.Y0 + r.BBox.Y1) / 2
+				parsedPage.Lines = append(parsedPage.Lines, VectorLine{
+					Start: Point{X: r.BBox.X0, Y: midY},
+					End:   Point{X: r.BBox.X1, Y: midY},
+				})
+			}
+		}
+
+		// Reconstruct mathematical fractions from vector lines and text spans
 		spansWithFractions, remainingLines := ReconstructFractions(parsedPage.Spans, parsedPage.Lines)
 		parsedPage.Spans = spansWithFractions
 		parsedPage.Lines = remainingLines

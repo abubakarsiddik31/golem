@@ -65,9 +65,35 @@ func CleanText(s string) string {
 	s = mojibakeReplacer.Replace(s)
 	s = ligatureReplacer.Replace(s)
 	s = normalizeMathSymbols(s)
+	s = normalizeUnicodeSpacesAndPunctuation(s)
 	// General square root normalization
 	s = sqrtRegex.ReplaceAllString(s, "\\sqrt{$1}")
 	return s
+}
+
+// normalizeUnicodeSpacesAndPunctuation cleans up soft hyphens, zero-width spaces,
+// typographical whitespace, and converts full-width ASCII characters to standard ASCII.
+func normalizeUnicodeSpacesAndPunctuation(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		switch {
+		case r == 0x00AD || r == 0x200B || r == 0xFEFF:
+			// Strip soft hyphen, zero-width space, and byte order mark
+			continue
+		case r == 0x00A0 || (r >= 0x2000 && r <= 0x200A) || r == 0x202F || r == 0x205F:
+			// Normalize non-breaking and typographical spaces to standard space
+			sb.WriteRune(' ')
+		case r >= 0xFF01 && r <= 0xFF5E:
+			// Full-width ASCII characters (e.g. ！ to ～) to standard ASCII (! to ~)
+			sb.WriteRune(rune(r - 0xFEE0))
+		case r == 0x3000:
+			// Ideographic space to standard space
+			sb.WriteRune(' ')
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }
 
 // normalizeMathSymbols maps Mathematical Alphanumeric Unicode symbols to standard ASCII and Greek characters.

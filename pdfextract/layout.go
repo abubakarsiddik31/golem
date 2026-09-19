@@ -40,7 +40,7 @@ type TextLine struct {
 }
 
 var (
-	bulletRegex      = regexp.MustCompile(`^[•\-\*–—]\s+`)
+	bulletRegex      = regexp.MustCompile(`^([•\-\*–—\x{2022}\x{25CF}\x{25CB}\x{25AA}\x{2219}]|\([a-zA-Z0-9]+\))\s+`)
 	orderedRegex     = regexp.MustCompile(`^\d+[\.\)]\s+`)
 	numberedHeading1 = regexp.MustCompile(`^\d+\s+[A-Z].*`)
 	numberedHeading2 = regexp.MustCompile(`^\d+\.\d+\s+[A-Z].*`)
