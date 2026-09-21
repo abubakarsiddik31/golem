@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,11 +16,40 @@ import (
 
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/pdfextract"
+	"github.com/abubakarsiddik31/golem/providers/gemini"
+	"github.com/abubakarsiddik31/golem/testmodel"
 )
 
 // buildSimplePDF crafts a minimal valid PDF-1.4 file with custom content streams.
 func buildSimplePDF(contentStream string) []byte {
 	return buildMultiPagePDF([]string{contentStream})
+}
+
+// buildScannedPDF constructs a PDF containing a full-page raster scan.
+func buildScannedPDF() []byte {
+	var objects []string
+	objects = append(objects, "<</Type/Catalog/Pages 2 0 R>>")
+	objects = append(objects, "<</Type/Pages/Kids[3 0 R]/Count 1>>")
+	objects = append(objects, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</XObject<</Im1 5 0 R>>>>>>")
+	contentStr := "q 612 0 0 792 0 0 cm /Im1 Do Q\n"
+	objects = append(objects, fmt.Sprintf("<</Length %d>>\nstream\n%sendstream", len(contentStr), contentStr))
+	imgData := []byte{220, 230, 240}
+	objects = append(objects, fmt.Sprintf("<</Type/XObject/Subtype/Image/Width 1/Height 1/ColorSpace/DeviceRGB/BitsPerComponent 8/Length %d>>\nstream\n%s\nendstream", len(imgData), string(imgData)))
+
+	var sb strings.Builder
+	sb.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, obj := range objects {
+		offsets[i] = sb.Len()
+		fmt.Fprintf(&sb, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xrefPos := sb.Len()
+	fmt.Fprintf(&sb, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&sb, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&sb, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefPos)
+	return []byte(sb.String())
 }
 
 // buildMultiPagePDF constructs a valid multi-page PDF document.
@@ -764,5 +796,216 @@ func TestUnicodePunctuationAndFullwidth(t *testing.T) {
 	expected := "Hello World! (Fullwidth)"
 	if cleaned != expected {
 		t.Errorf("Expected %q, got %q", expected, cleaned)
+	}
+}
+
+func TestScannedPageDetectionAndFigureSeparation(t *testing.T) {
+	pdfBytes := buildScannedPDF()
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+	if len(doc.Pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(doc.Pages))
+	}
+	page := doc.Pages[0]
+	if !page.IsScanned {
+		t.Errorf("Expected page.IsScanned to be true")
+	}
+	if page.ScanImage == nil {
+		t.Fatalf("Expected page.ScanImage to be non-nil")
+	}
+	if !page.ScanImage.IsPageScan {
+		t.Errorf("Expected ScanImage.IsPageScan to be true")
+	}
+	if strings.Contains(doc.Markdown, "![Figure on page 1") {
+		t.Errorf("Expected markdown NOT to contain spurious figure placeholder, got:\n%s", doc.Markdown)
+	}
+	if !strings.Contains(doc.Markdown, "[Scanned page: OCR engine not configured]") {
+		t.Errorf("Expected fallback notice in markdown, got:\n%s", doc.Markdown)
+	}
+}
+
+func TestReturnScannedPageParts(t *testing.T) {
+	tmpDir := t.TempDir()
+	pdfFile := filepath.Join(tmpDir, "scanned.pdf")
+	if err := os.WriteFile(pdfFile, buildScannedPDF(), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	toolInstance := pdfextract.MustNew[struct{}](pdfextract.Config{
+		Root:                   tmpDir,
+		ReturnScannedPageParts: true,
+	})
+
+	res, err := toolInstance.Exec(context.Background(), struct{}{}, json.RawMessage(`{"path": "scanned.pdf"}`))
+	if err != nil {
+		t.Fatalf("tool Exec failed: %v", err)
+	}
+
+	if len(res.Parts) != 1 {
+		t.Fatalf("Expected 1 image part, got %d", len(res.Parts))
+	}
+	if res.Parts[0].Kind != model.PartImage {
+		t.Errorf("Expected PartImage, got %v", res.Parts[0].Kind)
+	}
+	if !strings.Contains(res.Text, "[Scanned page: image attached in tool parts for visual analysis]") {
+		t.Errorf("Expected multimodal prompt guidance in tool result text, got:\n%s", res.Text)
+	}
+	if strings.Contains(res.Text, "[Scanned page: OCR engine not configured]") {
+		t.Errorf("Expected unconfigured OCR warning to be suppressed when parts attached, got:\n%s", res.Text)
+	}
+}
+
+func TestModelOCREngineWithCostTracking(t *testing.T) {
+	fakeModel := testmodel.New().Respond(model.Response{
+		Message: model.Message{
+			Role:    model.RoleAssistant,
+			Content: "```markdown\n# Medical Report\n\nPatient: John Doe\nDiagnosis: Healthy\n```",
+		},
+		Usage: model.Usage{
+			InputTokens:  1000,
+			OutputTokens: 200,
+		},
+	})
+
+	// Gemini 2.5 Flash-Lite rates ($0.10 / 1M in, $0.40 / 1M out)
+	price := gemini.Price{
+		InputPerMTok:  0.10,
+		OutputPerMTok: 0.40,
+	}
+
+	ocrEngine := pdfextract.NewModelOCR(fakeModel, pdfextract.WithModelPrice(price))
+
+	pdfBytes := buildScannedPDF()
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
+		OCREngine: ocrEngine,
+	})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if !strings.Contains(doc.Markdown, "# Medical Report") {
+		t.Errorf("Expected transcribed heading, got:\n%s", doc.Markdown)
+	}
+	if !strings.Contains(doc.Markdown, "Patient: John Doe") {
+		t.Errorf("Expected transcribed body, got:\n%s", doc.Markdown)
+	}
+	if strings.Contains(doc.Markdown, "```") {
+		t.Errorf("Expected code fences stripped, got:\n%s", doc.Markdown)
+	}
+
+	if doc.Usage.InputTokens != 1000 || doc.Usage.OutputTokens != 200 {
+		t.Errorf("Unexpected doc usage: %+v", doc.Usage)
+	}
+
+	expectedCost := 1000.0/1_000_000*0.10 + 200.0/1_000_000*0.40
+	if math.Abs(doc.Cost-expectedCost) > 1e-9 {
+		t.Errorf("doc.Cost = %f, want %f", doc.Cost, expectedCost)
+	}
+	if math.Abs(doc.Pages[0].Cost-expectedCost) > 1e-9 {
+		t.Errorf("page.Cost = %f, want %f", doc.Pages[0].Cost, expectedCost)
+	}
+}
+
+func TestLocalModelOCRZeroCost(t *testing.T) {
+	localModel := testmodel.New().Respond(model.Response{
+		Message: model.Message{
+			Role:    model.RoleAssistant,
+			Content: "# Local Ollama Qwen2.5-VL Result\n\nRecognized text locally.",
+		},
+		Usage: model.Usage{
+			InputTokens:  500,
+			OutputTokens: 100,
+		},
+	})
+
+	// Local models have no price configured -> cost is $0.00
+	ocrEngine := pdfextract.NewModelOCR(localModel)
+
+	pdfBytes := buildScannedPDF()
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
+		OCREngine: ocrEngine,
+	})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if !strings.Contains(doc.Markdown, "Local Ollama Qwen2.5-VL Result") {
+		t.Errorf("Expected local OCR text, got:\n%s", doc.Markdown)
+	}
+	if doc.Cost != 0.0 {
+		t.Errorf("Expected 0.0 cost for local model, got %f", doc.Cost)
+	}
+	if doc.Usage.InputTokens != 500 {
+		t.Errorf("Expected 500 input tokens recorded, got %d", doc.Usage.InputTokens)
+	}
+}
+
+func TestMistralOCREngineWithCostTracking(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/ocr" {
+			t.Errorf("Expected /ocr, got %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-mistral-key" {
+			t.Errorf("Expected Bearer test-mistral-key, got %s", auth)
+		}
+
+		var reqBody map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("Decode request body failed: %v", err)
+		}
+		if reqBody["model"] != "mistral-ocr-latest" {
+			t.Errorf("Expected model mistral-ocr-latest, got %v", reqBody["model"])
+		}
+
+		respJSON := `{
+			"pages": [
+				{
+					"index": 0,
+					"markdown": "# Mistral Scanned Receipt\n\n| Item | Cost |\n| --- | --- |\n| Coffee | $4.50 |"
+				}
+			],
+			"usage_info": {
+				"pages_processed": 1
+			}
+		}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(respJSON))
+	}))
+	defer ts.Close()
+
+	ocrEngine, err := pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{
+		APIKey:       "test-mistral-key",
+		BaseURL:      ts.URL,
+		PricePerPage: 0.002,
+	})
+	if err != nil {
+		t.Fatalf("NewMistralOCR failed: %v", err)
+	}
+
+	pdfBytes := buildScannedPDF()
+	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
+		OCREngine: ocrEngine,
+	})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed: %v", err)
+	}
+
+	if !strings.Contains(doc.Markdown, "# Mistral Scanned Receipt") {
+		t.Errorf("Expected Mistral markdown heading, got:\n%s", doc.Markdown)
+	}
+	if !strings.Contains(doc.Markdown, "| Coffee | $4.50 |") {
+		t.Errorf("Expected Mistral markdown table, got:\n%s", doc.Markdown)
+	}
+	expectedCost := 0.002
+	if math.Abs(doc.Cost-expectedCost) > 1e-9 {
+		t.Errorf("doc.Cost = %f, want %f", doc.Cost, expectedCost)
+	}
+	if math.Abs(doc.Pages[0].Cost-expectedCost) > 1e-9 {
+		t.Errorf("page.Cost = %f, want %f", doc.Pages[0].Cost, expectedCost)
 	}
 }
