@@ -875,7 +875,7 @@ func TestModelOCREngineWithCostTracking(t *testing.T) {
 		OutputPerMTok: 0.40,
 	}
 
-	ocrEngine := pdfextract.NewModelOCR(fakeModel, pdfextract.WithModelPrice(price))
+	ocrEngine := pdfextract.MustNewModelOCR(fakeModel, pdfextract.WithModelPrice(price))
 
 	pdfBytes := buildScannedPDF()
 	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
@@ -921,7 +921,7 @@ func TestLocalModelOCRZeroCost(t *testing.T) {
 	})
 
 	// Local models have no price configured -> cost is $0.00
-	ocrEngine := pdfextract.NewModelOCR(localModel)
+	ocrEngine := pdfextract.MustNewModelOCR(localModel)
 
 	pdfBytes := buildScannedPDF()
 	doc, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
@@ -1007,5 +1007,17 @@ func TestMistralOCREngineWithCostTracking(t *testing.T) {
 	}
 	if math.Abs(doc.Pages[0].Cost-expectedCost) > 1e-9 {
 		t.Errorf("page.Cost = %f, want %f", doc.Pages[0].Cost, expectedCost)
+	}
+}
+
+func TestOCREngineValidation(t *testing.T) {
+	_, err := pdfextract.NewModelOCR(nil)
+	if err == nil {
+		t.Errorf("Expected error from NewModelOCR(nil)")
+	}
+
+	_, err = pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{APIKey: ""})
+	if err == nil {
+		t.Errorf("Expected error from NewMistralOCR with empty API key")
 	}
 }

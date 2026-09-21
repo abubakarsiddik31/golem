@@ -130,10 +130,12 @@ mistralOCR, err := pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{
 - `pdfextract.Options{Pages string, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, DisableOCR bool, MaxBytes int64}`
 - `pdfextract.Document{NumPages int, Pages []Page, Markdown string, Tables []Table, Images []ImageRef, Usage model.Usage, Cost float64}`
 - `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64}`
-- `pdfextract.NewModelOCR(model.Model, ...ModelOCROption) *ModelOCREngine`
+- `pdfextract.NewModelOCR(model.Model, ...ModelOCROption) (*ModelOCREngine, error)`
+- `pdfextract.MustNewModelOCR(model.Model, ...ModelOCROption) *ModelOCREngine`
 - `pdfextract.WithModelPrice(model.Price) ModelOCROption`
 - `pdfextract.WithModelPrompt(string) ModelOCROption`
 - `pdfextract.NewMistralOCR(MistralOCRConfig) (*MistralOCREngine, error)`
+- `pdfextract.MustNewMistralOCR(MistralOCRConfig) *MistralOCREngine`
 - `pdfextract.MistralOCRConfig{APIKey string, BaseURL string, Model string, PricePerPage float64, HTTPClient *http.Client}`
 - `pdfextract.MarkdownRecognizer`, `pdfextract.MarkdownResult`
 - `pdfextract.ToolName`, `pdfextract.ToolDescription`

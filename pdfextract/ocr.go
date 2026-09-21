@@ -107,13 +107,25 @@ func WithModelPrompt(prompt string) ModelOCROption {
 }
 
 // NewModelOCR returns an OCREngine backed by a vision model.
-func NewModelOCR(m model.Model, opts ...ModelOCROption) *ModelOCREngine {
+func NewModelOCR(m model.Model, opts ...ModelOCROption) (*ModelOCREngine, error) {
+	if m == nil {
+		return nil, fmt.Errorf("pdfextract: model is required for ModelOCREngine")
+	}
 	e := &ModelOCREngine{
 		model:  m,
 		prompt: DefaultModelOCRPrompt,
 	}
 	for _, opt := range opts {
 		opt(e)
+	}
+	return e, nil
+}
+
+// MustNewModelOCR is NewModelOCR that panics on error.
+func MustNewModelOCR(m model.Model, opts ...ModelOCROption) *ModelOCREngine {
+	e, err := NewModelOCR(m, opts...)
+	if err != nil {
+		panic(err)
 	}
 	return e
 }
@@ -232,6 +244,15 @@ func NewMistralOCR(cfg MistralOCRConfig) (*MistralOCREngine, error) {
 		pricePerPage: pricePerPage,
 		client:       client,
 	}, nil
+}
+
+// MustNewMistralOCR is NewMistralOCR that panics on error.
+func MustNewMistralOCR(cfg MistralOCRConfig) *MistralOCREngine {
+	e, err := NewMistralOCR(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return e
 }
 
 // RecognizeMarkdown calls the Mistral OCR API and returns extracted Markdown and cost.
