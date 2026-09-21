@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.8.2 — 2026-09-19
+## v0.8.4 — 2026-09-21
+
+This patch release adds generalized scanned PDF page analysis and image handling to `package pdfextract`, supporting agent multimodal parts, small vision models (Gemini Flash-Lite, local Ollama), and Mistral OCR with caller-supplied cost and usage tracking.
+
+### Added
+
+- **Scanned page analysis with multimodal parts.** `extract_pdf` supports `ReturnScannedPageParts: true` to attach full-page scanned raster images as `model.Part` in `tool.Result.Parts` (per ADR 0025) for direct visual inspection by multimodal models (Claude, GPT-4o, Gemini).
+- **Small vision model transcription (`ModelOCREngine`).** Transcribes scanned pages into structured Markdown (with headings and tables) using any `model.Model`, with zero cost for local models (e.g. Ollama `qwen2.5-vl:3b`) and token-based cost tracking via `model.Price` for latest Gemini Flash-Lite models (`gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`).
+- **Dedicated Mistral OCR (`MistralOCREngine`).** Stdlib HTTP integration with Mistral's `mistral-ocr-latest` API, providing structured Markdown and per-page cost tracking with user-supplied rates.
+- **Scanned page vs. figure separation.** Full-page background scans and multi-strip scan tiles are classified as `Page.ScanImage` (`IsPageScan = true`), suppressing false markdown figure placeholders (`![Figure on page 1](...)`) while preserving embedded illustrations in `Page.Images`.
+- **Cost and usage tracking.** `Page` and `Document` track `Usage model.Usage` and `Cost float64` across all OCR calls without hardcoded price tables.
+- **Strict error propagation.** Upstream OCR rejections, network errors, and context cancellations now propagate as typed/wrapped errors rather than being silently dropped.
+
+## v0.8.3 — 2026-09-19
 
 This patch release generalizes PDF table extraction in `package pdfextract`, eliminating empty and spurious tables from vector graphics and diagrams, while improving multi-column and multi-line row reconstruction for Booktabs and stream tables.
 
