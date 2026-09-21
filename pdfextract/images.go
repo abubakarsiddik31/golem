@@ -17,18 +17,19 @@ import (
 
 // ImageRef represents an extracted image and its detected caption.
 type ImageRef struct {
-	ID      string
-	Page    int
-	Caption string
-	Format  string // "jpeg" or "png"
-	Path    string
-	Data    []byte
-	Width   int
-	Height  int
-	X0      float64
-	Y0      float64
-	X1      float64
-	Y1      float64
+	ID         string
+	Page       int
+	Caption    string
+	Format     string // "jpeg" or "png"
+	Path       string
+	Data       []byte
+	Width      int
+	Height     int
+	X0         float64
+	Y0         float64
+	X1         float64
+	Y1         float64
+	IsPageScan bool // true if this image represents a full-page scanned background
 }
 
 var captionRegex = regexp.MustCompile(`(?i)^(figure|fig\.|illustration|chart|graph|map|photo|image|diagram)\s*([0-9a-z.-]+)?\s*[:.-]?\s*(.*)`)
@@ -43,24 +44,54 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 	var imageRefs []ImageRef
 	consumedSpanIndices := make(map[int]bool)
 
+	isScan := IsScannedPage(page)
+	pageArea := page.MediaBox.Area()
+	if pageArea <= 0 {
+		pageArea = 612 * 792
+	}
+
+	var totalImageArea float64
+	for _, img := range page.Images {
+		totalImageArea += img.BBox.Area()
+	}
+	pageCoveredByImages := (totalImageArea/pageArea) >= 0.30 || (len(page.Spans) == 0 && len(page.Images) > 0)
+
 	for imgIdx, img := range page.Images {
-		// 1. Find adjacent caption text
-		caption, matchedSpanIdx := findAdjacentCaption(img, page.Spans, consumedSpanIndices)
-		if matchedSpanIdx >= 0 {
-			consumedSpanIndices[matchedSpanIdx] = true
+		isPageScan := false
+		if isScan && pageCoveredByImages {
+			isPageScan = true
 		}
-		if caption == "" {
-			caption = fmt.Sprintf("Figure on page %d (%dx%d)", pageNum+1, img.Width, img.Height)
+
+		var caption string
+		if isPageScan {
+			caption = fmt.Sprintf("Scanned page %d (%dx%d)", pageNum+1, img.Width, img.Height)
+		} else {
+			// 1. Find adjacent caption text
+			var matchedSpanIdx int
+			caption, matchedSpanIdx = findAdjacentCaption(img, page.Spans, consumedSpanIndices)
+			if matchedSpanIdx >= 0 {
+				consumedSpanIndices[matchedSpanIdx] = true
+			}
+			if caption == "" {
+				caption = fmt.Sprintf("Figure on page %d (%dx%d)", pageNum+1, img.Width, img.Height)
+			}
 		}
 
 		// 2. Prepare image data (convert raw pixel streams to PNG if not already JPEG)
 		format, imgBytes := prepareImageData(img)
 
 		// 3. Save to disk if imageDir is configured
-		relPath := fmt.Sprintf("images/page_%d_img_%d.%s", pageNum+1, imgIdx+1, format)
+		var baseName string
+		if isPageScan {
+			baseName = fmt.Sprintf("page_%d_scan.%s", pageNum+1, format)
+		} else {
+			baseName = fmt.Sprintf("page_%d_img_%d.%s", pageNum+1, imgIdx+1, format)
+		}
+
+		relPath := filepath.ToSlash(filepath.Join("images", baseName))
 		if imageDir != "" {
 			_ = os.MkdirAll(imageDir, 0755)
-			diskPath := filepath.Join(imageDir, fmt.Sprintf("page_%d_img_%d.%s", pageNum+1, imgIdx+1, format))
+			diskPath := filepath.Join(imageDir, baseName)
 			if len(imgBytes) > 0 {
 				_ = os.WriteFile(diskPath, imgBytes, 0644)
 			}
@@ -68,18 +99,19 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 		}
 
 		imageRefs = append(imageRefs, ImageRef{
-			ID:      fmt.Sprintf("img_%d_%d", pageNum+1, imgIdx+1),
-			Page:    pageNum,
-			Caption: caption,
-			Format:  format,
-			Path:    relPath,
-			Data:    imgBytes,
-			Width:   img.Width,
-			Height:  img.Height,
-			X0:      img.BBox.X0,
-			Y0:      img.BBox.Y0,
-			X1:      img.BBox.X1,
-			Y1:      img.BBox.Y1,
+			ID:         fmt.Sprintf("img_%d_%d", pageNum+1, imgIdx+1),
+			Page:       pageNum,
+			Caption:    caption,
+			Format:     format,
+			Path:       relPath,
+			Data:       imgBytes,
+			Width:      img.Width,
+			Height:     img.Height,
+			X0:         img.BBox.X0,
+			Y0:         img.BBox.Y0,
+			X1:         img.BBox.X1,
+			Y1:         img.BBox.Y1,
+			IsPageScan: isPageScan,
 		})
 	}
 

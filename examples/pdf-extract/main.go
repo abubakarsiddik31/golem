@@ -45,10 +45,19 @@ func main() {
 		return
 	}
 
-	// Tool is confined to Root
+	// Tool is confined to Root, with ReturnScannedPageParts enabled for multimodal analysis
 	extractTool := pdfextract.MustNew[struct{}](pdfextract.Config{
-		Root: root,
+		Root:                   root,
+		ReturnScannedPageParts: true,
 	})
+
+	// Also generate a scanned PDF to demonstrate scanned page analysis
+	scannedBytes := generateScannedPDF()
+	scannedPath := filepath.Join(root, "scanned_receipt.pdf")
+	if err := os.WriteFile(scannedPath, scannedBytes, 0o644); err != nil {
+		fmt.Println("WriteFile scanned:", err)
+		return
+	}
 
 	// Scripted agent requests PDF extraction
 	client := testmodel.New().Respond(
@@ -58,8 +67,13 @@ func main() {
 				Name: pdfextract.ToolName,
 				Args: json.RawMessage(`{"path": "report.pdf"}`),
 			},
+			{
+				ID:   "call-2",
+				Name: pdfextract.ToolName,
+				Args: json.RawMessage(`{"path": "scanned_receipt.pdf"}`),
+			},
 		}}},
-		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Extracted document successfully with intact table and reading order."}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "Extracted both documents: vector report with intact tables, and attached scanned receipt image for visual analysis."}},
 	)
 
 	agent, err := golem.New[struct{}, string](client,
@@ -73,19 +87,46 @@ func main() {
 		return
 	}
 
-	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "Extract report.pdf")
+	result, err := agent.Run(context.Background(), golem.RunContext[struct{}]{}, "Extract report.pdf and scanned_receipt.pdf")
 	if err != nil {
 		fmt.Println("agent.Run:", err)
 		return
 	}
 
 	fmt.Println("Agent result:", result.Output)
-	fmt.Println("\nExtracted Markdown received by the agent:")
+	fmt.Println("\nMessages and evidence received by the agent:")
 	for _, m := range result.Messages {
 		if m.Role == model.RoleTool {
-			fmt.Println(m.Content)
+			fmt.Printf("\n[Tool %s returned %d parts]:\n%s\n", m.ToolName, len(m.Parts), m.Content)
 		}
 	}
+}
+
+func generateScannedPDF() []byte {
+	var objects []string
+	objects = append(objects, "<</Type/Catalog/Pages 2 0 R>>")
+	objects = append(objects, "<</Type/Pages/Kids[3 0 R]/Count 1>>")
+	objects = append(objects, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</XObject<</Im1 5 0 R>>>>>>")
+	contentStr := "q 612 0 0 792 0 0 cm /Im1 Do Q\n"
+	objects = append(objects, fmt.Sprintf("<</Length %d>>\nstream\n%sendstream", len(contentStr), contentStr))
+	imgData := []byte{230, 240, 250}
+	objects = append(objects, fmt.Sprintf("<</Type/XObject/Subtype/Image/Width 1/Height 1/ColorSpace/DeviceRGB/BitsPerComponent 8/Length %d>>\nstream\n%s\nendstream", len(imgData), string(imgData)))
+
+	var sb strings.Builder
+	sb.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, obj := range objects {
+		offsets[i] = sb.Len()
+		fmt.Fprintf(&sb, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xrefPos := sb.Len()
+	fmt.Fprintf(&sb, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&sb, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&sb, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefPos)
+
+	return []byte(sb.String())
 }
 
 func generateSamplePDF() []byte {

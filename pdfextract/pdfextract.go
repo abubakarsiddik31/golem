@@ -68,6 +68,10 @@ type Config struct {
 	// model.Part (image parts) in tool.Result per ADR 0025.
 	ReturnImageParts bool
 
+	// ReturnScannedPageParts determines whether scanned page images are returned
+	// as model.Part in tool.Result for direct visual analysis by multimodal models.
+	ReturnScannedPageParts bool
+
 	// OCREngine provides the modern deep-learning OCR implementation for scanned pages.
 	// Nil defaults to DefaultOCREngine().
 	OCREngine OCREngine
@@ -78,23 +82,28 @@ type Config struct {
 
 // Options configures a direct extraction call (outside an agent).
 type Options struct {
-	Pages            string // "all", "1-3", "5"
-	ImageDir         string
-	ReturnImageParts bool
-	OCREngine        OCREngine
-	DisableOCR       bool
-	MaxBytes         int64
+	Pages                  string // "all", "1-3", "5"
+	ImageDir               string
+	ReturnImageParts       bool
+	ReturnScannedPageParts bool
+	OCREngine              OCREngine
+	DisableOCR             bool
+	MaxBytes               int64
 }
 
 // Page holds extracted elements and Markdown text for one page.
 type Page struct {
-	Index    int
-	Width    float64
-	Height   float64
-	Markdown string
-	Tables   []Table
-	Images   []ImageRef
-	Blocks   []LayoutBlock
+	Index     int
+	Width     float64
+	Height    float64
+	IsScanned bool      // true if the page was detected as a scanned raster document
+	ScanImage *ImageRef // primary scanned page image, when IsScanned is true
+	Markdown  string
+	Tables    []Table
+	Images    []ImageRef
+	Blocks    []LayoutBlock
+	Usage     model.Usage // token usage incurred for this page (e.g. from ModelOCREngine)
+	Cost      float64     // monetary cost incurred for this page in US dollars
 }
 
 // Document represents a fully extracted PDF document.
@@ -104,6 +113,8 @@ type Document struct {
 	Markdown string
 	Tables   []Table
 	Images   []ImageRef
+	Usage    model.Usage // total token usage incurred across all OCR calls
+	Cost     float64     // total monetary cost incurred across all OCR calls in US dollars
 }
 
 // UnsupportedFileError reports a file that is not a valid PDF.
@@ -118,12 +129,13 @@ func (e *UnsupportedFileError) Error() string {
 
 // extractor holds resolved configuration for tool execution.
 type extractor struct {
-	root             string
-	maxBytes         int64
-	imageDir         string
-	returnImageParts bool
-	ocrEngine        OCREngine
-	disableOCR       bool
+	root                   string
+	maxBytes               int64
+	imageDir               string
+	returnImageParts       bool
+	returnScannedPageParts bool
+	ocrEngine              OCREngine
+	disableOCR             bool
 }
 
 // New validates cfg and returns the extract_pdf tool ready for registration with an agent.
@@ -152,17 +164,18 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 	}
 
 	ocrEngine := cfg.OCREngine
-	if ocrEngine == nil && !cfg.DisableOCR {
+	if ocrEngine == nil && !cfg.DisableOCR && !cfg.ReturnScannedPageParts {
 		ocrEngine = DefaultOCREngine()
 	}
 
 	ext := &extractor{
-		root:             root,
-		maxBytes:         maxBytes,
-		imageDir:         cfg.ImageDir,
-		returnImageParts: cfg.ReturnImageParts,
-		ocrEngine:        ocrEngine,
-		disableOCR:       cfg.DisableOCR,
+		root:                   root,
+		maxBytes:               maxBytes,
+		imageDir:               cfg.ImageDir,
+		returnImageParts:       cfg.ReturnImageParts,
+		returnScannedPageParts: cfg.ReturnScannedPageParts,
+		ocrEngine:              ocrEngine,
+		disableOCR:             cfg.DisableOCR,
 	}
 
 	return tool.New(tool.Tool[Deps]{
@@ -229,12 +242,13 @@ func (e *extractor) execute(ctx context.Context, args json.RawMessage) (tool.Res
 	}
 
 	doc, err := Extract(ctx, resolved, Options{
-		Pages:            input.Pages,
-		ImageDir:         e.imageDir,
-		ReturnImageParts: e.returnImageParts,
-		OCREngine:        e.ocrEngine,
-		DisableOCR:       e.disableOCR,
-		MaxBytes:         e.maxBytes,
+		Pages:                  input.Pages,
+		ImageDir:               e.imageDir,
+		ReturnImageParts:       e.returnImageParts,
+		ReturnScannedPageParts: e.returnScannedPageParts,
+		OCREngine:              e.ocrEngine,
+		DisableOCR:             e.disableOCR,
+		MaxBytes:               e.maxBytes,
 	})
 	if err != nil {
 		return tool.Result{}, err
@@ -247,7 +261,17 @@ func (e *extractor) execute(ctx context.Context, args json.RawMessage) (tool.Res
 
 	var parts []model.Part
 	if e.returnImageParts && len(doc.Images) > 0 {
-		parts = BuildImageParts(doc.Images)
+		parts = append(parts, BuildImageParts(doc.Images)...)
+	} else if e.returnScannedPageParts {
+		var scanImages []ImageRef
+		for _, p := range doc.Pages {
+			if p.IsScanned && p.ScanImage != nil && len(p.ScanImage.Data) > 0 {
+				scanImages = append(scanImages, *p.ScanImage)
+			}
+		}
+		if len(scanImages) > 0 {
+			parts = append(parts, BuildImageParts(scanImages)...)
+		}
 	}
 
 	return tool.Result{
@@ -302,16 +326,53 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		pageImages, spansAfterImages := ProcessPageImages(parsedPage, opts.ImageDir, pageIdx)
 		parsedPage.Spans = spansAfterImages
 
+		isScan := !opts.DisableOCR && IsScannedPage(parsedPage)
+		var scanImg *ImageRef
+		for i := range pageImages {
+			if pageImages[i].IsPageScan {
+				if scanImg == nil || (pageImages[i].Width*pageImages[i].Height > scanImg.Width*scanImg.Height) {
+					scanImg = &pageImages[i]
+				}
+			}
+		}
+
+		var pageUsage model.Usage
+		var pageCost float64
+		var directMarkdown string
+
 		// 2. Check if page is a pure scan
-		if !opts.DisableOCR && IsScannedPage(parsedPage) {
+		if isScan {
 			ocrEngine := opts.OCREngine
-			if ocrEngine == nil {
+			if ocrEngine == nil && !opts.ReturnScannedPageParts {
 				ocrEngine = DefaultOCREngine()
 			}
-			if len(parsedPage.Images) > 0 {
-				ocrSpans, err := ocrEngine.RecognizePage(ctx, parsedPage.Images[0].Data, parsedPage.Images[0].Format, parsedPage.MediaBox)
-				if err == nil && len(ocrSpans) > 0 {
-					parsedPage.Spans = append(parsedPage.Spans, ocrSpans...)
+
+			var imgBytes []byte
+			var format string
+			if scanImg != nil && len(scanImg.Data) > 0 {
+				imgBytes = scanImg.Data
+				format = scanImg.Format
+			} else if len(parsedPage.Images) > 0 {
+				format, imgBytes = prepareImageData(parsedPage.Images[0])
+			}
+
+			if ocrEngine != nil && len(imgBytes) > 0 {
+				if mdRec, ok := ocrEngine.(MarkdownRecognizer); ok {
+					res, err := mdRec.RecognizeMarkdown(ctx, imgBytes, format, parsedPage.MediaBox)
+					if err != nil {
+						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+					}
+					directMarkdown = res.Markdown
+					pageUsage = res.Usage
+					pageCost = res.Cost
+				} else {
+					ocrSpans, err := ocrEngine.RecognizePage(ctx, imgBytes, format, parsedPage.MediaBox)
+					if err != nil {
+						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+					}
+					if len(ocrSpans) > 0 {
+						parsedPage.Spans = append(parsedPage.Spans, ocrSpans...)
+					}
 				}
 			}
 		}
@@ -341,28 +402,39 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		// 5. Perform Layout Analysis & Reading Order Reconstruction
 		blocks := AnalyzePageLayout(parsedPage, tables, pageImages)
 
-		// 5. Build Page Markdown
+		// 6. Build Page Markdown
 		var pageMD strings.Builder
 		if numPages > 1 {
 			pageMD.WriteString(fmt.Sprintf("## Page %d\n\n", pageIdx+1))
 		}
 
-		for _, b := range blocks {
-			switch b.Type {
-			case BlockHeading:
-				prefix := strings.Repeat("#", b.Level)
-				pageMD.WriteString(fmt.Sprintf("%s %s\n\n", prefix, b.Text))
-			case BlockList:
-				pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
-			case BlockTable:
-				if pageMD.Len() > 0 && !strings.HasSuffix(pageMD.String(), "\n\n") {
-					pageMD.WriteString("\n")
+		if directMarkdown != "" {
+			pageMD.WriteString(directMarkdown)
+			pageMD.WriteString("\n\n")
+		} else if isScan && len(parsedPage.Spans) == 0 {
+			if opts.ReturnScannedPageParts {
+				pageMD.WriteString("[Scanned page: image attached in tool parts for visual analysis]\n\n")
+			} else {
+				pageMD.WriteString("[Scanned page: OCR engine not configured]\n\n")
+			}
+		} else {
+			for _, b := range blocks {
+				switch b.Type {
+				case BlockHeading:
+					prefix := strings.Repeat("#", b.Level)
+					pageMD.WriteString(fmt.Sprintf("%s %s\n\n", prefix, b.Text))
+				case BlockList:
+					pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
+				case BlockTable:
+					if pageMD.Len() > 0 && !strings.HasSuffix(pageMD.String(), "\n\n") {
+						pageMD.WriteString("\n")
+					}
+					pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
+				case BlockImage:
+					pageMD.WriteString(fmt.Sprintf("%s\n\n", b.Text))
+				case BlockParagraph:
+					pageMD.WriteString(fmt.Sprintf("%s\n\n", b.Text))
 				}
-				pageMD.WriteString(fmt.Sprintf("%s\n", b.Text))
-			case BlockImage:
-				pageMD.WriteString(fmt.Sprintf("%s\n\n", b.Text))
-			case BlockParagraph:
-				pageMD.WriteString(fmt.Sprintf("%s\n\n", b.Text))
 			}
 		}
 
@@ -370,17 +442,27 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		docMarkdown.WriteString(pMarkdown)
 
 		doc.Pages = append(doc.Pages, Page{
-			Index:    pageIdx,
-			Width:    parsedPage.MediaBox.Width(),
-			Height:   parsedPage.MediaBox.Height(),
-			Markdown: pMarkdown,
-			Tables:   tables,
-			Images:   pageImages,
-			Blocks:   blocks,
+			Index:     pageIdx,
+			Width:     parsedPage.MediaBox.Width(),
+			Height:    parsedPage.MediaBox.Height(),
+			IsScanned: isScan,
+			ScanImage: scanImg,
+			Markdown:  pMarkdown,
+			Tables:    tables,
+			Images:    pageImages,
+			Blocks:    blocks,
+			Usage:     pageUsage,
+			Cost:      pageCost,
 		})
 
 		doc.Tables = append(doc.Tables, tables...)
 		doc.Images = append(doc.Images, pageImages...)
+		doc.Usage.InputTokens += pageUsage.InputTokens
+		doc.Usage.OutputTokens += pageUsage.OutputTokens
+		doc.Usage.CacheReadTokens += pageUsage.CacheReadTokens
+		doc.Usage.CacheWriteTokens += pageUsage.CacheWriteTokens
+		doc.Usage.ReasoningTokens += pageUsage.ReasoningTokens
+		doc.Cost += pageCost
 	}
 
 	doc.Markdown = strings.TrimSpace(docMarkdown.String())

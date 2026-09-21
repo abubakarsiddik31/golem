@@ -842,6 +842,9 @@ func mergeVisualElements(textBlocks []LayoutBlock, tables []Table, images []Imag
 	for i := range images {
 		img := &images[i]
 		if img.Page == pageNum {
+			if img.IsPageScan {
+				continue
+			}
 			block := LayoutBlock{
 				Type:     BlockImage,
 				ImageRef: img,
