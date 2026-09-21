@@ -16,9 +16,17 @@ import (
 
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/pdfextract"
-	"github.com/abubakarsiddik31/golem/providers/gemini"
 	"github.com/abubakarsiddik31/golem/testmodel"
 )
+
+type fakePrice struct {
+	inputPerMTok  float64
+	outputPerMTok float64
+}
+
+func (p fakePrice) Cost(u model.Usage) float64 {
+	return float64(u.InputTokens)/1_000_000*p.inputPerMTok + float64(u.OutputTokens)/1_000_000*p.outputPerMTok
+}
 
 // buildSimplePDF crafts a minimal valid PDF-1.4 file with custom content streams.
 func buildSimplePDF(contentStream string) []byte {
@@ -869,10 +877,10 @@ func TestModelOCREngineWithCostTracking(t *testing.T) {
 		},
 	})
 
-	// Gemini 2.5 Flash-Lite rates ($0.10 / 1M in, $0.40 / 1M out)
-	price := gemini.Price{
-		InputPerMTok:  0.10,
-		OutputPerMTok: 0.40,
+	// Simulated Gemini 2.5 Flash-Lite rates ($0.10 / 1M in, $0.40 / 1M out)
+	price := fakePrice{
+		inputPerMTok:  0.10,
+		outputPerMTok: 0.40,
 	}
 
 	ocrEngine := pdfextract.MustNewModelOCR(fakeModel, pdfextract.WithModelPrice(price))
@@ -1019,5 +1027,67 @@ func TestOCREngineValidation(t *testing.T) {
 	_, err = pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{APIKey: ""})
 	if err == nil {
 		t.Errorf("Expected error from NewMistralOCR with empty API key")
+	}
+}
+
+func TestOCREngineErrorPropagation(t *testing.T) {
+	failModel := testmodel.New().Fail(errors.New("rate limit exceeded"))
+	ocrEngine := pdfextract.MustNewModelOCR(failModel)
+
+	pdfBytes := buildScannedPDF()
+	_, err := pdfextract.ExtractBytes(context.Background(), pdfBytes, pdfextract.Options{
+		OCREngine: ocrEngine,
+	})
+	if err == nil {
+		t.Fatalf("Expected error from ExtractBytes when OCR engine fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "rate limit exceeded") {
+		t.Errorf("Expected wrapped error containing 'rate limit exceeded', got: %v", err)
+	}
+}
+
+func TestMultiStripScannedPage(t *testing.T) {
+	// PDF with 2 horizontal image strips covering the page
+	var objects []string
+	objects = append(objects, "<</Type/Catalog/Pages 2 0 R>>")
+	objects = append(objects, "<</Type/Pages/Kids[3 0 R]/Count 1>>")
+	objects = append(objects, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</XObject<</Im1 5 0 R /Im2 6 0 R>>>>>>")
+	contentStr := "q 612 0 0 392 0 400 cm /Im1 Do Q\nq 612 0 0 400 0 0 cm /Im2 Do Q\n"
+	objects = append(objects, fmt.Sprintf("<</Length %d>>\nstream\n%sendstream", len(contentStr), contentStr))
+	imgData1 := []byte{210, 220, 230}
+	imgData2 := []byte{215, 225, 235}
+	objects = append(objects, fmt.Sprintf("<</Type/XObject/Subtype/Image/Width 1/Height 1/ColorSpace/DeviceRGB/BitsPerComponent 8/Length %d>>\nstream\n%s\nendstream", len(imgData1), string(imgData1)))
+	objects = append(objects, fmt.Sprintf("<</Type/XObject/Subtype/Image/Width 1/Height 1/ColorSpace/DeviceRGB/BitsPerComponent 8/Length %d>>\nstream\n%s\nendstream", len(imgData2), string(imgData2)))
+
+	var sb strings.Builder
+	sb.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, obj := range objects {
+		offsets[i] = sb.Len()
+		fmt.Fprintf(&sb, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xrefPos := sb.Len()
+	fmt.Fprintf(&sb, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&sb, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&sb, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefPos)
+
+	doc, err := pdfextract.ExtractBytes(context.Background(), []byte(sb.String()), pdfextract.Options{})
+	if err != nil {
+		t.Fatalf("ExtractBytes failed on multi-strip scan: %v", err)
+	}
+	if len(doc.Pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(doc.Pages))
+	}
+	page := doc.Pages[0]
+	if !page.IsScanned {
+		t.Errorf("Expected page.IsScanned to be true for multi-strip scan")
+	}
+	if page.ScanImage == nil {
+		t.Fatalf("Expected page.ScanImage to be set")
+	}
+	if strings.Contains(doc.Markdown, "![Figure on page 1") {
+		t.Errorf("Expected multi-strip scan images NOT to emit figure placeholders, got:\n%s", doc.Markdown)
 	}
 }

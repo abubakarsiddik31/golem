@@ -50,9 +50,15 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 		pageArea = 612 * 792
 	}
 
+	var totalImageArea float64
+	for _, img := range page.Images {
+		totalImageArea += img.BBox.Area()
+	}
+	pageCoveredByImages := (totalImageArea/pageArea) >= 0.30 || (len(page.Spans) == 0 && len(page.Images) > 0)
+
 	for imgIdx, img := range page.Images {
 		isPageScan := false
-		if isScan && (img.BBox.Area()/pageArea >= 0.40) {
+		if isScan && pageCoveredByImages {
 			isPageScan = true
 		}
 
@@ -75,27 +81,21 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 		format, imgBytes := prepareImageData(img)
 
 		// 3. Save to disk if imageDir is configured
-		var relPath string
+		var baseName string
 		if isPageScan {
-			relPath = fmt.Sprintf("images/page_%d_scan.%s", pageNum+1, format)
-			if imageDir != "" {
-				_ = os.MkdirAll(imageDir, 0755)
-				diskPath := filepath.Join(imageDir, fmt.Sprintf("page_%d_scan.%s", pageNum+1, format))
-				if len(imgBytes) > 0 {
-					_ = os.WriteFile(diskPath, imgBytes, 0644)
-				}
-				relPath = diskPath
-			}
+			baseName = fmt.Sprintf("page_%d_scan.%s", pageNum+1, format)
 		} else {
-			relPath = fmt.Sprintf("images/page_%d_img_%d.%s", pageNum+1, imgIdx+1, format)
-			if imageDir != "" {
-				_ = os.MkdirAll(imageDir, 0755)
-				diskPath := filepath.Join(imageDir, fmt.Sprintf("page_%d_img_%d.%s", pageNum+1, imgIdx+1, format))
-				if len(imgBytes) > 0 {
-					_ = os.WriteFile(diskPath, imgBytes, 0644)
-				}
-				relPath = diskPath
+			baseName = fmt.Sprintf("page_%d_img_%d.%s", pageNum+1, imgIdx+1, format)
+		}
+
+		relPath := filepath.ToSlash(filepath.Join("images", baseName))
+		if imageDir != "" {
+			_ = os.MkdirAll(imageDir, 0755)
+			diskPath := filepath.Join(imageDir, baseName)
+			if len(imgBytes) > 0 {
+				_ = os.WriteFile(diskPath, imgBytes, 0644)
 			}
+			relPath = diskPath
 		}
 
 		imageRefs = append(imageRefs, ImageRef{

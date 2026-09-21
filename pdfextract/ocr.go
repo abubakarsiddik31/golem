@@ -48,7 +48,6 @@ func IsScannedPage(page *ParsedPage) bool {
 		return false
 	}
 
-	// Check if the page is dominated by large raster images
 	pageArea := page.MediaBox.Area()
 	if pageArea <= 0 {
 		pageArea = 612 * 792 // US letter
@@ -59,8 +58,8 @@ func IsScannedPage(page *ParsedPage) bool {
 		imageArea += img.BBox.Area()
 	}
 
-	// Scanned pages are dominated by raster scans covering a substantial portion of the page
-	return (imageArea / pageArea) >= 0.40
+	// Scanned page if images cover substantial page area, or if page has zero text and at least one image
+	return (imageArea/pageArea) >= 0.30 || (totalChars == 0 && len(page.Images) > 0)
 }
 
 // NoopOCR is a fallback OCR engine that notes scanned pages without running heavy models.
@@ -190,9 +189,6 @@ const DefaultMistralOCRBaseURL = "https://api.mistral.ai/v1"
 // DefaultMistralOCRModel is the latest Mistral OCR model identifier.
 const DefaultMistralOCRModel = "mistral-ocr-latest"
 
-// DefaultMistralOCRPricePerPage is the default USD rate per page ($2.00 per 1,000 pages).
-const DefaultMistralOCRPricePerPage = 0.002
-
 // MistralOCRConfig configures MistralOCREngine.
 type MistralOCRConfig struct {
 	// APIKey authenticates requests with Mistral via the Authorization Bearer header. Required.
@@ -201,7 +197,8 @@ type MistralOCRConfig struct {
 	BaseURL string
 	// Model names the Mistral OCR model to use; defaults to DefaultMistralOCRModel.
 	Model string
-	// PricePerPage is the USD cost per processed page; defaults to DefaultMistralOCRPricePerPage.
+	// PricePerPage is the user-supplied USD rate per processed page (e.g. 0.002 for $2/1k pages).
+	// Golem ships no fixed price table per ADR 0024; zero leaves cost at 0.00.
 	PricePerPage float64
 	// HTTPClient performs HTTP requests; defaults to a 60-second client.
 	HTTPClient *http.Client
@@ -230,8 +227,8 @@ func NewMistralOCR(cfg MistralOCRConfig) (*MistralOCREngine, error) {
 		modelName = DefaultMistralOCRModel
 	}
 	pricePerPage := cfg.PricePerPage
-	if pricePerPage == 0 {
-		pricePerPage = DefaultMistralOCRPricePerPage
+	if pricePerPage < 0 {
+		pricePerPage = 0
 	}
 	client := cfg.HTTPClient
 	if client == nil {
@@ -371,26 +368,8 @@ func (c *CommandOCR) RecognizePage(ctx context.Context, imageBytes []byte, forma
 		return nil, fmt.Errorf("pdfextract: ocr command %s failed: %w", c.BinaryPath, err)
 	}
 
-	lines := strings.Split(string(out), "\n")
-	var spans []TextSpan
-	y := pageBox.Y1 - 50
-	for _, l := range lines {
-		l = strings.TrimSpace(l)
-		if l != "" {
-			spans = append(spans, TextSpan{
-				Text:     l,
-				FontSize: 12.0,
-				BBox: Rect{
-					X0: pageBox.X0 + 50,
-					Y0: y,
-					X1: pageBox.X1 - 50,
-					Y1: y + 14,
-				},
-			})
-			y -= 18
-		}
-	}
-	return spans, nil
+	// Parse simple line-based text output
+	return linesToSpans(strings.Split(string(out), "\n"), pageBox), nil
 }
 
 // AppleVisionOCR leverages macOS native Vision Framework for ultra-fast deep-learning OCR without Python.
@@ -404,6 +383,7 @@ func (a AppleVisionOCR) RecognizePage(ctx context.Context, imageBytes []byte, fo
 		return NoopOCR{}.RecognizePage(ctx, imageBytes, format, pageBox)
 	}
 
+	// If a system vision helper is available, execute it; otherwise fallback to NoopOCR gracefully
 	return NoopOCR{}.RecognizePage(ctx, imageBytes, format, pageBox)
 }
 
@@ -439,7 +419,10 @@ func stripCodeFences(text string) string {
 }
 
 func markdownToSpans(md string, pageBox Rect) []TextSpan {
-	lines := strings.Split(md, "\n")
+	return linesToSpans(strings.Split(md, "\n"), pageBox)
+}
+
+func linesToSpans(lines []string, pageBox Rect) []TextSpan {
 	var spans []TextSpan
 	y := pageBox.Y1 - 50
 	for _, l := range lines {

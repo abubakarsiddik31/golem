@@ -260,18 +260,9 @@ func (e *extractor) execute(ctx context.Context, args json.RawMessage) (tool.Res
 	}
 
 	var parts []model.Part
-	if e.returnImageParts {
-		var figImages []ImageRef
-		for _, img := range doc.Images {
-			if !img.IsPageScan {
-				figImages = append(figImages, img)
-			}
-		}
-		if len(figImages) > 0 {
-			parts = append(parts, BuildImageParts(figImages)...)
-		}
-	}
-	if e.returnScannedPageParts {
+	if e.returnImageParts && len(doc.Images) > 0 {
+		parts = append(parts, BuildImageParts(doc.Images)...)
+	} else if e.returnScannedPageParts {
 		var scanImages []ImageRef
 		for _, p := range doc.Pages {
 			if p.IsScanned && p.ScanImage != nil && len(p.ScanImage.Data) > 0 {
@@ -339,8 +330,9 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		var scanImg *ImageRef
 		for i := range pageImages {
 			if pageImages[i].IsPageScan {
-				scanImg = &pageImages[i]
-				break
+				if scanImg == nil || (pageImages[i].Width*pageImages[i].Height > scanImg.Width*scanImg.Height) {
+					scanImg = &pageImages[i]
+				}
 			}
 		}
 
@@ -367,14 +359,18 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 			if ocrEngine != nil && len(imgBytes) > 0 {
 				if mdRec, ok := ocrEngine.(MarkdownRecognizer); ok {
 					res, err := mdRec.RecognizeMarkdown(ctx, imgBytes, format, parsedPage.MediaBox)
-					if err == nil && len(res.Markdown) > 0 {
-						directMarkdown = res.Markdown
-						pageUsage = res.Usage
-						pageCost = res.Cost
+					if err != nil {
+						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
 					}
+					directMarkdown = res.Markdown
+					pageUsage = res.Usage
+					pageCost = res.Cost
 				} else {
 					ocrSpans, err := ocrEngine.RecognizePage(ctx, imgBytes, format, parsedPage.MediaBox)
-					if err == nil && len(ocrSpans) > 0 {
+					if err != nil {
+						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+					}
+					if len(ocrSpans) > 0 {
 						parsedPage.Spans = append(parsedPage.Spans, ocrSpans...)
 					}
 				}
