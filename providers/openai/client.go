@@ -24,11 +24,20 @@ import (
 // DefaultBaseURL is the OpenAI chat-completions endpoint prefix.
 const DefaultBaseURL = "https://api.openai.com/v1"
 
-// Config configures a Client. APIKey and Model are required; the zero
-// values of the remaining fields select documented defaults. There are no
-// implicit environment reads: callers wire os.Getenv themselves.
+// isDefaultBaseURL reports whether baseURL is unset or points to OpenAI's
+// default endpoint prefix.
+func isDefaultBaseURL(baseURL string) bool {
+	return baseURL == "" || strings.TrimRight(baseURL, "/") == strings.TrimRight(DefaultBaseURL, "/")
+}
+
+// Config configures a Client. Model is required; APIKey is required when
+// using the default OpenAI endpoint. The zero values of the remaining
+// fields select documented defaults. There are no implicit environment
+// reads: callers wire os.Getenv themselves.
 type Config struct {
 	// APIKey authenticates requests via the Authorization header.
+	// Required for the default OpenAI endpoint; optional for custom
+	// BaseURL endpoints (such as local runtimes like Ollama or LM Studio).
 	APIKey string
 	// BaseURL prefixes the chat-completions path; defaults to
 	// DefaultBaseURL.
@@ -69,7 +78,7 @@ type Client struct {
 
 // New validates cfg and returns a Client ready for use with an agent.
 func New(cfg Config) (*Client, error) {
-	if cfg.APIKey == "" {
+	if isDefaultBaseURL(cfg.BaseURL) && cfg.APIKey == "" {
 		return nil, fmt.Errorf("openai: API key is required")
 	}
 	if cfg.Model == "" {
@@ -165,7 +174,9 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 		return nil, fmt.Errorf("openai: build request: %w", err)
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	if c.cfg.APIKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
 	return httpRequest, nil
 }
 

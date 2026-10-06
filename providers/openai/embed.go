@@ -14,12 +14,14 @@ import (
 	"github.com/abubakarsiddik31/golem/model"
 )
 
-// EmbedderConfig configures an Embedder. APIKey and Model are required;
-// the zero values of the remaining fields select documented defaults.
-// There are no implicit environment reads: callers wire os.Getenv
-// themselves.
+// EmbedderConfig configures an Embedder. Model is required; APIKey is
+// required when using the default OpenAI endpoint. The zero values of
+// the remaining fields select documented defaults. There are no implicit
+// environment reads: callers wire os.Getenv themselves.
 type EmbedderConfig struct {
 	// APIKey authenticates requests via the Authorization header.
+	// Required for the default OpenAI endpoint; optional for custom
+	// BaseURL endpoints (such as local runtimes like Ollama or LM Studio).
 	APIKey string
 	// BaseURL prefixes the embeddings path; defaults to DefaultBaseURL.
 	// Any OpenAI-compatible embeddings endpoint works, including local
@@ -48,7 +50,7 @@ type Embedder struct {
 
 // NewEmbedder validates cfg and returns an Embedder ready for use.
 func NewEmbedder(cfg EmbedderConfig) (*Embedder, error) {
-	if cfg.APIKey == "" {
+	if isDefaultBaseURL(cfg.BaseURL) && cfg.APIKey == "" {
 		return nil, fmt.Errorf("openai: API key is required")
 	}
 	if cfg.Model == "" {
@@ -103,7 +105,9 @@ func (e *Embedder) embed(ctx context.Context, texts []string) (embedding.Result,
 		return embedding.Result{}, fmt.Errorf("openai: build request: %w", err)
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+e.cfg.APIKey)
+	if e.cfg.APIKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+e.cfg.APIKey)
+	}
 
 	httpResponse, err := e.http.Do(httpRequest)
 	if err != nil {
