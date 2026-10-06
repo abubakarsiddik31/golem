@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.5 — 2026-10-06
+
+This patch release makes `APIKey` optional in `package openai` (`New` and `NewEmbedder`) when configuring custom or local endpoints (such as Ollama, LM Studio, or vLLM), omitting the Authorization header instead of rejecting the call or requiring dummy keys.
+
+### Fixed
+
+- **Optional `APIKey` for custom `BaseURL` in `package openai`.** When `BaseURL` is set to any custom endpoint, callers no longer need to pass a placeholder or dummy `APIKey`. When `APIKey` is empty, Golem omits the `Authorization` header entirely. The default OpenAI endpoint (`https://api.openai.com/v1`) continues to require a non-empty `APIKey`.
+- **Local models example and guides simplified.** Cleaned up `examples/local-models/main.go`, `docs/guides/providers.md`, and `docs/guides/pdf-extract.md` to omit placeholder keys when using local runtimes like Ollama and LM Studio.
+
 ## v0.8.4 — 2026-09-21
 
 This patch release adds generalized scanned PDF page analysis and image handling to `package pdfextract`, supporting agent multimodal parts, small vision models (Gemini Flash-Lite, local Ollama), and Mistral OCR with caller-supplied cost and usage tracking.
