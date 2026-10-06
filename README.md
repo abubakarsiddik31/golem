@@ -29,7 +29,8 @@
   <a href="#batteries-included-tools">Common Tools & MCP</a> •
   <a href="#testing-without-a-provider">Testing</a> •
   <a href="#documentation">Guides Index</a> •
-  <a href="#examples">Examples</a>
+  <a href="#examples">Examples</a> •
+  <a href="#community--contributing">Contributing</a>
 </p>
 
 ---
@@ -444,6 +445,11 @@ The feature guides publish as the official documentation site; preview it locall
 
 ## Community & Contributing
 
+Golem is an open-source project and actively welcomes community contributions!
+
+- [Good First Issues](https://github.com/abubakarsiddik31/golem/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — approachable issues scoped for newcomers
+- [Roadmap to v1.0.0](docs/ROADMAP.md) — roadmap progress, open items, and design decisions
+- [GitHub Discussions](https://github.com/abubakarsiddik31/golem/discussions) — ask questions, share architectures, and propose RFCs
 - [Contributing Guide](CONTRIBUTING.md) — instructions for setting up, running checks, and submitting changes
 - [Security Policy](SECURITY.md) — guidelines for privately reporting vulnerabilities
 - [Code of Conduct](CODE_OF_CONDUCT.md) — standards for participation
