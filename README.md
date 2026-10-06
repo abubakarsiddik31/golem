@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo/golem-wordmark-dark.svg">
-    <img src="assets/brand/logo/golem-wordmark.svg" width="380" alt="Golem Wordmark">
-  </picture>
+  <img src="assets/brand/social/golem-social-card.png" alt="Golem: a type-safe AI agent framework for Go" width="100%">
 </p>
 
 <p align="center">
