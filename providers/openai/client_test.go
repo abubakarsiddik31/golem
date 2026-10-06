@@ -101,8 +101,40 @@ func TestNewRejectsMissingRequiredConfiguration(t *testing.T) {
 	if _, err := openai.New(openai.Config{Model: "gpt-4o"}); err == nil {
 		t.Fatal("New() error = nil, want missing API key rejection")
 	}
+	if _, err := openai.New(openai.Config{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"}); err == nil {
+		t.Fatal("New() error = nil, want missing API key rejection for explicit default BaseURL")
+	}
 	if _, err := openai.New(openai.Config{APIKey: "k"}); err == nil {
 		t.Fatal("New() error = nil, want missing model rejection")
+	}
+}
+
+func TestNewAllowsEmptyAPIKeyForCustomBaseURL(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{
+		"choices": [{"message": {"role": "assistant", "content": "local-ok"}}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 2}
+	}`)
+	defer recorder.server.Close()
+
+	client, err := openai.New(openai.Config{
+		BaseURL: recorder.server.URL,
+		Model:   "qwen2.5",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v, want success with empty APIKey on custom BaseURL", err)
+	}
+
+	resp, err := client.Generate(context.Background(), userPrompt())
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if resp.Message.Content != "local-ok" {
+		t.Fatalf("content = %q, want local-ok", resp.Message.Content)
+	}
+	if auth := recorder.lastAuth(t); auth != "" {
+		t.Fatalf("Authorization header = %q, want empty for custom BaseURL without API key", auth)
 	}
 }
 

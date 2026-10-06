@@ -251,8 +251,8 @@ focusedClient, _ := openai.New(openai.Config{
   the server and pick a model it has loaded. Ollama serves after
   `ollama pull <model>`; LM Studio serves with `lms server start`
   (or the Developer tab). Local servers ignore the Authorization
-  header, but the adapter still requires a non-empty `APIKey`, so pass
-  any placeholder. With a capable model loaded, the full core contract
+  header; when pointing `BaseURL` at a custom endpoint, `APIKey` is
+  optional and golem omits the Authorization header. With a capable model loaded, the full core contract
   holds over both: streaming (Ollama supports the `include_usage`
   stream option golem always sends), tool calling (each call may arrive
   complete in one chunk instead of argument fragments — the adapter

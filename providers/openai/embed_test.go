@@ -44,11 +44,40 @@ func TestNewEmbedderRejectsMissingConfiguration(t *testing.T) {
 	if _, err := openai.NewEmbedder(openai.EmbedderConfig{Model: "m"}); err == nil {
 		t.Fatal("NewEmbedder() error = nil, want missing API key rejection")
 	}
+	if _, err := openai.NewEmbedder(openai.EmbedderConfig{BaseURL: "https://api.openai.com/v1", Model: "m"}); err == nil {
+		t.Fatal("NewEmbedder() error = nil, want missing API key rejection for explicit default BaseURL")
+	}
 	if _, err := openai.NewEmbedder(openai.EmbedderConfig{APIKey: "k"}); err == nil {
 		t.Fatal("NewEmbedder() error = nil, want missing model rejection")
 	}
 	if _, err := openai.NewEmbedder(openai.EmbedderConfig{APIKey: "k", Model: "m", Dimensions: -1}); err == nil {
 		t.Fatal("NewEmbedder() error = nil, want negative dimensions rejection")
+	}
+}
+
+func TestNewEmbedderAllowsEmptyAPIKeyForCustomBaseURL(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, embedResponseOK)
+	defer recorder.server.Close()
+
+	embedder, err := openai.NewEmbedder(openai.EmbedderConfig{
+		BaseURL: recorder.server.URL,
+		Model:   "nomic-embed-text",
+	})
+	if err != nil {
+		t.Fatalf("NewEmbedder() error = %v, want success with empty APIKey on custom BaseURL", err)
+	}
+
+	result, err := embedder.EmbedDocuments(context.Background(), []string{"alpha", "beta"})
+	if err != nil {
+		t.Fatalf("EmbedDocuments() error = %v", err)
+	}
+	if len(result.Vectors) != 2 {
+		t.Fatalf("vector count = %d, want 2", len(result.Vectors))
+	}
+	if auth := recorder.lastAuth(t); auth != "" {
+		t.Fatalf("Authorization header = %q, want empty for custom BaseURL without API key", auth)
 	}
 }
 

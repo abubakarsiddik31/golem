@@ -39,10 +39,9 @@ func main() {
 		modelName = "qwen3"
 	}
 
-	// Local runtimes ignore the Authorization header, but the adapter
-	// requires a non-empty key; any placeholder works.
+	// Local runtimes ignore the Authorization header; APIKey is optional
+	// when a custom BaseURL is set.
 	client, err := openai.New(openai.Config{
-		APIKey:  "golem-local",
 		BaseURL: baseURL,
 		Model:   modelName,
 	})

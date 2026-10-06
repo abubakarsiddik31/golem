@@ -103,7 +103,6 @@ fmt.Printf("Transcribed %d pages, cost: $%.5f\n", doc.NumPages, doc.Cost)
 
 ```go
 localClient, _ := openai.New(openai.Config{
-    APIKey:  "local",
     BaseURL: "http://localhost:11434/v1",
     Model:   "qwen2.5-vl:3b",
 })
