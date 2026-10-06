@@ -1,21 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="golem — Go-first framework for dependable AI agents">
-  <rect width="1280" height="640" fill="#141A26"/>
-  <g transform="translate(640,290) scale(0.85) translate(-450,-183)">
-    <g stroke="#00ADD8" stroke-width="40" stroke-linecap="round" fill="none">
-      <circle cx="90" cy="180" r="40"/>
-      <path d="M 130 180 L 130 270 Q 130 306 94 306"/>
-    </g>
-    <circle cx="250" cy="180" r="40" fill="none" stroke="#00ADD8" stroke-width="40"/>
-    <g stroke="#E8EDF4" stroke-width="40" stroke-linecap="round" fill="none">
-      <line x1="370" y1="60" x2="370" y2="220"/>
-      <path d="M 507 214 A 40 40 0 1 1 535 205"/>
-      <line x1="450" y1="180" x2="530" y2="180"/>
-      <line x1="610" y1="140" x2="610" y2="220"/>
-      <path d="M 610 200 A 60 60 0 0 1 730 200 L 730 220"/>
-      <path d="M 730 200 A 60 60 0 0 1 850 200 L 850 220"/>
-    </g>
-    <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
-    <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+<svg viewBox="0 0 1500 750" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Golem: a type-safe AI agent framework for Go">
+<defs>
+<pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.2" fill="#E8EDF4" opacity="0.07"/></pattern>
+<radialGradient id="glow"><stop offset="0" stop-color="#00ADD8" stop-opacity="0.22"/><stop offset="1" stop-color="#00ADD8" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1500" height="750" fill="#141A26"/>
+<rect width="1500" height="750" fill="url(#dots)"/>
+<ellipse cx="1180" cy="375" rx="520" ry="400" fill="url(#glow)"/>
+<g transform="translate(0,75)">
+
+<g transform="translate(80,64) scale(0.58) translate(-50,-60)">
+  <g stroke="#00ADD8" stroke-width="40" stroke-linecap="round" fill="none">
+    <circle cx="90" cy="180" r="40"/>
+    <path d="M 130 180 L 130 270 Q 130 306 94 306"/>
+    <circle cx="250" cy="180" r="40"/>
   </g>
-  <text x="640" y="560" text-anchor="middle" font-family="ui-rounded, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="30" letter-spacing="3" fill="#7E899C">GO-FIRST FRAMEWORK FOR DEPENDABLE AI AGENTS</text>
+  <g stroke="#E8EDF4" stroke-width="40" stroke-linecap="round" fill="none">
+    <line x1="370" y1="60" x2="370" y2="220"/>
+    <path d="M 507 214 A 40 40 0 1 1 535 205"/>
+    <line x1="450" y1="180" x2="530" y2="180"/>
+    <line x1="610" y1="140" x2="610" y2="220"/>
+    <path d="M 610 200 A 60 60 0 0 1 730 200 L 730 220"/>
+    <path d="M 730 200 A 60 60 0 0 1 850 200 L 850 220"/>
+  </g>
+  <circle cx="462" cy="152" r="10" fill="#00ADD8"/>
+  <circle cx="518" cy="152" r="10" fill="#00ADD8"/>
+</g>
+
+<g font-family="ui-rounded,-apple-system,'Helvetica Neue',Arial,sans-serif" fill="#E8EDF4">
+  <text x="80" y="290" font-size="50" font-weight="700">A type-safe AI agent</text>
+  <text x="80" y="350" font-size="50" font-weight="700">framework for Go</text>
+  <text x="80" y="400" font-size="23" fill="#9AA6BA">Zero dependencies. Typed tools. MCP, retries,</text>
+  <text x="80" y="432" font-size="23" fill="#9AA6BA">usage limits, and human approval built in.</text>
+</g>
+
+<rect x="80" y="476" width="520" height="52" rx="10" fill="#0E131D" stroke="#2A3446"/>
+<text x="104" y="509" font-family="ui-monospace,Menlo,monospace" font-size="19" fill="#E8EDF4"><tspan fill="#5DC9E2">$</tspan> go get github.com/abubakarsiddik31/golem</text>
+
+<rect x="700" y="64" width="720" height="378" rx="14" fill="#0E131D" stroke="#2A3446"/>
+<circle cx="728" cy="90" r="6" fill="#3A4558"/><circle cx="748" cy="90" r="6" fill="#3A4558"/><circle cx="768" cy="90" r="6" fill="#3A4558"/>
+<text x="1392" y="95" text-anchor="end" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="#6B778C">main.go</text>
+<g font-family="ui-monospace,Menlo,monospace" font-size="20" fill="#E8EDF4" xml:space="preserve">
+  <text x="732" y="148">agent, _ := <tspan fill="#00ADD8">golem</tspan>.New[Deps, Report](client,</text>
+  <text x="732" y="184">    <tspan fill="#00ADD8">golem</tspan>.DecodeJSON[Report](),</text>
+  <text x="732" y="220">    <tspan fill="#00ADD8">golem</tspan>.WithTools[Deps, Report](lookup),</text>
+  <text x="732" y="256">    <tspan fill="#00ADD8">golem</tspan>.WithMaxAttempts[Deps, Report](3),</text>
+  <text x="732" y="292">    <tspan fill="#00ADD8">golem</tspan>.WithUsageLimit[Deps, Report](limit),</text>
+  <text x="732" y="328">)</text>
+  <text x="732" y="382">result, err := agent.Run(ctx, runCtx, prompt)</text>
+  <text x="732" y="418" fill="#6B778C">// result.Output is a Report, not a map</text>
+</g>
+
+<g font-family="ui-rounded,-apple-system,'Helvetica Neue',Arial,sans-serif" font-size="18" fill="#C9D3E3">
+  <rect x="700" y="470" width="106" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="753" y="495" text-anchor="middle">OpenAI</text>
+  <rect x="816" y="470" width="128" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="880" y="495" text-anchor="middle">Anthropic</text>
+  <rect x="954" y="470" width="106" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="1007" y="495" text-anchor="middle">Gemini</text>
+  <rect x="1070" y="470" width="106" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="1123" y="495" text-anchor="middle">Bedrock</text>
+  <rect x="1186" y="470" width="92" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="1232" y="495" text-anchor="middle">Azure</text>
+  <rect x="1288" y="470" width="132" height="38" rx="19" fill="#1B2434" stroke="#2A3446"/><text x="1354" y="495" text-anchor="middle">Ollama</text>
+</g>
+<text x="1420" y="552" text-anchor="end" font-family="ui-rounded,-apple-system,'Helvetica Neue',Arial,sans-serif" font-size="17" fill="#6B778C" letter-spacing="1.5">OPEN SOURCE · MIT · v0.8.5</text>
+</g>
 </svg>
