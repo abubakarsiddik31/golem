@@ -43,6 +43,10 @@ string relative to `Root`, with an optional `pages` filter. One call:
    - **Dedicated Mistral OCR (`MistralOCREngine`):** Calls Mistral's
      `mistral-ocr-latest` API over stdlib HTTP, extracting structured markdown
      and tracking per-page cost.
+   - **Local Indra OCR (`IndraOCREngine`):** Shells out to the external
+     `indra-ocr` CLI ([datalab-to/indra](https://github.com/datalab-to/indra))
+     to OCR scanned pages on the host CPU — offline, no API key, no Go
+     dependency, and no model shipped with Golem.
    - **Pluggable Local/External OCR:** Implements `OCREngine` returning
      spatial `TextSpan`s.
 5. Reconstructs multi-column reading order using the Recursive XY-Cut
@@ -119,6 +123,30 @@ mistralOCR, err := pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{
 })
 ```
 
+### Using Local Indra OCR
+
+`IndraOCREngine` shells out to the `indra-ocr` CLI
+([datalab-to/indra](https://github.com/datalab-to/indra)) to OCR scanned pages
+on the host CPU. It is offline, needs no API key, and adds no Go dependency —
+Golem ships no model and downloads nothing; the CLI and its weights are the
+caller's to install (`pip install indra-ocr`). `New` fails fast when the binary
+is not on `PATH`.
+
+```go
+ocrEngine, err := pdfextract.NewIndraOCR(pdfextract.IndraOCRConfig{
+    Cores:         4,     // limit OCR worker processes
+    KeepFurniture: false, // drop page headers/footers (default)
+})
+
+doc, err := pdfextract.Extract(ctx, "scanned_doc.pdf", pdfextract.Options{
+    OCREngine: ocrEngine,
+})
+fmt.Println(doc.Markdown) // structured Markdown, no API cost
+```
+
+`IndraOCRConfig.Run` replaces the subprocess call; leave it nil in production
+and set it to fake OCR execution in tests (see `examples/ocr-scanned-pdf`).
+
 ## API surface
 
 - `pdfextract.New[Deps](pdfextract.Config) (tool.Tool[Deps], error)`
@@ -136,6 +164,10 @@ mistralOCR, err := pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{
 - `pdfextract.NewMistralOCR(MistralOCRConfig) (*MistralOCREngine, error)`
 - `pdfextract.MustNewMistralOCR(MistralOCRConfig) *MistralOCREngine`
 - `pdfextract.MistralOCRConfig{APIKey string, BaseURL string, Model string, PricePerPage float64, HTTPClient *http.Client}`
+- `pdfextract.NewIndraOCR(IndraOCRConfig) (*IndraOCREngine, error)`
+- `pdfextract.MustNewIndraOCR(IndraOCRConfig) *IndraOCREngine`
+- `pdfextract.IndraOCRConfig{BinaryPath string, ModelDir string, DPI int, Cores int, KeepFurniture bool, Timeout time.Duration, Run func(context.Context, string, []string) ([]byte, error)}`
+- `pdfextract.DefaultIndraOCRBin`, `pdfextract.DefaultIndraOCRTimeout`
 - `pdfextract.MarkdownRecognizer`, `pdfextract.MarkdownResult`
 - `pdfextract.ToolName`, `pdfextract.ToolDescription`
 - `pdfextract.DefaultMaxBytes`
@@ -151,4 +183,10 @@ mistralOCR, err := pdfextract.NewMistralOCR(pdfextract.MistralOCRConfig{
   text stream; scanned raster documents require an OCR engine or `ReturnScannedPageParts`.
 - When using `ModelOCREngine`, small vision models (`gemini-2.5-flash-lite`, `qwen2.5-vl:3b`)
   are recommended for speed, cost efficiency, and low latency.
+- `IndraOCREngine` is not selected by `DefaultOCREngine`; pass it explicitly as
+  `Options.OCREngine`/`Config.OCREngine`. It invokes the CLI once per scanned
+  page, so per-page process startup is paid on every page — for very large scans
+  prefer a future batch path. The Indra model weights are OpenRAIL-M; review
+  their terms (they are free for research, personal use, and small startups)
+  before commercial deployment.
 - Where common tools live was decided in `docs/adr/0015-common-tools-package.md`.

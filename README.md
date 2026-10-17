@@ -243,7 +243,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 | Package | Capability | Features |
 | --- | --- | --- |
 | **`mcp`** | Model Context Protocol Client | Connects to any MCP tool server over `stdio` or streaming HTTP (SSE). |
-| **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. |
+| **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI. |
 | **`docextract`** | Multi-Format Document Extraction | Extracts text and structure from Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), CSV, and Markdown. |
 | **`webfetch`** | Web Extraction | Fetches URLs and returns clean, agent-readable text without browser overhead. |
 | **`fileread`** | File Reader | Safe workspace file reading with path boundaries and clean formatting. |
@@ -346,6 +346,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
 | [`pdf-extract`](examples/pdf-extract/main.go) | The `pdfextract` common tool extracting tables and reading order, offline |
 | [`doc-extract`](examples/doc-extract/main.go) | The `docextract` common tool extracting Word, Excel, and Markdown, offline |
+| [`ocr-scanned-pdf`](examples/ocr-scanned-pdf/main.go) | The `pdfextract` local Indra OCR engine on a scanned page, offline |
 | [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
 | [`tool-results`](examples/tool-results/main.go) | Tools returning parts and definitive failures, offline |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
@@ -380,6 +381,7 @@ GOLEM_LOCAL_BASE_URL=http://localhost:11434/v1 go run ./examples/local-models
 # Run offline examples (no credentials needed)
 go run ./examples/testing-without-a-provider
 go run ./examples/pdf-extract
+go run ./examples/ocr-scanned-pdf
 go run ./examples/deferred-tools
 go run ./examples/partial-evidence
 ```
