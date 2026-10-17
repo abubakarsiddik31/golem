@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"math"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -31,6 +33,12 @@ type MarkdownResult struct {
 	Markdown string
 	Usage    model.Usage
 	Cost     float64
+
+	// Tables optionally carries structured tables recovered by the engine, so a
+	// scanned page can populate Document.Tables like a digital page does.
+	// Engines that only emit Markdown leave it nil. BBox and Ruled are not set:
+	// OCR engines report structure, not vector geometry.
+	Tables []Table
 }
 
 // MarkdownRecognizer is an optional interface an OCREngine can implement
@@ -488,11 +496,11 @@ func (i *IndraOCREngine) RecognizeMarkdown(ctx context.Context, imageBytes []byt
 		return MarkdownResult{}, fmt.Errorf("pdfextract: indra ocr: run %s: %w", i.binaryPath, err)
 	}
 
-	md, err := parseIndraPages(out)
+	md, tables, err := parseIndraPages(out)
 	if err != nil {
 		return MarkdownResult{}, err
 	}
-	return MarkdownResult{Markdown: md}, nil
+	return MarkdownResult{Markdown: md, Tables: tables}, nil
 }
 
 // RecognizePage fulfills the OCREngine interface by delegating to RecognizeMarkdown.
@@ -518,12 +526,13 @@ func imageFileExt(format string) string {
 	return ".png"
 }
 
-// parseIndraPages joins the Markdown of one or more Indra page objects. The CLI
-// emits a single JSON object for one page and newline-delimited objects otherwise.
-func parseIndraPages(out []byte) (string, error) {
+// parseIndraPages joins the Markdown of one or more Indra page objects and
+// recovers the HTML tables it emitted. The CLI emits a single JSON object for
+// one page and newline-delimited objects otherwise.
+func parseIndraPages(out []byte) (string, []Table, error) {
 	trimmed := bytes.TrimSpace(out)
 	if len(trimmed) == 0 {
-		return "", fmt.Errorf("pdfextract: indra ocr: empty output")
+		return "", nil, fmt.Errorf("pdfextract: indra ocr: empty output")
 	}
 
 	var pages []indraPage
@@ -541,19 +550,19 @@ func parseIndraPages(out []byte) (string, error) {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				return "", fmt.Errorf("pdfextract: indra ocr: decode output: %w", err)
+				return "", nil, fmt.Errorf("pdfextract: indra ocr: decode output: %w", err)
 			}
 			pages = append(pages, p)
 		}
 	}
 	if len(pages) == 0 {
-		return "", fmt.Errorf("pdfextract: indra ocr: no page objects in output")
+		return "", nil, fmt.Errorf("pdfextract: indra ocr: no page objects in output")
 	}
 
 	var md strings.Builder
 	for _, p := range pages {
 		if strings.EqualFold(p.Source, "error") {
-			return "", fmt.Errorf("pdfextract: indra ocr: page error: %s", p.Note)
+			return "", nil, fmt.Errorf("pdfextract: indra ocr: page error: %s", p.Note)
 		}
 		text := strings.TrimSpace(p.Markdown)
 		if text == "" {
@@ -564,7 +573,39 @@ func parseIndraPages(out []byte) (string, error) {
 		}
 		md.WriteString(text)
 	}
-	return md.String(), nil
+	joined := md.String()
+	return joined, parseIndraTables(joined), nil
+}
+
+var (
+	indraTableRe = regexp.MustCompile(`(?is)<table[^>]*>(.*?)</table>`)
+	indraRowRe   = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
+	indraCellRe  = regexp.MustCompile(`(?is)<t[hd][^>]*>(.*?)</t[hd]>`)
+	indraTagRe   = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// parseIndraTables recovers structured tables from the HTML tables that Indra
+// emits in its Markdown. It is intentionally small: it targets the
+// machine-generated <table><tr><th|td> subset, not arbitrary HTML.
+func parseIndraTables(markdown string) []Table {
+	var tables []Table
+	for _, block := range indraTableRe.FindAllStringSubmatch(markdown, -1) {
+		var rows [][]string
+		for _, row := range indraRowRe.FindAllStringSubmatch(block[1], -1) {
+			var cells []string
+			for _, cell := range indraCellRe.FindAllStringSubmatch(row[1], -1) {
+				cells = append(cells, html.UnescapeString(strings.TrimSpace(indraTagRe.ReplaceAllString(cell[1], ""))))
+			}
+			if len(cells) > 0 {
+				rows = append(rows, cells)
+			}
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		tables = append(tables, Table{Rows: rows, Markdown: block[0]})
+	}
+	return tables
 }
 
 // CommandOCR executes a standalone modern OCR command (such as 'ocrs' or 'rapidocr').

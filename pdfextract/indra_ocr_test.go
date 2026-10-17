@@ -245,6 +245,58 @@ func TestIndraOCREngineRecognizePageSpans(t *testing.T) {
 	}
 }
 
+func TestIndraOCREngineRecoversTables(t *testing.T) {
+	engine, err := pdfextract.NewIndraOCR(pdfextract.IndraOCRConfig{
+		Run: func(_ context.Context, _ string, _ []string) ([]byte, error) {
+			return []byte(`{"markdown":"# Invoice\n\n<table><tr><th>Name</th><th>Qty</th></tr><tr><td>Caf&eacute; &amp; Co</td><td>3</td></tr></table>","source":"ocr"}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewIndraOCR failed: %v", err)
+	}
+
+	res, err := engine.RecognizeMarkdown(context.Background(), []byte("img"), "png", pdfextract.Rect{})
+	if err != nil {
+		t.Fatalf("RecognizeMarkdown failed: %v", err)
+	}
+	if len(res.Tables) != 1 {
+		t.Fatalf("Tables = %d, want 1", len(res.Tables))
+	}
+	rows := res.Tables[0].Rows
+	if len(rows) != 2 {
+		t.Fatalf("table rows = %d, want 2", len(rows))
+	}
+	if rows[0][0] != "Name" || rows[0][1] != "Qty" {
+		t.Errorf("header row = %v, want [Name Qty]", rows[0])
+	}
+	// Cell tags are stripped and HTML entities decoded.
+	if rows[1][0] != "Café & Co" || rows[1][1] != "3" {
+		t.Errorf("body row = %v, want [Café & Co 3]", rows[1])
+	}
+	if !strings.Contains(res.Tables[0].Markdown, "<table>") {
+		t.Errorf("table Markdown not preserved: %q", res.Tables[0].Markdown)
+	}
+}
+
+func TestIndraOCREngineNoTablesWhenMarkdownHasNone(t *testing.T) {
+	engine, err := pdfextract.NewIndraOCR(pdfextract.IndraOCRConfig{
+		Run: func(_ context.Context, _ string, _ []string) ([]byte, error) {
+			return []byte(`{"markdown":"Just a paragraph, no tables here.","source":"ocr"}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewIndraOCR failed: %v", err)
+	}
+
+	res, err := engine.RecognizeMarkdown(context.Background(), []byte("img"), "png", pdfextract.Rect{})
+	if err != nil {
+		t.Fatalf("RecognizeMarkdown failed: %v", err)
+	}
+	if len(res.Tables) != 0 {
+		t.Errorf("Tables = %d, want 0", len(res.Tables))
+	}
+}
+
 func TestIndraOCRBinaryNotFound(t *testing.T) {
 	_, err := pdfextract.NewIndraOCR(pdfextract.IndraOCRConfig{
 		BinaryPath: "golem-indra-binary-does-not-exist",

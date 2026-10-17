@@ -58,7 +58,7 @@ func runOffline() {
 	engine := pdfextract.MustNewIndraOCR(pdfextract.IndraOCRConfig{
 		Run: func(_ context.Context, name string, args []string) ([]byte, error) {
 			fmt.Printf("→ %s %s\n\n", name, strings.Join(redact(args), " "))
-			return []byte(`{"markdown":"# Receipt\n\nACME Corp\n\n| Item | Qty |\n| --- | --- |\n| Widget | 2 |","source":"ocr"}`), nil
+			return []byte(`{"markdown":"# Receipt\n\nACME Corp\n\n<table><tr><th>Item</th><th>Qty</th></tr><tr><td>Widget</td><td>2</td></tr></table>","source":"ocr"}`), nil
 		},
 	})
 
@@ -72,10 +72,18 @@ func runOffline() {
 	}
 
 	if len(doc.Pages) > 0 {
-		fmt.Printf("page 1 detected as scanned: %v\n\n", doc.Pages[0].IsScanned)
+		fmt.Printf("page 1 detected as scanned: %v\n", doc.Pages[0].IsScanned)
+		fmt.Printf("page 1 source:              %s\n\n", doc.Pages[0].Source)
 	}
 	fmt.Println("Recovered Markdown:")
 	fmt.Println(doc.Markdown)
+
+	if len(doc.Tables) > 0 {
+		fmt.Println("\nRecovered structured table:")
+		for _, row := range doc.Tables[0].Rows {
+			fmt.Println(strings.Join(row, " | "))
+		}
+	}
 }
 
 // redact hides the temporary page-image path so output is stable across runs.

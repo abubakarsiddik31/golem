@@ -49,6 +49,10 @@ string relative to `Root`, with an optional `pages` filter. One call:
      dependency, and no model shipped with Golem.
    - **Pluggable Local/External OCR:** Implements `OCREngine` returning
      spatial `TextSpan`s.
+
+   `Mode` overrides which pages are sent to the engine (`auto`, `prefer-text`,
+   `force-ocr`), and every page records `Page.Source` describing how its text
+   was produced.
 5. Reconstructs multi-column reading order using the Recursive XY-Cut
    algorithm, guaranteeing column 1 is read top-to-bottom before column 2.
 6. Extracts intact tables:
@@ -57,6 +61,9 @@ string relative to `Root`, with an optional `pages` filter. One call:
      Markdown tables.
    - Borderless tables (Stream) are detected via recurring column whitespace
      gutters.
+   - Tables recovered by an OCR engine are added as structured `Table` values
+     (`Rows` populated) so `Document.Tables` is uniform across digital and
+     scanned pages; their vector geometry (`BBox`, `Ruled`) is left unset.
 7. Matches embedded images with adjacent author captions using spatial
    proximity search, emitting Markdown placeholders like `![Figure 1:
    Caption](images/page_1_img_1.png)`. Full-page background scans are
@@ -147,16 +154,58 @@ fmt.Println(doc.Markdown) // structured Markdown, no API cost
 `IndraOCRConfig.Run` replaces the subprocess call; leave it nil in production
 and set it to fake OCR execution in tests (see `examples/ocr-scanned-pdf`).
 
+### Routing and provenance
+
+By default (`ModeAuto`) only pages that look scanned are sent to the OCR
+engine. Set `Mode` to override that policy when a document defeats the
+heuristic:
+
+```go
+doc, err := pdfextract.Extract(ctx, "report.pdf", pdfextract.Options{
+    OCREngine: engine,
+    // Ignore a low-quality text layer and OCR every page image.
+    Mode: pdfextract.ModeForceOCR,
+})
+
+for _, p := range doc.Pages {
+    // "digital", "ocr", "hybrid", or "empty".
+    fmt.Printf("page %d: %s (scanned=%v)\n", p.Index+1, p.Source, p.IsScanned)
+}
+```
+
+- `ModeAuto` (or `""`): OCR pages whose text layer is missing or unusable.
+- `ModePreferText`: never call the engine; trust the text layer even on scans.
+- `ModeForceOCR`: OCR every page that carries a page image, discarding the
+  text layer. Pages with no image fall back to the text layer.
+- `DisableOCR: true` always wins and runs no OCR.
+
+`Page.IsScanned` reports what the page *looks like*; `Page.Source` reports what
+was actually done with it. A scan you chose not to OCR is `IsScanned: true,
+Source: "empty"`.
+
+OCR engines that recover tables populate `Document.Tables` exactly like digital
+pages, so callers can read cells from a scanned invoice without special-casing:
+
+```go
+for _, tbl := range doc.Tables {
+    for _, row := range tbl.Rows {
+        fmt.Println(row)
+    }
+}
+```
+
 ## API surface
 
 - `pdfextract.New[Deps](pdfextract.Config) (tool.Tool[Deps], error)`
 - `pdfextract.MustNew[Deps](pdfextract.Config) tool.Tool[Deps]`
 - `pdfextract.Extract(context.Context, string, pdfextract.Options) (*pdfextract.Document, error)`
 - `pdfextract.ExtractBytes(context.Context, []byte, pdfextract.Options) (*pdfextract.Document, error)`
-- `pdfextract.Config{Root string, MaxBytes int64, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, DisableOCR bool}`
-- `pdfextract.Options{Pages string, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, DisableOCR bool, MaxBytes int64}`
+- `pdfextract.Config{Root string, MaxBytes int64, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, Mode OCRMode, DisableOCR bool}`
+- `pdfextract.Options{Pages string, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, Mode OCRMode, DisableOCR bool, MaxBytes int64}`
 - `pdfextract.Document{NumPages int, Pages []Page, Markdown string, Tables []Table, Images []ImageRef, Usage model.Usage, Cost float64}`
-- `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64}`
+- `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, Source PageSource, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64}`
+- `pdfextract.OCRMode`, `pdfextract.ModeAuto`, `pdfextract.ModePreferText`, `pdfextract.ModeForceOCR`
+- `pdfextract.PageSource`, `pdfextract.PageSourceDigital`, `pdfextract.PageSourceOCR`, `pdfextract.PageSourceHybrid`, `pdfextract.PageSourceEmpty`
 - `pdfextract.NewModelOCR(model.Model, ...ModelOCROption) (*ModelOCREngine, error)`
 - `pdfextract.MustNewModelOCR(model.Model, ...ModelOCROption) *ModelOCREngine`
 - `pdfextract.WithModelPrice(model.Price) ModelOCROption`
@@ -189,4 +238,12 @@ and set it to fake OCR execution in tests (see `examples/ocr-scanned-pdf`).
   prefer a future batch path. The Indra model weights are OpenRAIL-M; review
   their terms (they are free for research, personal use, and small startups)
   before commercial deployment.
-- Where common tools live was decided in `docs/adr/0015-common-tools-package.md`.
+- `Page.IsScanned` is pure detection and does not change with `Mode`; read
+  `Page.Source` to learn what the extractor actually did with the page.
+  `ModeForceOCR` needs a page image to rasterize and silently falls back to the
+  text layer on image-less pages.
+- Tables recovered through OCR carry `Rows` and `Markdown` but no `BBox`/`Ruled`:
+  an OCR engine reports structure, not vector geometry.
+- Where common tools live was decided in `docs/adr/0015-common-tools-package.md`,
+  the local OCR engine in `docs/adr/0030-local-subprocess-ocr-engine.md`, and
+  routing/provenance in `docs/adr/0031-ocr-routing-and-page-provenance.md`.
