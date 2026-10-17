@@ -13,7 +13,7 @@
   <a href="https://abubakarsiddik31.github.io/golem/"><img src="https://img.shields.io/badge/docs-website-00ADD8.svg" alt="Documentation"></a>
   <a href="go.mod"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-brightgreen.svg" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/badge/release-v0.8.5-orange.svg" alt="Release v0.8.5"></a>
+  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/badge/release-v0.8.6-orange.svg" alt="Release v0.8.6"></a>
 </p>
 
 <p align="center">
@@ -243,7 +243,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 | Package | Capability | Features |
 | --- | --- | --- |
 | **`mcp`** | Model Context Protocol Client | Connects to any MCP tool server over `stdio` or streaming HTTP (SSE). |
-| **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI. |
+| **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI, with explicit per-page routing and provenance. |
 | **`docextract`** | Multi-Format Document Extraction | Extracts text and structure from Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), CSV, and Markdown. |
 | **`webfetch`** | Web Extraction | Fetches URLs and returns clean, agent-readable text without browser overhead. |
 | **`fileread`** | File Reader | Safe workspace file reading with path boundaries and clean formatting. |
@@ -413,7 +413,7 @@ docs/adr/     Decisions that shape public contracts
 
 ## Status & Roadmap
 
-Golem is currently at **v0.8.5**.
+Golem is currently at **v0.8.6**.
 
 The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. The public API adheres strictly to additive-only changes on the road to **v1.0.0**.
 
