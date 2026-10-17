@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.6 — 2026-10-18
+
+This release adds first-class, offline OCR for scanned PDFs to `package pdfextract`: a local subprocess engine, explicit per-page routing between the text layer and OCR, per-page provenance, and structured tables recovered from OCR. All changes are additive and zero-value compatible; existing call sites are unchanged.
+
+### Added
+
+- **Local offline OCR engine (`IndraOCREngine`).** Transcribes scanned pages on the host CPU by shelling out to the external `indra-ocr` CLI ([datalab-to/indra](https://github.com/datalab-to/indra)) — offline, no API key, no Go dependency, and no model shipped with Golem. Standard library `os/exec` only, with no cgo. `IndraOCRConfig.Run` is an injectable subprocess seam, so contract tests run with no binary, model, or network, and every call is bounded by a context deadline that kills the process on cancellation. Construction fails fast when the binary is absent from `PATH` (ADR 0030).
+- **Explicit OCR routing (`OCRMode`).** `Config.Mode`/`Options.Mode` decides per page between `ModeAuto` (OCR only pages whose text layer is missing or unusable — the default), `ModePreferText` (never OCR), and `ModeForceOCR` (OCR every page image, ignoring a broken text layer). `DisableOCR` still wins over every mode, and an unknown mode fails construction. Detection is decoupled from routing: `Page.IsScanned` always reports what the page looks like, while `Mode` decides what is done with it (ADR 0031).
+- **Per-page provenance (`Page.Source`).** Every page records how its text was produced — `digital`, `ocr`, `hybrid`, or `empty` — so callers can tell a deterministic text-layer parse apart from OCR output and key trust, caching, and QA decisions on it. `Page.Source` reports the outcome, not the intent: a scan the caller chose not to OCR stays `IsScanned: true, Source: "empty"` (ADR 0031).
+- **Structured OCR tables (`MarkdownResult.Tables`).** An OCR engine can now return structured tables alongside its Markdown; `IndraOCREngine` recovers the HTML tables Indra emits and returns them as `Table` values. `Document.Tables` is uniform across digital and scanned pages, so callers read cells the same way for both. `Table.BBox` and `Table.Ruled` stay unset for OCR tables, which report structure rather than vector geometry (ADR 0031).
+
 ## v0.8.5 — 2026-10-06
 
 This patch release makes `APIKey` optional in `package openai` (`New` and `NewEmbedder`) when configuring custom or local endpoints (such as Ollama, LM Studio, or vLLM), omitting the Authorization header instead of rejecting the call or requiring dummy keys.

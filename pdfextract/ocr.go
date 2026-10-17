@@ -5,12 +5,17 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +33,12 @@ type MarkdownResult struct {
 	Markdown string
 	Usage    model.Usage
 	Cost     float64
+
+	// Tables optionally carries structured tables recovered by the engine, so a
+	// scanned page can populate Document.Tables like a digital page does.
+	// Engines that only emit Markdown leave it nil. BBox and Ruled are not set:
+	// OCR engines report structure, not vector geometry.
+	Tables []Table
 }
 
 // MarkdownRecognizer is an optional interface an OCREngine can implement
@@ -346,6 +357,255 @@ func (m *MistralOCREngine) RecognizePage(ctx context.Context, imageBytes []byte,
 		return nil, err
 	}
 	return markdownToSpans(res.Markdown, pageBox), nil
+}
+
+// DefaultIndraOCRBin is the default executable name for the Indra OCR engine.
+const DefaultIndraOCRBin = "indra-ocr"
+
+// DefaultIndraOCRTimeout bounds a single page's OCR call.
+const DefaultIndraOCRTimeout = 2 * time.Minute
+
+// IndraOCRConfig configures IndraOCREngine.
+type IndraOCRConfig struct {
+	// BinaryPath is the indra-ocr executable. Empty selects DefaultIndraOCRBin,
+	// which is resolved on PATH at construction.
+	BinaryPath string
+
+	// ModelDir overrides the model directory (CLI --model-dir); empty uses the
+	// CLI's downloaded cache.
+	ModelDir string
+
+	// DPI sets the render resolution for PDFs (CLI --dpi); zero uses the CLI default.
+	DPI int
+
+	// Cores limits OCR worker processes (CLI --cores); zero uses all usable cores.
+	Cores int
+
+	// KeepFurniture keeps page headers and footers in the Markdown (CLI --keep-furniture).
+	KeepFurniture bool
+
+	// Timeout bounds a single page's OCR call; zero selects DefaultIndraOCRTimeout.
+	Timeout time.Duration
+
+	// Run executes the OCR command and returns its standard output. Nil uses
+	// exec.CommandContext. It is exposed so callers can fake, sandbox, or wrap
+	// the subprocess; the resolved argv is the binary, its flags, and the
+	// temporary page-image path.
+	Run func(ctx context.Context, name string, args []string) ([]byte, error)
+}
+
+// IndraOCREngine transcribes scanned pages with the local Indra OCR model
+// (https://github.com/datalab-to/indra). It shells out to the indra-ocr CLI and
+// never contacts the network: the model runs on the host CPU.
+type IndraOCREngine struct {
+	binaryPath    string
+	modelDir      string
+	dpi           int
+	cores         int
+	keepFurniture bool
+	timeout       time.Duration
+	run           func(ctx context.Context, name string, args []string) ([]byte, error)
+}
+
+// NewIndraOCR returns an OCREngine backed by the local indra-ocr CLI. It fails
+// if the binary is not on PATH and no Run override is supplied.
+func NewIndraOCR(cfg IndraOCRConfig) (*IndraOCREngine, error) {
+	bin := cfg.BinaryPath
+	if bin == "" {
+		bin = DefaultIndraOCRBin
+	}
+	run := cfg.Run
+	if run == nil {
+		resolved, err := exec.LookPath(bin)
+		if err != nil {
+			return nil, fmt.Errorf("pdfextract: indra ocr: binary %q not found in PATH (install with \"pip install indra-ocr\"): %w", bin, err)
+		}
+		bin = resolved
+		run = func(ctx context.Context, name string, args []string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).Output()
+		}
+	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultIndraOCRTimeout
+	}
+	return &IndraOCREngine{
+		binaryPath:    bin,
+		modelDir:      cfg.ModelDir,
+		dpi:           cfg.DPI,
+		cores:         cfg.Cores,
+		keepFurniture: cfg.KeepFurniture,
+		timeout:       timeout,
+		run:           run,
+	}, nil
+}
+
+// MustNewIndraOCR is NewIndraOCR that panics on error.
+func MustNewIndraOCR(cfg IndraOCRConfig) *IndraOCREngine {
+	e, err := NewIndraOCR(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
+// RecognizeMarkdown writes the page image to a temporary file, runs the
+// indra-ocr CLI in JSON mode, and returns the page's Markdown.
+func (i *IndraOCREngine) RecognizeMarkdown(ctx context.Context, imageBytes []byte, format string, pageBox Rect) (MarkdownResult, error) {
+	if err := ctx.Err(); err != nil {
+		return MarkdownResult{}, err
+	}
+	if len(imageBytes) == 0 {
+		return MarkdownResult{}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, i.timeout)
+	defer cancel()
+
+	f, err := os.CreateTemp("", "golem-indra-*"+imageFileExt(format))
+	if err != nil {
+		return MarkdownResult{}, fmt.Errorf("pdfextract: indra ocr: create page image: %w", err)
+	}
+	path := f.Name()
+	defer os.Remove(path)
+
+	if _, err := f.Write(imageBytes); err != nil {
+		f.Close()
+		return MarkdownResult{}, fmt.Errorf("pdfextract: indra ocr: write page image: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return MarkdownResult{}, fmt.Errorf("pdfextract: indra ocr: write page image: %w", err)
+	}
+
+	args := []string{path, "--format", "json"}
+	if i.modelDir != "" {
+		args = append(args, "--model-dir", i.modelDir)
+	}
+	if i.dpi > 0 {
+		args = append(args, "--dpi", strconv.Itoa(i.dpi))
+	}
+	if i.cores > 0 {
+		args = append(args, "--cores", strconv.Itoa(i.cores))
+	}
+	if i.keepFurniture {
+		args = append(args, "--keep-furniture")
+	}
+
+	out, err := i.run(ctx, i.binaryPath, args)
+	if err != nil {
+		return MarkdownResult{}, fmt.Errorf("pdfextract: indra ocr: run %s: %w", i.binaryPath, err)
+	}
+
+	md, tables, err := parseIndraPages(out)
+	if err != nil {
+		return MarkdownResult{}, err
+	}
+	return MarkdownResult{Markdown: md, Tables: tables}, nil
+}
+
+// RecognizePage fulfills the OCREngine interface by delegating to RecognizeMarkdown.
+func (i *IndraOCREngine) RecognizePage(ctx context.Context, imageBytes []byte, format string, pageBox Rect) ([]TextSpan, error) {
+	res, err := i.RecognizeMarkdown(ctx, imageBytes, format, pageBox)
+	if err != nil {
+		return nil, err
+	}
+	return markdownToSpans(res.Markdown, pageBox), nil
+}
+
+// indraPage is one page object emitted by `indra-ocr --format json`.
+type indraPage struct {
+	Markdown string `json:"markdown"`
+	Source   string `json:"source"`
+	Note     string `json:"note"`
+}
+
+func imageFileExt(format string) string {
+	if strings.EqualFold(format, "jpeg") || strings.EqualFold(format, "jpg") {
+		return ".jpg"
+	}
+	return ".png"
+}
+
+// parseIndraPages joins the Markdown of one or more Indra page objects and
+// recovers the HTML tables it emitted. The CLI emits a single JSON object for
+// one page and newline-delimited objects otherwise.
+func parseIndraPages(out []byte) (string, []Table, error) {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 {
+		return "", nil, fmt.Errorf("pdfextract: indra ocr: empty output")
+	}
+
+	var pages []indraPage
+	if trimmed[0] == '{' {
+		var single indraPage
+		if err := json.Unmarshal(trimmed, &single); err == nil {
+			pages = append(pages, single)
+		}
+	}
+	if pages == nil {
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		for {
+			var p indraPage
+			if err := dec.Decode(&p); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return "", nil, fmt.Errorf("pdfextract: indra ocr: decode output: %w", err)
+			}
+			pages = append(pages, p)
+		}
+	}
+	if len(pages) == 0 {
+		return "", nil, fmt.Errorf("pdfextract: indra ocr: no page objects in output")
+	}
+
+	var md strings.Builder
+	for _, p := range pages {
+		if strings.EqualFold(p.Source, "error") {
+			return "", nil, fmt.Errorf("pdfextract: indra ocr: page error: %s", p.Note)
+		}
+		text := strings.TrimSpace(p.Markdown)
+		if text == "" {
+			continue
+		}
+		if md.Len() > 0 {
+			md.WriteString("\n\n")
+		}
+		md.WriteString(text)
+	}
+	joined := md.String()
+	return joined, parseIndraTables(joined), nil
+}
+
+var (
+	indraTableRe = regexp.MustCompile(`(?is)<table[^>]*>(.*?)</table>`)
+	indraRowRe   = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
+	indraCellRe  = regexp.MustCompile(`(?is)<t[hd][^>]*>(.*?)</t[hd]>`)
+	indraTagRe   = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// parseIndraTables recovers structured tables from the HTML tables that Indra
+// emits in its Markdown. It is intentionally small: it targets the
+// machine-generated <table><tr><th|td> subset, not arbitrary HTML.
+func parseIndraTables(markdown string) []Table {
+	var tables []Table
+	for _, block := range indraTableRe.FindAllStringSubmatch(markdown, -1) {
+		var rows [][]string
+		for _, row := range indraRowRe.FindAllStringSubmatch(block[1], -1) {
+			var cells []string
+			for _, cell := range indraCellRe.FindAllStringSubmatch(row[1], -1) {
+				cells = append(cells, html.UnescapeString(strings.TrimSpace(indraTagRe.ReplaceAllString(cell[1], ""))))
+			}
+			if len(cells) > 0 {
+				rows = append(rows, cells)
+			}
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		tables = append(tables, Table{Rows: rows, Markdown: block[0]})
+	}
+	return tables
 }
 
 // CommandOCR executes a standalone modern OCR command (such as 'ocrs' or 'rapidocr').

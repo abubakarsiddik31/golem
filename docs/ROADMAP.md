@@ -7,12 +7,15 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.8.5 — eight of the nine pre-freeze items have landed: in-tool
+v0.8.6 — eight of the nine pre-freeze items have landed: in-tool
 run cancellation cleanly stops a run with evidence on
 `RunError.Partial`; `golem.SanitizeHistory` sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`
 provide layout-aware document extraction across PDF, Word, Excel,
-PowerPoint, Markdown, and CSV; a `tokens.Counter` port prices a request
+PowerPoint, Markdown, and CSV, with scanned PDFs transcribed offline by
+the local Indra OCR CLI under explicit per-page routing
+(`auto`/`prefer-text`/`force-ocr`) and provenance (`Page.Source`); a
+`tokens.Counter` port prices a request
 before it is sent and bounds history by token budget; user-supplied
 `model.Price` rates report and bound a run's dollar cost; tools return
 image and document parts as evidence and can fail definitively without

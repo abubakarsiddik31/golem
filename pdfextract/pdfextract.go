@@ -76,6 +76,12 @@ type Config struct {
 	// Nil defaults to DefaultOCREngine().
 	OCREngine OCREngine
 
+	// Mode selects how pages are routed between the text layer and OCREngine.
+	// Empty or ModeAuto OCRs only pages whose text layer is missing or unusable;
+	// ModePreferText never OCRs; ModeForceOCR always OCRs pages with an image.
+	// DisableOCR, when true, wins over every mode.
+	Mode OCRMode
+
 	// DisableOCR skips OCR even on scanned pages.
 	DisableOCR bool
 }
@@ -87,8 +93,53 @@ type Options struct {
 	ReturnImageParts       bool
 	ReturnScannedPageParts bool
 	OCREngine              OCREngine
+	Mode                   OCRMode // "" == ModeAuto
 	DisableOCR             bool
 	MaxBytes               int64
+}
+
+// PageSource reports how a page's content was produced, so callers can tell a
+// deterministic text-layer parse apart from OCR output.
+type PageSource string
+
+const (
+	// PageSourceDigital is a page parsed from a usable embedded text layer.
+	PageSourceDigital PageSource = "digital"
+	// PageSourceOCR is a page transcribed entirely by the configured OCR engine.
+	PageSourceOCR PageSource = "ocr"
+	// PageSourceHybrid is a page where both a text layer and OCR contributed.
+	PageSourceHybrid PageSource = "hybrid"
+	// PageSourceEmpty is a page with no extractable text (for example a scan with
+	// no OCR engine configured).
+	PageSourceEmpty PageSource = "empty"
+)
+
+// OCRMode selects how each page is routed between the deterministic text-layer
+// parser and the configured OCR engine.
+type OCRMode string
+
+const (
+	// ModeAuto OCRs only pages whose text layer is missing or unusable. This is
+	// the default when Mode is empty.
+	ModeAuto OCRMode = "auto"
+	// ModePreferText always parses the text layer and never calls the OCR engine,
+	// even when the page looks scanned.
+	ModePreferText OCRMode = "prefer-text"
+	// ModeForceOCR runs the OCR engine on every page that carries a page image,
+	// ignoring the text layer. It is the escape hatch for scans that ship a
+	// low-quality or misleading text layer.
+	ModeForceOCR OCRMode = "force-ocr"
+)
+
+// Valid reports whether the mode is one of the recognised values (or empty,
+// which means ModeAuto).
+func (m OCRMode) Valid() bool {
+	switch m {
+	case "", ModeAuto, ModePreferText, ModeForceOCR:
+		return true
+	default:
+		return false
+	}
 }
 
 // Page holds extracted elements and Markdown text for one page.
@@ -96,8 +147,9 @@ type Page struct {
 	Index     int
 	Width     float64
 	Height    float64
-	IsScanned bool      // true if the page was detected as a scanned raster document
-	ScanImage *ImageRef // primary scanned page image, when IsScanned is true
+	IsScanned bool       // true if the page was detected as a scanned raster document
+	Source    PageSource // how this page's content was produced
+	ScanImage *ImageRef  // primary scanned page image, when IsScanned is true
 	Markdown  string
 	Tables    []Table
 	Images    []ImageRef
@@ -135,6 +187,7 @@ type extractor struct {
 	returnImageParts       bool
 	returnScannedPageParts bool
 	ocrEngine              OCREngine
+	mode                   OCRMode
 	disableOCR             bool
 }
 
@@ -157,6 +210,9 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 	if !info.IsDir() {
 		return tool.Tool[Deps]{}, fmt.Errorf("pdfextract: root %s is not a directory", cfg.Root)
 	}
+	if !cfg.Mode.Valid() {
+		return tool.Tool[Deps]{}, fmt.Errorf("pdfextract: unknown OCR mode %q (want auto, prefer-text, or force-ocr)", cfg.Mode)
+	}
 
 	maxBytes := cfg.MaxBytes
 	if maxBytes == 0 {
@@ -175,6 +231,7 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 		returnImageParts:       cfg.ReturnImageParts,
 		returnScannedPageParts: cfg.ReturnScannedPageParts,
 		ocrEngine:              ocrEngine,
+		mode:                   cfg.Mode,
 		disableOCR:             cfg.DisableOCR,
 	}
 
@@ -247,6 +304,7 @@ func (e *extractor) execute(ctx context.Context, args json.RawMessage) (tool.Res
 		ReturnImageParts:       e.returnImageParts,
 		ReturnScannedPageParts: e.returnScannedPageParts,
 		OCREngine:              e.ocrEngine,
+		Mode:                   e.mode,
 		DisableOCR:             e.disableOCR,
 		MaxBytes:               e.maxBytes,
 	})
@@ -326,7 +384,10 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		pageImages, spansAfterImages := ProcessPageImages(parsedPage, opts.ImageDir, pageIdx)
 		parsedPage.Spans = spansAfterImages
 
-		isScan := !opts.DisableOCR && IsScannedPage(parsedPage)
+		// Detection is independent of the routing decision: IsScanned reports what
+		// the page looks like, Source reports what we did with it.
+		detectedScan := IsScannedPage(parsedPage)
+		isScan := !opts.DisableOCR && detectedScan
 		var scanImg *ImageRef
 		for i := range pageImages {
 			if pageImages[i].IsPageScan {
@@ -336,12 +397,33 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 			}
 		}
 
+		hasPageImage := (scanImg != nil && len(scanImg.Data) > 0) || len(parsedPage.Images) > 0
+		digitalText := false
+		for _, s := range parsedPage.Spans {
+			if strings.TrimSpace(s.Text) != "" {
+				digitalText = true
+				break
+			}
+		}
+
+		runOCR := false
+		switch opts.Mode {
+		case ModePreferText:
+			runOCR = false
+		case ModeForceOCR:
+			runOCR = !opts.DisableOCR && hasPageImage
+		default: // "", ModeAuto
+			runOCR = isScan
+		}
+
 		var pageUsage model.Usage
 		var pageCost float64
 		var directMarkdown string
+		var ocrTables []Table
+		ocrUsed := false
 
-		// 2. Check if page is a pure scan
-		if isScan {
+		// 2. Transcribe the page raster when the routing policy selects OCR.
+		if runOCR {
 			ocrEngine := opts.OCREngine
 			if ocrEngine == nil && !opts.ReturnScannedPageParts {
 				ocrEngine = DefaultOCREngine()
@@ -365,6 +447,11 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 					directMarkdown = res.Markdown
 					pageUsage = res.Usage
 					pageCost = res.Cost
+					for i := range res.Tables {
+						res.Tables[i].Page = pageIdx
+						ocrTables = append(ocrTables, res.Tables[i])
+					}
+					ocrUsed = directMarkdown != "" || len(ocrTables) > 0
 				} else {
 					ocrSpans, err := ocrEngine.RecognizePage(ctx, imgBytes, format, parsedPage.MediaBox)
 					if err != nil {
@@ -372,9 +459,22 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 					}
 					if len(ocrSpans) > 0 {
 						parsedPage.Spans = append(parsedPage.Spans, ocrSpans...)
+						ocrUsed = true
 					}
 				}
 			}
+		}
+
+		source := PageSourceEmpty
+		switch {
+		case ocrUsed && directMarkdown != "":
+			source = PageSourceOCR
+		case ocrUsed && digitalText:
+			source = PageSourceHybrid
+		case ocrUsed:
+			source = PageSourceOCR
+		case digitalText:
+			source = PageSourceDigital
 		}
 
 		// 3. Convert thin horizontal rectangles into vector lines (fraction bars in LaTeX/Word PDFs)
@@ -401,6 +501,10 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 
 		// 5. Perform Layout Analysis & Reading Order Reconstruction
 		blocks := AnalyzePageLayout(parsedPage, tables, pageImages)
+
+		// Tables recovered by the OCR engine are not part of the vector layout,
+		// so append them after layout analysis rather than feeding them into it.
+		tables = append(tables, ocrTables...)
 
 		// 6. Build Page Markdown
 		var pageMD strings.Builder
@@ -446,6 +550,7 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 			Width:     parsedPage.MediaBox.Width(),
 			Height:    parsedPage.MediaBox.Height(),
 			IsScanned: isScan,
+			Source:    source,
 			ScanImage: scanImg,
 			Markdown:  pMarkdown,
 			Tables:    tables,
