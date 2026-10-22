@@ -20,6 +20,7 @@
   <a href="https://abubakarsiddik31.github.io/golem/"><strong>Read the Documentation »</strong></a>
   <br><br>
   <a href="#why-golem">Why Golem?</a> •
+  <a href="#how-golem-compares">How Golem Compares</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#supported-providers">Supported Providers</a> •
   <a href="#architecture">Architecture</a> •
@@ -50,38 +51,55 @@ Golem bridges that gap by offering idiomatic, enterprise-ready agent abstraction
 
 ---
 
+## How Golem Compares
+
+A feature-by-feature look at Golem against the other actively maintained Go agent frameworks: [`langchaingo`](https://github.com/tmc/langchaingo) (community port of LangChain's abstractions), [`cloudwego/eino`](https://github.com/cloudwego/eino) (ByteDance's graph-based LLM application framework), and [Firebase `genkit` (Go SDK)](https://github.com/firebase/genkit).
+
+| Capability | **Golem** | langchaingo | Eino | Genkit (Go) |
+| --- | :---: | :---: | :---: | :---: |
+| External runtime dependencies | **Zero** (stdlib only) | Many (per-provider SDKs, vector store clients) | Several (OpenTelemetry, protobuf, provider SDKs) | Several (OpenTelemetry, gRPC, provider SDKs) |
+| Typed tool & dependency injection (`Agent[Deps, Output]`, `RunContext[Deps]`) | :white_check_mark: compile-time generics | :x: tools built around `map[string]any` and reflection | Partial — components are generically typed, but agent composition is graph/`any`-based | :x: tool args/results are typed per-call but there's no typed dependency-injection container |
+| Native MCP client (no extra module) | :white_check_mark: in the core module (`mcp` package) | :x: third-party, work-in-progress adapter only | :x: requires the separate `eino-ext` module (wraps `mark3labs/mcp-go`) | :x: no first-party MCP client |
+| Structured output with schema enforcement | :white_check_mark: `DecodeJSON[T]` + JSON Schema validation | Partial — prompt-engineered JSON parsing, no compile-time output type | :white_check_mark: via typed components | :white_check_mark: via typed `Generate` calls |
+| In-loop self-correction on bad tool/output (`ModelRetry`) | :white_check_mark: built into the run loop | :x: not built in | Partial — achievable by hand-wiring a graph branch | :x: not built in |
+| Automatic multi-model fallback | :white_check_mark: `WithFallback` | :x: | :x: not a core primitive | :x: |
+| Human-in-the-loop / deferred execution with resumable state | :white_check_mark: `tool.Deferred`, durable resume | :x: | :white_check_mark: ADK interrupt/resume (`GetInterruptState[T]`) | Experimental (`genkit/exp`, session-store based) |
+| Token budget guards & pre-send cost estimation | :white_check_mark: `tokens.Counter`, `Result.Cost` | :x: | :x: | :x: |
+| Deterministic offline testing (no HTTP mocks) | :white_check_mark: `testmodel` | :x: typically mocked at the HTTP layer | :x: | :x: |
+| Batteries-included document/web tools (PDF, Office docs, web fetch, shell, OCR) | :white_check_mark: in-repo, pure Go | Partial — community-contributed, varying quality/maintenance | :x: left to `eino-ext` or user code | :x: left to user code |
+| Streaming run events (attempts, tool calls, corrections) | :white_check_mark: `WithRunEvents` | Partial — token streaming only | :white_check_mark: via callbacks | Partial — tracing spans, not a structured event stream |
+| Primary design model | Linear, explicit agent run loop | LangChain-style chains/agents ported to Go | Graph/workflow orchestration (DAG-style composition) | Flow-based functions with OpenTelemetry tracing |
+| Maturity / stability posture | Pre-1.0; every release so far additive (API freeze planned at v1.0.0) | Community-maintained, API has shifted across versions | Actively developed by CloudWeGo/ByteDance, frequent releases | Agent API explicitly marked experimental |
+| License | MIT | MIT | Apache-2.0 | Apache-2.0 |
+
+**Where Golem wins:** it is the only one of the four with zero non-stdlib dependencies, compile-time-typed tool dependency injection, a native MCP client in the core module, and production guardrails (self-correction, fallback, cost/token budgets, deferred human-in-the-loop execution) shipped together as one coherent runtime instead of assembled from separate packages.
+
+**Where the others pull ahead:** Eino's graph/workflow composition model is more expressive for branching, parallel, multi-agent pipelines than Golem's linear run loop, and it has a larger ecosystem of community components (`eino-ext`). langchaingo has broader provider and vector-store coverage through its LangChain-derived ecosystem. Genkit benefits from first-party Google tooling (Developer UI, tracing/evaluation integrations) and tight Gemini integration.
+
+*Comparisons reflect each project's public documentation and source as of October 2026; frameworks move fast, so verify against the upstream repositories before depending on a specific behavior.*
+
+---
+
 ## Architecture
 
 Golem orchestrates agents through a transparent, observable execution loop:
 
-```text
-                         ┌────────────────────────────────────────┐
-                         │         golem.RunContext[Deps]         │
-                         │        (Typed Run Dependencies)        │
-                         └───────────────────┬────────────────────┘
-                                             ▼
-┌─────────────────┐          ┌───────────────────────────────┐          ┌─────────────────┐
-│     Prompt      │ ───────► │     golem.Agent[Deps, Out]    │ ───────► │  Typed Output   │
-│ (Text, Images,  │          │                               │          │  Result[Output] │
-│ Docs, Audio)    │          │  ┌─────────────────────────┐  │          └─────────────────┘
-└─────────────────┘          │  │ Observable Loop         │  │                   │
-                             │  │ - Self-Correction       │  │                   ▼
-                             │  │ - Retries & Fallbacks   │  │          ┌─────────────────┐
-                             │  │ - Token & Cost Bounds   │  │          │ Durable Evidence│
-                             │  │ - Run Events Stream     │  │          │ (Messages, Cost,│
-                             │  └────────────┬────────────┘  │          │  Token Usage)   │
-                             └───────────────┼───────────────┘          └─────────────────┘
-                                             │
-                      ┌──────────────────────┴──────────────────────┐
-                      ▼                                             ▼
-        ┌───────────────────────────┐                 ┌───────────────────────────┐
-        │      Model Adapters       │                 │      Tools & Protocols    │
-        │  • OpenAI & Azure OpenAI  │                 │  • Strongly Typed Tools   │
-        │  • Anthropic Claude       │                 │  • MCP Client (stdio/HTTP)│
-        │  • Google Gemini          │                 │  • PDF & Doc Extractors   │
-        │  • AWS Bedrock (SigV4)    │                 │  • Web Fetch & Shell      │
-        │  • Local (Ollama/LMStudio)│                 │  • Agent Skills (SKILL.md)│
-        └───────────────────────────┘                 └───────────────────────────┘
+```mermaid
+flowchart TB
+    RC["<b>golem.RunContext[Deps]</b><br/>Typed Run Dependencies"]
+    Prompt["<b>Prompt</b><br/>Text, Images, Docs, Audio"]
+    Agent["<b>golem.Agent[Deps, Out]</b><br/>Observable Loop:<br/>self-correction · retries &amp; fallbacks<br/>token &amp; cost bounds · run events"]
+    Output["<b>Typed Output</b><br/>Result[Output]"]
+    Evidence["<b>Durable Evidence</b><br/>Messages, Cost, Token Usage"]
+    Adapters["<b>Model Adapters</b><br/>OpenAI · Anthropic · Gemini<br/>Bedrock · Azure · Ollama/LM Studio"]
+    Tools["<b>Tools &amp; Protocols</b><br/>Typed tools · MCP (stdio/HTTP)<br/>PDF/doc extractors · web fetch · shell"]
+
+    RC --> Agent
+    Prompt --> Agent
+    Agent --> Output
+    Output --> Evidence
+    Agent --> Adapters
+    Agent --> Tools
 ```
 
 ---
