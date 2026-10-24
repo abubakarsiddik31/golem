@@ -36,6 +36,55 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+  # Static analysis beyond go vet: dead code, suspicious assignments, style.
+  # Pinned so a new staticcheck release cannot turn main red on its own.
+  staticcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # The module has zero dependencies; there is nothing to cache.
+          cache: false
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.1
+      - name: Staticcheck
+        run: '"$(go env GOPATH)/bin/staticcheck" ./...'
+  # The statement-coverage floor from scripts/coverage.sh. Examples are
+  # excluded there: they are programs to run, not importable surface.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Statement coverage
+        run: scripts/coverage.sh
+  # The exported-API gate promised in docs/ROADMAP.md: compare a pull
+  # request against its base branch and fail on any incompatible change.
+  # Additive changes pass silently. Pull requests only: a push to main is
+  # the merge of an already-checked pull request.
+  api:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base branch must be present for the worktree comparison.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install apidiff
+        run: go install golang.org/x/exp/cmd/apidiff@v0.0.0-20261014143641-f0251eb4aa3e
+      - name: Check exported API compatibility
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: 'PATH="$(go env GOPATH)/bin:$PATH" scripts/apidiff.sh "$BASE_REF"'
   # The race build roughly doubles test time; it gates main the same as
   # the plain build but stays a separate job so it can be read apart.
   race:

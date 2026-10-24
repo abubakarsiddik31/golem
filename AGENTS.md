@@ -44,7 +44,17 @@ gofmt -w <changed-go-files>
 go build ./...
 go test ./...
 go vet ./...
+staticcheck ./...
+scripts/coverage.sh
+scripts/apidiff.sh
 ```
+
+`staticcheck` (pinned in CI) and `apidiff` are CI-only tools; install them
+with `go install honnef.co/go/tools/cmd/staticcheck@2026.1` and
+`go install golang.org/x/exp/cmd/apidiff@latest`. Neither is a module
+dependency. `scripts/coverage.sh` enforces the statement-coverage floor and
+`scripts/apidiff.sh` fails on incompatible exported-API changes against
+`origin/main` — raise the coverage floor when coverage rises, never lower it.
 
 `go build ./...` guarantees the example programs compile. If changing a
 public API, update its guide, update the README index, and add or revise

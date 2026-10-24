@@ -30,7 +30,16 @@ not call a live provider either.
    go build ./...
    go test ./...
    go vet ./...
+   staticcheck ./...
+   scripts/coverage.sh
+   scripts/apidiff.sh
    ```
+
+   `staticcheck` and `apidiff` are CI-only tools, not module dependencies:
+   install them with `go install honnef.co/go/tools/cmd/staticcheck@2026.1`
+   and `go install golang.org/x/exp/cmd/apidiff@latest`. The coverage script
+   enforces the statement-coverage floor; raise the floor when coverage
+   rises rather than lowering it to land a change.
 
 2. Add or extend tests alongside the behavior change. Cover the primary
    failure path with `errors.Is` or `errors.As` so causal errors stay
