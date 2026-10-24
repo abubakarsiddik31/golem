@@ -25,3 +25,7 @@ docs/superpowers/
 
 # Local security-scanner workspace; never commit.
 .mimosa/
+
+# Local agent-tool state (worktrees, plans); never commit.
+.kilo/
+.zcode/
