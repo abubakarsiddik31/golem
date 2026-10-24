@@ -28,9 +28,31 @@ extra headers (such as `Authorization`) ride along on every request.
 The server-to-client GET stream is not opened — pushes are not needed
 for tool use.
 
-`mcp.NewClient(transport)` wraps any Transport; `Initialize` performs
-the MCP handshake (announcing this client, recording the server's
-identity in `Server()`), and must run before anything else.
+`mcp.NewClient(transport)` wraps any Transport; `Initialize` negotiates
+the protocol era, announces this client, and records the server's
+identity in `Server()`. It must run before anything else.
+
+The client is dual-era. It probes `server/discover` for the stateless
+revision `2026-07-28`; a server that answers is modern, and every later
+request carries the required per-request `_meta` (`protocolVersion`,
+`clientInfo`, `clientCapabilities`) instead of a session. A server that
+answers method-not-found — or any error that is not the modern
+unsupported-version error — is legacy: the client falls back to the
+`initialize` handshake for `2025-06-18` and completes it with the
+`initialized` notification. `ProtocolVersion()` reports what was
+negotiated. A modern server that names revisions it supports but not
+`2026-07-28` fails `Initialize` with
+`*mcp.UnsupportedProtocolVersionError`; the client does not retry a
+legacy handshake against it, because only a modern server produces that
+error.
+
+Over streamable HTTP the era also decides transport behavior. Modern
+requests carry `MCP-Protocol-Version`, `Mcp-Method`, and — for
+`tools/call`, `resources/read`, and `prompts/get` — `Mcp-Name` headers
+mirrored from the body, with names outside the safe ASCII set Base64
+encoded behind the `=?base64?…?=` sentinel. A modern request never
+carries `Mcp-Session-Id`, and a session header the server assigns is
+ignored, because the modern revision is stateless.
 
 `mcp.AsTools[Deps](ctx, client)` snapshots the server's tool list and
 returns each as a `tool.Tool[Deps]` carrying the server's name,
@@ -49,9 +71,14 @@ arguments to `tools/call`:
 
 The client is synchronous and serialized — one in-flight request at a
 time, no goroutines — and honors the caller's context on every
-operation. While a call waits, a server-initiated `ping` is answered
-inline, any other server-initiated request gets a method-not-found
-reply, and notifications are dropped.
+operation. In a legacy session, while a call waits, a server-initiated
+`ping` is answered inline, any other server-initiated request gets a
+method-not-found reply, and notifications are dropped. A modern session
+has no server-initiated requests: client features arrive as input
+requests inside a result, and this client implements none of them, so a
+result of type `input_required` fails with
+`*mcp.InputRequiredError` rather than being silently dropped. A server
+that sends a request anyway fails the call.
 
 ## Example
 
@@ -79,11 +106,12 @@ agent, _ := golem.New[struct{}, string](model, decoder,
 - `mcp.NewHTTP(mcp.HTTPConfig) (*HTTPTransport, error)` — `HTTPConfig{URL, HTTPClient, Header}`
 - `mcp.Transport` — the `Send`/`Read`/`Close` boundary other transports implement
 - `mcp.NewClient(mcp.Transport) *Client`
-- `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).Close()`
+- `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).ProtocolVersion()` / `(*Client).Close()`
 - `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Description, InputSchema}`
 - `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, IsError}`, `CallResult.Text()`
 - `mcp.AsTools[Deps](ctx, *Client) ([]tool.Tool[Deps], error)`
 - `mcp.ProtocolError{Code, Message, Data}`, `mcp.HTTPStatusError{StatusCode, URL}`
+- `mcp.UnsupportedProtocolVersionError{Requested, Supported}`, `mcp.InputRequiredError{Result}`
 
 ## Gotchas
 
@@ -96,12 +124,21 @@ agent, _ := golem.New[struct{}, string](model, decoder,
   tools dynamically is re-bridged by calling it again, not by push
   notification.
 - Only text content is carried; images and resources render as
-  placeholders.
+  placeholders. Sampling, elicitation, and roots are not implemented, so
+  a modern `input_required` result fails instead of prompting.
+- The modern HTTP transport mirrors the standard headers
+  (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) but not the
+  `x-mcp-header` tool-parameter extension; a server that requires a
+  parameter in `Mcp-Param-*` cannot be called.
+- Era detection probes once with a five-second bound. A server that is
+  slow to answer `server/discover` is treated as legacy, and a modern
+  server that does not support `2026-07-28` fails `Initialize` rather
+  than being retried over the handshake.
 - Over HTTP, the default client has no wall-clock timeout so event
   streams are bounded only by the caller's context; supply
-  `HTTPClient` for a hard bound. A server that drops the session
+  `HTTPClient` for a hard bound. A legacy server that drops the session
   answers 404, surfacing as `*mcp.HTTPStatusError` — re-initialize a
-  fresh client to recover.
+  fresh client to recover. The modern revision has no session to drop.
 - On platforms where pipe reads cannot take deadlines (Windows),
   cancelling an in-flight stdio call is honored when the transport
   closes, not immediately.

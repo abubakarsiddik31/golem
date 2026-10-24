@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **`mcp` speaks both MCP protocol eras.** `Initialize` now probes `server/discover` for the stateless `2026-07-28` revision and falls back to the `initialize` handshake for legacy servers, so the same client works with today's servers and the newer stateless ones. Modern requests carry the required per-request `_meta` (`protocolVersion`, `clientInfo`, `clientCapabilities`); over streamable HTTP they also carry the `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers, with unsafe names Base64 encoded, and never a session header. `(*Client).ProtocolVersion()` reports the negotiated revision. A modern server that does not support `2026-07-28` fails `Initialize` with `*mcp.UnsupportedProtocolVersionError`; a modern `input_required` result fails with `*mcp.InputRequiredError` because sampling, elicitation, and roots are not implemented. Legacy behavior — the handshake, session header, and inline `ping` replies — is unchanged.
+
 ### Security
 
 - **`webfetch` refuses non-public destinations by default.** A model-produced URL can no longer reach loopback, private, link-local, multicast, unspecified, or carrier-grade NAT addresses, closing the SSRF path to internal services and cloud metadata endpoints. Hostnames are resolved and every address must be public; the dialer validates the address it actually connects to, and every redirect hop is re-checked. The refusal is a `*webfetch.BlockedAddressError` at the tool stage, not a correctable model mistake. `webfetch.Config.AllowPrivateNetworks` opts out for agents meant to fetch from a trusted private network.

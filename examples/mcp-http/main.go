@@ -99,6 +99,11 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch message.Method {
+	case "server/discover":
+		// A legacy endpoint: the modern probe is refused, so the
+		// client falls back to the initialize handshake.
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"method not found: server/discover"}}`, message.ID)
 	case "initialize":
 		w.Header().Set("Mcp-Session-Id", "example-session")
 		w.Header().Set("Content-Type", "application/json")
