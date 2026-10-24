@@ -70,7 +70,7 @@ func run() error {
 	deps := &workspace{}
 	result, err := agent.Run(context.Background(), golem.RunContext[*workspace]{Deps: deps}, "clean up the workspace")
 	if err != nil {
-		return fmt.Errorf("Run: %w", err)
+		return fmt.Errorf("run: %w", err)
 	}
 	if result.Pending == nil {
 		return fmt.Errorf("expected the run to pause on deferred calls")

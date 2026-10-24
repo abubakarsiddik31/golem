@@ -549,9 +549,7 @@ func clusterGrids(hLines []hSegment, vLines []vSegment) []gridCluster {
 			if h.y >= c.bbox.Y0-10.0 && h.y <= c.bbox.Y1+10.0 &&
 				!(h.x1 < c.bbox.X0 || h.x0 > c.bbox.X1) {
 				c.hLines = append(c.hLines, h)
-				for _, mv := range matchingV {
-					c.vLines = append(c.vLines, mv)
-				}
+				c.vLines = append(c.vLines, matchingV...)
 				c.bbox.X0 = math.Min(c.bbox.X0, h.x0)
 				c.bbox.X1 = math.Max(c.bbox.X1, h.x1)
 				c.bbox.Y0 = math.Min(c.bbox.Y0, h.y)

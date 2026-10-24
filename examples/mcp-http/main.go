@@ -45,7 +45,7 @@ func run(endpoint string) error {
 
 	ctx := context.Background()
 	if err := client.Initialize(ctx); err != nil {
-		return fmt.Errorf("Initialize: %w", err)
+		return fmt.Errorf("initialize: %w", err)
 	}
 	tools, err := mcp.AsTools[struct{}](ctx, client)
 	if err != nil {
@@ -71,7 +71,7 @@ func run(endpoint string) error {
 	}
 	result, err := agent.Run(ctx, golem.RunContext[struct{}]{}, "echo hello streamable")
 	if err != nil {
-		return fmt.Errorf("Run: %w", err)
+		return fmt.Errorf("run: %w", err)
 	}
 	for _, message := range result.Messages {
 		if message.Role == model.RoleTool {

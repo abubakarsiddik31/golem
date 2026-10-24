@@ -276,9 +276,7 @@ func mergeResolutions(history []model.Message, resolutions map[string]model.Mess
 	if last < 0 {
 		merged := make([]model.Message, 0, len(history)+len(resolutions))
 		merged = append(merged, history...)
-		for _, call := range orderedResolutions(resolutions) {
-			merged = append(merged, call)
-		}
+		merged = append(merged, orderedResolutions(resolutions)...)
 		return merged
 	}
 

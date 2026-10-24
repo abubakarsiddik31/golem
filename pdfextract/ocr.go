@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -653,14 +652,6 @@ func DefaultOCREngine() OCREngine {
 		return AppleVisionOCR{}
 	}
 	return NoopOCR{}
-}
-
-func estimateImageArea(images []PageImage) float64 {
-	var total float64
-	for _, img := range images {
-		total += math.Abs((img.BBox.X1 - img.BBox.X0) * (img.BBox.Y1 - img.BBox.Y0))
-	}
-	return total
 }
 
 func stripCodeFences(text string) string {

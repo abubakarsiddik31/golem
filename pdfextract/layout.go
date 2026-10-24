@@ -46,7 +46,6 @@ var (
 	numberedHeading2 = regexp.MustCompile(`^\d+\.\d+\s+[A-Z].*`)
 	numberedHeading3 = regexp.MustCompile(`^\d+\.\d+\.\d+\s+[A-Z].*`)
 	abstractRegex    = regexp.MustCompile(`^(?i)(abstract|introduction|conclusion|references|acknowledgements?|appendix)\b.*`)
-	displayMathRegex = regexp.MustCompile(`(?:\([0-9]+\)\s*$|^\s*(?:\$\$|\\\[))`)
 	equationNumRegex = regexp.MustCompile(`\s*\((\d+([a-z]|\.\d+)*)\)\s*$`)
 )
 
