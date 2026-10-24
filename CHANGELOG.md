@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- **`webfetch` refuses non-public destinations by default.** A model-produced URL can no longer reach loopback, private, link-local, multicast, unspecified, or carrier-grade NAT addresses, closing the SSRF path to internal services and cloud metadata endpoints. Hostnames are resolved and every address must be public; the dialer validates the address it actually connects to, and every redirect hop is re-checked. The refusal is a `*webfetch.BlockedAddressError` at the tool stage, not a correctable model mistake. `webfetch.Config.AllowPrivateNetworks` opts out for agents meant to fetch from a trusted private network.
+
 ## v0.8.6 — 2026-10-18
 
 This release adds first-class, offline OCR for scanned PDFs to `package pdfextract`: a local subprocess engine, explicit per-page routing between the text layer and OCR, per-page provenance, and structured tables recovered from OCR. All changes are additive and zero-value compatible; existing call sites are unchanged.

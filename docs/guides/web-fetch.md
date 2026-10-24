@@ -25,15 +25,24 @@ timeouts and run cancellation govern the fetch. One call:
 1. Validates the arguments — a missing, non-string, empty, or non-http
    `url` rejects the call with `*model.ModelRetry`, so the agent's tool
    retry budget governs correction.
-2. GETs the URL through the configured `*http.Client` with the
+2. Refuses non-public destinations. Loopback, private, link-local,
+   multicast, unspecified, and carrier-grade NAT addresses fail at the
+   tool stage with `*webfetch.BlockedAddressError` before a connection
+   is made. Hostnames are resolved and every returned address must be
+   public; the dialer checks the address it actually connects to, so a
+   hostname that re-resolves between the check and the dial cannot
+   reach an internal service. Set `Config.AllowPrivateNetworks` only
+   when the agent is meant to fetch from a trusted private network.
+3. GETs the URL through the configured `*http.Client` with the
    configured `User-Agent`. Redirects follow the client's default
+   policy, and every redirect hop is re-validated by the same address
    policy.
-3. Accepts only 2xx: any other status fails at the tool stage with
+4. Accepts only 2xx: any other status fails at the tool stage with
    `*webfetch.StatusError` carrying the status code and final URL.
-4. Reads the body up to `MaxBytes` (default 1 MiB). A longer body is
+5. Reads the body up to `MaxBytes` (default 1 MiB). A longer body is
    truncated, not failed; the result ends with a
    `[webfetch: response truncated at N bytes]` marker.
-5. Reduces the body to text by media type: HTML and XHTML are stripped
+6. Reduces the body to text by media type: HTML and XHTML are stripped
    to their visible text — comments, script and style contents, and
    markup dropped, character entities unescaped, block-level tags
    separating lines (extraction is best-effort, not a rendering
@@ -58,13 +67,18 @@ agent, err := golem.New[struct{}, string](client, decoder,
     golem.WithTools[struct{}, string](fetch))
 ```
 
+The example's stand-in server is loopback, so it sets
+`AllowPrivateNetworks: true`; a real agent fetching public URLs leaves
+the zero value alone.
+
 ## API surface
 
 - `webfetch.New[Deps](webfetch.Config) (tool.Tool[Deps], error)` / `webfetch.MustNew[Deps](webfetch.Config) tool.Tool[Deps]`
-- `webfetch.Config{HTTPClient *http.Client, Timeout time.Duration, MaxBytes int64, UserAgent string}`
+- `webfetch.Config{HTTPClient *http.Client, Timeout time.Duration, MaxBytes int64, UserAgent string, AllowPrivateNetworks bool}`
 - `webfetch.ToolName`, `webfetch.ToolDescription` — the tool's stable identity
 - `webfetch.StatusError{StatusCode int, URL string}`
 - `webfetch.UnsupportedContentTypeError{ContentType string, URL string}`
+- `webfetch.BlockedAddressError{Host string, IP net.IP}`
 - `webfetch.DefaultUserAgent`, `webfetch.DefaultMaxBytes`, `webfetch.DefaultTimeout`
 
 ## Gotchas
@@ -73,6 +87,12 @@ agent, err := golem.New[struct{}, string](client, decoder,
   contract; models and prompts depend on them staying stable.
 - Bodies are assumed UTF-8: charset parameters are not transcoded (the
   package is standard-library only).
+- The address policy is on by default and is not a sandbox: it refuses
+  non-public destinations, but it does not restrict ports, methods, or
+  content. A caller-supplied `HTTPClient` still gets the per-request
+  resolution check and redirect re-validation; its own `DialContext` is
+  preserved, so a transport with a custom dialer keeps responsibility
+  for dial-time enforcement.
 - `Timeout`, when non-zero, bounds one fetch with a context deadline on
   top of any client timeout; zero leaves the deadline to the caller's
   context and the agent's tool timeout. The default client (used when
