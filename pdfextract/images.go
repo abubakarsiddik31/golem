@@ -193,53 +193,126 @@ func findAdjacentCaption(img PageImage, spans []TextSpan, alreadyConsumed map[in
 
 // prepareImageData formats image bytes into valid JPEG or PNG.
 func prepareImageData(img PageImage) (string, []byte) {
-	if img.Format == "jpeg" && len(img.Data) > 0 {
+	// Already-encoded formats pass through unchanged.
+	switch img.Format {
+	case "jpeg":
 		return "jpeg", img.Data
+	case "jpx":
+		return "jpx", img.Data
+	case "ccitt":
+		return "ccitt", img.Data
 	}
 
 	if len(img.Data) == 0 || img.Width <= 0 || img.Height <= 0 {
 		return "png", nil
 	}
 
-	// If raw decompressed pixel samples, convert to PNG
-	expectedRGB := img.Width * img.Height * 3
-	expectedGray := img.Width * img.Height
-
-	var m image.Image
-	if len(img.Data) >= expectedRGB {
-		rgba := image.NewRGBA(image.Rect(0, 0, img.Width, img.Height))
-		idx := 0
-		for y := 0; y < img.Height; y++ {
-			for x := 0; x < img.Width; x++ {
-				r := img.Data[idx]
-				g := img.Data[idx+1]
-				b := img.Data[idx+2]
-				rgba.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
-				idx += 3
-			}
-		}
-		m = rgba
-	} else if len(img.Data) >= expectedGray {
-		gray := image.NewGray(image.Rect(0, 0, img.Width, img.Height))
-		idx := 0
-		for y := 0; y < img.Height; y++ {
-			for x := 0; x < img.Width; x++ {
-				gray.SetGray(x, y, color.Gray{Y: img.Data[idx]})
-				idx++
-			}
-		}
-		m = gray
-	} else {
-		// Return raw data as-is
-		return "png", img.Data
+	pixels := img.Width * img.Height
+	bpc := img.BitsPerComponent
+	if bpc == 0 {
+		bpc = 8
 	}
 
+	// Convert explicit color spaces and depths without guessing from the
+	// buffer length, which silently mis-renders CMYK and bilevel scans.
+	if bpc == 8 {
+		switch img.ColorSpace {
+		case "DeviceGray", "CalGray", "G":
+			if len(img.Data) >= pixels {
+				return encodePNG(grayImage(img.Data, img.Width, img.Height), img.Data)
+			}
+		case "DeviceRGB", "CalRGB", "RGB":
+			if len(img.Data) >= pixels*3 {
+				return encodePNG(rgbImage(img.Data, img.Width, img.Height), img.Data)
+			}
+		case "DeviceCMYK", "CMYK":
+			if len(img.Data) >= pixels*4 {
+				return encodePNG(cmykImage(img.Data, img.Width, img.Height), img.Data)
+			}
+		}
+	} else if bpc == 1 && (img.ColorSpace == "DeviceGray" || img.ColorSpace == "G" || img.ColorSpace == "") {
+		rowBytes := (img.Width + 7) / 8
+		if len(img.Data) >= rowBytes*img.Height {
+			return encodePNG(gray1BitImage(img.Data, img.Width, img.Height, rowBytes), img.Data)
+		}
+	}
+
+	// Unknown colorspace or depth: keep the size-based heuristic for
+	// compatibility. If neither layout fits, return the bytes as "raw"
+	// rather than mislabelling them as a PNG.
+	if len(img.Data) >= pixels*3 {
+		return encodePNG(rgbImage(img.Data, img.Width, img.Height), img.Data)
+	}
+	if len(img.Data) >= pixels {
+		return encodePNG(grayImage(img.Data, img.Width, img.Height), img.Data)
+	}
+	return "raw", img.Data
+}
+
+func encodePNG(m image.Image, fallback []byte) (string, []byte) {
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, m); err == nil {
-		return "png", buf.Bytes()
+	if err := png.Encode(&buf, m); err != nil {
+		return "raw", fallback
 	}
+	return "png", buf.Bytes()
+}
 
-	return "png", img.Data
+func rgbImage(data []byte, width, height int) image.Image {
+	rgba := image.NewRGBA(image.Rect(0, 0, width, height))
+	idx := 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			rgba.SetRGBA(x, y, color.RGBA{R: data[idx], G: data[idx+1], B: data[idx+2], A: 255})
+			idx += 3
+		}
+	}
+	return rgba
+}
+
+func grayImage(data []byte, width, height int) image.Image {
+	gray := image.NewGray(image.Rect(0, 0, width, height))
+	idx := 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			gray.SetGray(x, y, color.Gray{Y: data[idx]})
+			idx++
+		}
+	}
+	return gray
+}
+
+func cmykImage(data []byte, width, height int) image.Image {
+	rgba := image.NewRGBA(image.Rect(0, 0, width, height))
+	idx := 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			c, m, yel, k := data[idx], data[idx+1], data[idx+2], data[idx+3]
+			rgba.SetRGBA(x, y, color.RGBA{
+				R: uint8((uint16(c) * uint16(255-k)) / 255),
+				G: uint8((uint16(m) * uint16(255-k)) / 255),
+				B: uint8((uint16(yel) * uint16(255-k)) / 255),
+				A: 255,
+			})
+			idx += 4
+		}
+	}
+	return rgba
+}
+
+func gray1BitImage(data []byte, width, height, rowBytes int) image.Image {
+	gray := image.NewGray(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		row := data[y*rowBytes:]
+		for x := 0; x < width; x++ {
+			bit := (row[x/8] >> uint(7-x%8)) & 1
+			v := uint8(0)
+			if bit == 1 {
+				v = 255
+			}
+			gray.SetGray(x, y, color.Gray{Y: v})
+		}
+	}
+	return gray
 }
 
 // BuildImageParts converts extracted images into model.Part slice per Golem ADR 0025.
@@ -249,9 +322,16 @@ func BuildImageParts(images []ImageRef) []model.Part {
 		if len(img.Data) == 0 {
 			continue
 		}
-		mediaType := "image/png"
-		if img.Format == "jpeg" {
+		var mediaType string
+		switch img.Format {
+		case "jpeg":
 			mediaType = "image/jpeg"
+		case "png":
+			mediaType = "image/png"
+		default:
+			// Raw samples and codecs the model APIs do not accept are skipped
+			// rather than mislabelled as PNG.
+			continue
 		}
 		part := model.ImageData(mediaType, img.Data)
 		if err := part.Validate(); err == nil {

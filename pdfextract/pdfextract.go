@@ -14,11 +14,13 @@ package pdfextract
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/tool"
@@ -73,7 +75,8 @@ type Config struct {
 	ReturnScannedPageParts bool
 
 	// OCREngine provides the modern deep-learning OCR implementation for scanned pages.
-	// Nil defaults to DefaultOCREngine().
+	// Nil disables OCR: scanned pages stay PageSourceEmpty rather than receiving
+	// placeholder text. Set IndraOCREngine or ModelOCREngine to enable it.
 	OCREngine OCREngine
 
 	// Mode selects how pages are routed between the text layer and OCREngine.
@@ -156,6 +159,9 @@ type Page struct {
 	Blocks    []LayoutBlock
 	Usage     model.Usage // token usage incurred for this page (e.g. from ModelOCREngine)
 	Cost      float64     // monetary cost incurred for this page in US dollars
+	// Err is non-nil when the page could not be extracted. The page still
+	// appears in Document.Pages so page counts stay accurate.
+	Err error
 }
 
 // Document represents a fully extracted PDF document.
@@ -173,11 +179,17 @@ type Document struct {
 type UnsupportedFileError struct {
 	Path   string
 	Reason string
+	// Err is the underlying parse error, when there is one, so callers can use
+	// errors.Is for sentinels such as ErrEncrypted.
+	Err error
 }
 
 func (e *UnsupportedFileError) Error() string {
 	return fmt.Sprintf("pdfextract: %s: invalid PDF file: %s", e.Path, e.Reason)
 }
+
+// Unwrap exposes the underlying parse error to errors.Is and errors.As.
+func (e *UnsupportedFileError) Unwrap() error { return e.Err }
 
 // extractor holds resolved configuration for tool execution.
 type extractor struct {
@@ -220,9 +232,6 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 	}
 
 	ocrEngine := cfg.OCREngine
-	if ocrEngine == nil && !cfg.DisableOCR && !cfg.ReturnScannedPageParts {
-		ocrEngine = DefaultOCREngine()
-	}
 
 	ext := &extractor{
 		root:                   root,
@@ -313,24 +322,34 @@ func (e *extractor) execute(ctx context.Context, args json.RawMessage) (tool.Res
 	}
 
 	text := doc.Markdown
-	if int64(len(text)) > e.maxBytes {
-		text = text[:e.maxBytes] + fmt.Sprintf("\n\n[pdfextract: output truncated at %d bytes]", e.maxBytes)
-	}
 
-	var parts []model.Part
-	if e.returnImageParts && len(doc.Images) > 0 {
-		parts = append(parts, BuildImageParts(doc.Images)...)
-	} else if e.returnScannedPageParts {
-		var scanImages []ImageRef
+	// Both options are independent: either may contribute images, and an image
+	// selected by both is emitted once.
+	var candidates []ImageRef
+	if e.returnImageParts {
+		candidates = append(candidates, doc.Images...)
+	}
+	if e.returnScannedPageParts {
 		for _, p := range doc.Pages {
 			if p.IsScanned && p.ScanImage != nil && len(p.ScanImage.Data) > 0 {
-				scanImages = append(scanImages, *p.ScanImage)
+				candidates = append(candidates, *p.ScanImage)
 			}
 		}
-		if len(scanImages) > 0 {
-			parts = append(parts, BuildImageParts(scanImages)...)
-		}
 	}
+	seen := make(map[string]bool, len(candidates))
+	var unique []ImageRef
+	for _, img := range candidates {
+		key := img.ID
+		if key == "" {
+			key = img.Path
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, img)
+	}
+	parts := BuildImageParts(unique)
 
 	return tool.Result{
 		Text:  text,
@@ -358,7 +377,7 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 
 	pdfDoc, err := ParsePDF(data)
 	if err != nil {
-		return nil, &UnsupportedFileError{Reason: err.Error()}
+		return nil, &UnsupportedFileError{Reason: err.Error(), Err: err}
 	}
 
 	numPages := pdfDoc.NumPages()
@@ -377,6 +396,16 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 
 		parsedPage, err := pdfDoc.ExtractPage(pageIdx)
 		if err != nil {
+			// Keep the page slot and the error instead of dropping it: a caller
+			// must be able to tell a 200-page document came back with 197 pages.
+			marker := fmt.Sprintf("[Page %d: extraction failed]\n\n", pageIdx+1)
+			docMarkdown.WriteString(marker)
+			doc.Pages = append(doc.Pages, Page{
+				Index:    pageIdx,
+				Source:   PageSourceEmpty,
+				Markdown: marker,
+				Err:      err,
+			})
 			continue
 		}
 
@@ -384,10 +413,10 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		pageImages, spansAfterImages := ProcessPageImages(parsedPage, opts.ImageDir, pageIdx)
 		parsedPage.Spans = spansAfterImages
 
-		// Detection is independent of the routing decision: IsScanned reports what
-		// the page looks like, Source reports what we did with it.
+		// IsScanned reports what the page looks like, independent of what the
+		// routing policy did with it. A scan we chose not to OCR is still a scan.
 		detectedScan := IsScannedPage(parsedPage)
-		isScan := !opts.DisableOCR && detectedScan
+		isScan := detectedScan
 		var scanImg *ImageRef
 		for i := range pageImages {
 			if pageImages[i].IsPageScan {
@@ -411,9 +440,13 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		case ModePreferText:
 			runOCR = false
 		case ModeForceOCR:
-			runOCR = !opts.DisableOCR && hasPageImage
+			runOCR = hasPageImage
 		default: // "", ModeAuto
 			runOCR = isScan
+		}
+		// DisableOCR wins over every mode; it is not part of detection.
+		if opts.DisableOCR {
+			runOCR = false
 		}
 
 		var pageUsage model.Usage
@@ -425,9 +458,6 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		// 2. Transcribe the page raster when the routing policy selects OCR.
 		if runOCR {
 			ocrEngine := opts.OCREngine
-			if ocrEngine == nil && !opts.ReturnScannedPageParts {
-				ocrEngine = DefaultOCREngine()
-			}
 
 			var imgBytes []byte
 			var format string
@@ -442,22 +472,26 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 				if mdRec, ok := ocrEngine.(MarkdownRecognizer); ok {
 					res, err := mdRec.RecognizeMarkdown(ctx, imgBytes, format, parsedPage.MediaBox)
 					if err != nil {
-						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+						if !errors.Is(err, ErrNoOCREngine) {
+							return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+						}
+					} else {
+						directMarkdown = res.Markdown
+						pageUsage = res.Usage
+						pageCost = res.Cost
+						for i := range res.Tables {
+							res.Tables[i].Page = pageIdx
+							ocrTables = append(ocrTables, res.Tables[i])
+						}
+						ocrUsed = directMarkdown != "" || len(ocrTables) > 0
 					}
-					directMarkdown = res.Markdown
-					pageUsage = res.Usage
-					pageCost = res.Cost
-					for i := range res.Tables {
-						res.Tables[i].Page = pageIdx
-						ocrTables = append(ocrTables, res.Tables[i])
-					}
-					ocrUsed = directMarkdown != "" || len(ocrTables) > 0
 				} else {
 					ocrSpans, err := ocrEngine.RecognizePage(ctx, imgBytes, format, parsedPage.MediaBox)
 					if err != nil {
-						return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
-					}
-					if len(ocrSpans) > 0 {
+						if !errors.Is(err, ErrNoOCREngine) {
+							return nil, fmt.Errorf("pdfextract: ocr page %d: %w", pageIdx+1, err)
+						}
+					} else if len(ocrSpans) > 0 {
 						parsedPage.Spans = append(parsedPage.Spans, ocrSpans...)
 						ocrUsed = true
 					}
@@ -515,7 +549,8 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 		if directMarkdown != "" {
 			pageMD.WriteString(directMarkdown)
 			pageMD.WriteString("\n\n")
-		} else if isScan && len(parsedPage.Spans) == 0 {
+		} else if isScan && len(parsedPage.Spans) == 0 && len(blocks) == 0 {
+			// Nothing to render: say so honestly instead of emitting a blank page.
 			if opts.ReturnScannedPageParts {
 				pageMD.WriteString("[Scanned page: image attached in tool parts for visual analysis]\n\n")
 			} else {
@@ -571,7 +606,24 @@ func ExtractBytes(ctx context.Context, data []byte, opts Options) (*Document, er
 	}
 
 	doc.Markdown = strings.TrimSpace(docMarkdown.String())
+	if opts.MaxBytes > 0 && int64(len(doc.Markdown)) > opts.MaxBytes {
+		doc.Markdown = truncateUTF8(doc.Markdown, opts.MaxBytes) +
+			fmt.Sprintf("\n\n[pdfextract: output truncated at %d bytes]", opts.MaxBytes)
+	}
 	return doc, nil
+}
+
+// truncateUTF8 cuts s to at most max bytes without splitting a rune, so the
+// result stays valid UTF-8 for the model that receives it.
+func truncateUTF8(s string, max int64) string {
+	if max <= 0 || int64(len(s)) <= max {
+		return s
+	}
+	cut := int(max)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 func parsePageRange(spec string, totalPages int) []int {
