@@ -1,11 +1,14 @@
 // Package mcp connects Golem agents to Model Context Protocol servers:
-// it speaks the JSON-RPC 2.0 protocol over a transport, performs the
-// initialize handshake, discovers a server's tools, and bridges them
-// into tool.Tool declarations any agent can register.
+// it speaks the JSON-RPC 2.0 protocol over a transport, negotiates the
+// protocol era, and offers the server's capabilities. Tools bridge into
+// tool.Tool declarations any agent can register; resources and prompts
+// are application-driven client operations, because the protocol leaves
+// loading and rendering them to the host.
 //
 // The client is synchronous — one in-flight request at a time — and
 // introduces no goroutines. Decisions live in
-// docs/adr/0016-mcp-client-package.md.
+// docs/adr/0016-mcp-client-package.md and
+// docs/adr/0032-mcp-resources-and-prompts.md.
 package mcp
 
 import (

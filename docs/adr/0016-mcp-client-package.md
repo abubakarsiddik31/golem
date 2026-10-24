@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Resources and prompts, deferred here, ship in
+[ADR 0032](0032-mcp-resources-and-prompts.md).
 
 ## Context
 

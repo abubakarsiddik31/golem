@@ -269,6 +269,12 @@ func (s *modernServer) handler(w http.ResponseWriter, r *http.Request) {
 	case "tools/call":
 		w.Header().Set("Content-Type", "application/json")
 		writeJSONResponse(w, message.ID, `{"resultType":"complete","content":[{"type":"text","text":"hi"}],"isError":false}`)
+	case "resources/read":
+		w.Header().Set("Content-Type", "application/json")
+		writeJSONResponse(w, message.ID, `{"resultType":"complete","contents":[{"uri":"file:///notes","text":"hi"}]}`)
+	case "prompts/get":
+		w.Header().Set("Content-Type", "application/json")
+		writeJSONResponse(w, message.ID, `{"resultType":"complete","messages":[{"role":"user","content":{"type":"text","text":"hi"}}]}`)
 	default:
 		http.Error(w, "unknown method", http.StatusNotFound)
 	}
@@ -302,11 +308,17 @@ func TestHTTPModernEra(t *testing.T) {
 	if _, err := client.CallTool(ctx, "héllo", nil); err != nil {
 		t.Fatalf("CallTool error = %v", err)
 	}
-
-	if len(server.headers) != 3 {
-		t.Fatalf("server saw %d requests, want discover and two calls", len(server.headers))
+	if _, err := client.ReadResource(ctx, "file:///notes"); err != nil {
+		t.Fatalf("ReadResource error = %v", err)
 	}
-	wantMethods := []string{"server/discover", "tools/call", "tools/call"}
+	if _, err := client.GetPrompt(ctx, "summarize", nil); err != nil {
+		t.Fatalf("GetPrompt error = %v", err)
+	}
+
+	if len(server.headers) != 5 {
+		t.Fatalf("server saw %d requests, want discover, two calls, a read, and a prompt", len(server.headers))
+	}
+	wantMethods := []string{"server/discover", "tools/call", "tools/call", "resources/read", "prompts/get"}
 	for i, header := range server.headers {
 		if got := header.Get("MCP-Protocol-Version"); got != modernProtocolVersion {
 			t.Errorf("request %d MCP-Protocol-Version = %q, want %q", i, got, modernProtocolVersion)
@@ -326,6 +338,12 @@ func TestHTTPModernEra(t *testing.T) {
 	}
 	if got, want := server.headers[2].Get("Mcp-Name"), "=?base64?aMOpbGxv?="; got != want {
 		t.Errorf("non-ASCII Mcp-Name = %q, want %q", got, want)
+	}
+	if got := server.headers[3].Get("Mcp-Name"); got != "file:///notes" {
+		t.Errorf("resources/read Mcp-Name = %q, want the request's uri", got)
+	}
+	if got := server.headers[4].Get("Mcp-Name"); got != "summarize" {
+		t.Errorf("prompts/get Mcp-Name = %q, want summarize", got)
 	}
 
 	var probe struct {
