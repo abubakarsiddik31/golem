@@ -275,32 +275,53 @@ func (c *Client) Close() error {
 	return c.transport.Close()
 }
 
+// errNotInitialized is the failure of an operation attempted before
+// Initialize.
+var errNotInitialized = errors.New("mcp: client is not initialized")
+
+// paginate walks one list method's cursor pages, calling fetch with each
+// cursor — the empty string on the first call — and appending every
+// page's items until the server stops returning a next cursor.
+func paginate[T any](ctx context.Context, fetch func(cursor string) ([]T, string, error)) ([]T, error) {
+	var items []T
+	var cursor string
+	for {
+		page, next, err := fetch(cursor)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		if next == "" {
+			return items, nil
+		}
+		cursor = next
+	}
+}
+
 // ListTools returns the server's complete tool list, following
 // pagination cursors until the list is exhausted.
 func (c *Client) ListTools(ctx context.Context) ([]ToolInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.ready {
-		return nil, errors.New("mcp: client is not initialized")
+		return nil, errNotInitialized
 	}
-	var tools []ToolInfo
-	var params struct {
-		Cursor string `json:"cursor,omitempty"`
-	}
-	for {
+	return paginate(ctx, func(cursor string) ([]ToolInfo, string, error) {
 		var result struct {
 			Tools      []ToolInfo `json:"tools"`
 			NextCursor string     `json:"nextCursor"`
 		}
-		if err := c.call(ctx, "tools/list", params, &result); err != nil {
-			return nil, err
+		if err := c.call(ctx, "tools/list", pageCursor{Cursor: cursor}, &result); err != nil {
+			return nil, "", err
 		}
-		tools = append(tools, result.Tools...)
-		if result.NextCursor == "" {
-			return tools, nil
-		}
-		params.Cursor = result.NextCursor
-	}
+		return result.Tools, result.NextCursor, nil
+	})
+}
+
+// pageCursor is the params of one list request's page. An empty cursor
+// marshals to an empty object, which is what a first page wants.
+type pageCursor struct {
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // CallTool executes one tool on the server with raw model-produced
@@ -309,7 +330,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.ready {
-		return CallResult{}, errors.New("mcp: client is not initialized")
+		return CallResult{}, errNotInitialized
 	}
 	params := struct {
 		Name      string          `json:"name"`

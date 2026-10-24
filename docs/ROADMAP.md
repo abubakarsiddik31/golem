@@ -7,7 +7,7 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.8.6 — eight of the nine pre-freeze items have landed: in-tool
+v0.8.6 — nine of the ten pre-freeze items have landed: in-tool
 run cancellation cleanly stops a run with evidence on
 `RunError.Partial`; `golem.SanitizeHistory` sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`
@@ -22,7 +22,9 @@ image and document parts as evidence and can fail definitively without
 consuming retry budget; `golem.NormalizeHistory` repairs and reports
 damaged pairings while keeping truncated arguments verbatim; every run
 stamps a fresh `RunID` on its events, result, and messages, and
-conversations carry a `ConversationID` through history and storage; and
+conversations carry a `ConversationID` through history and storage;
+`package mcp` bridges a server's tools and exposes its resources and
+prompts as application-driven client operations; and
 the durable message-JSON contract is under continuous fuzz, with `-race`
 CI and the offline examples running on every check.
 
@@ -55,6 +57,11 @@ series ends in the freeze, not a date.
   `golem.SanitizeHistory`: drops system messages and non-http(s) URL
   parts, repairs pairing, and reports every change at the trust
   boundary (ADR 0029).
+
+- ~~**MCP breadth: resources and prompts.**~~ Shipped as typed client
+  operations — `ListResources`, `ListResourceTemplates`, `ReadResource`,
+  `ListPrompts`, `GetPrompt` — rather than bridged tools, because the
+  protocol makes both application-driven (ADR 0032).
 
 - **Tool search / deferred tool loading.** Model-driven discovery over
   large tool lists. Needs an ADR; may slip behind v1 if skills already
