@@ -187,7 +187,7 @@ func TestOtherToolErrorsStillFailTheRun(t *testing.T) {
 func TestToolPartEventCarriesParts(t *testing.T) {
 	t.Parallel()
 
-	client, agent := testCameraAgent(t,
+	client, _ := testCameraAgent(t,
 		testToolCallResponse("c1", "camera"),
 		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "done"}})
 	var sawParts []model.Part

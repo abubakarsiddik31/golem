@@ -201,7 +201,6 @@ func TestRunPausesOnExternalDeferredTool(t *testing.T) {
 func TestRunDeferredEmitsEventPerPendingCall(t *testing.T) {
 	t.Parallel()
 
-	_, agent, _ := gateClient(t, pauseResponse("delete_file"))
 	var events []golem.RunEvent
 	agent, err := golem.New[gateDeps, string](
 		&queuedModel{responses: []model.Response{pauseResponse("delete_file")}},

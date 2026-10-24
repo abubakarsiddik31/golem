@@ -790,7 +790,7 @@ func buildSimplePDF(text string) []byte {
 	objects := []string{
 		"<</Type /Catalog /Pages 2 0 R>>",
 		"<</Type /Pages /Kids [3 0 R] /Count 1>>",
-		fmt.Sprintf("<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources <</Font <</F1 5 0 R>>>> >>"),
+		"<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources <</Font <</F1 5 0 R>>>> >>",
 		fmt.Sprintf("<</Length %d>>\nstream\n%s\nendstream", len(contentStream), contentStream),
 		"<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>",
 	}
