@@ -72,6 +72,12 @@ type Config struct {
 	// UserAgent identifies the fetcher in requests; empty selects
 	// DefaultUserAgent.
 	UserAgent string
+	// AllowPrivateNetworks permits fetches to loopback, private,
+	// link-local, multicast, unspecified, and carrier-grade NAT
+	// addresses. It is false by default so a model-produced URL cannot
+	// reach internal services or cloud metadata endpoints; set it only
+	// when the agent is meant to fetch from a trusted private network.
+	AllowPrivateNetworks bool
 }
 
 // StatusError reports a completed fetch whose HTTP status was outside
@@ -124,10 +130,7 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 	if cfg.MaxBytes < 0 {
 		return tool.Tool[Deps]{}, fmt.Errorf("webfetch: max bytes must not be negative, got %d", cfg.MaxBytes)
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: DefaultTimeout}
-	}
+	client := guardedClient(cfg.HTTPClient, newAddressGuard(cfg.AllowPrivateNetworks))
 	maxBytes := cfg.MaxBytes
 	if maxBytes == 0 {
 		maxBytes = DefaultMaxBytes

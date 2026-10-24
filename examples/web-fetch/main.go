@@ -33,7 +33,12 @@ func main() {
 	defer server.Close()
 
 	// An ordinary tool.Tool: composes with any agent dependency type.
-	fetch := webfetch.MustNew[struct{}](webfetch.Config{Timeout: 5 * time.Second})
+	// The example's stand-in server is loopback, which the default network
+	// policy blocks, so it opts in explicitly.
+	fetch := webfetch.MustNew[struct{}](webfetch.Config{
+		Timeout:              5 * time.Second,
+		AllowPrivateNetworks: true,
+	})
 
 	client := testmodel.New().Respond(
 		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{

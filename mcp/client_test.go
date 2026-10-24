@@ -66,7 +66,9 @@ func serverReply(id json.RawMessage, result string) []byte {
 	return encoded
 }
 
-// initializeHandler answers initialize and drops notifications.
+// initializeHandler answers server/discover the way a legacy server
+// does — with method-not-found — then performs the initialize
+// handshake and drops notifications.
 func initializeHandler(t *testing.T, extra func(method string, id json.RawMessage, params json.RawMessage) [][]byte) func([]byte) [][]byte {
 	return func(sent []byte) [][]byte {
 		var message rpcMessage
@@ -79,6 +81,14 @@ func initializeHandler(t *testing.T, extra func(method string, id json.RawMessag
 		}
 		if len(message.ID) == 0 {
 			return nil // a notification
+		}
+		if message.Method == "server/discover" {
+			encoded, _ := json.Marshal(rpcMessage{
+				JSONRPC: "2.0",
+				ID:      message.ID,
+				Error:   &rpcError{Code: methodNotFound, Message: "method not found: server/discover"},
+			})
+			return [][]byte{encoded}
 		}
 		if message.Method == "initialize" {
 			return [][]byte{serverReply(message.ID, `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"test-server","version":"1.0"}}`)}
@@ -97,9 +107,27 @@ func TestInitializeHandshake(t *testing.T) {
 		t.Fatalf("Initialize error = %v", err)
 	}
 
-	request := decodeSent(t, transport, 0)
+	probe := decodeSent(t, transport, 0)
+	if probe.Method != "server/discover" {
+		t.Fatalf("first message method = %q, want server/discover", probe.Method)
+	}
+	var probeParams struct {
+		Meta struct {
+			ProtocolVersion    string     `json:"io.modelcontextprotocol/protocolVersion"`
+			ClientInfo         ServerInfo `json:"io.modelcontextprotocol/clientInfo"`
+			ClientCapabilities struct{}   `json:"io.modelcontextprotocol/clientCapabilities"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(probe.Params, &probeParams); err != nil {
+		t.Fatalf("server/discover params: %v", err)
+	}
+	if probeParams.Meta.ProtocolVersion != modernProtocolVersion || probeParams.Meta.ClientInfo.Name != "golem" {
+		t.Errorf("server/discover metadata = %+v", probeParams.Meta)
+	}
+
+	request := decodeSent(t, transport, 1)
 	if request.Method != "initialize" {
-		t.Fatalf("first message method = %q, want initialize", request.Method)
+		t.Fatalf("second message method = %q, want initialize", request.Method)
 	}
 	var params struct {
 		ProtocolVersion string     `json:"protocolVersion"`
@@ -108,23 +136,26 @@ func TestInitializeHandshake(t *testing.T) {
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		t.Fatalf("initialize params: %v", err)
 	}
-	if params.ProtocolVersion != protocolVersion || params.ClientInfo.Name != "golem" {
+	if params.ProtocolVersion != legacyProtocolVersion || params.ClientInfo.Name != "golem" {
 		t.Errorf("initialize params = %+v", params)
 	}
-	initialized := decodeSent(t, transport, 1)
+	initialized := decodeSent(t, transport, 2)
 	if initialized.Method != "notifications/initialized" || len(initialized.ID) > 0 {
-		t.Errorf("second message = %+v, want an initialized notification", initialized)
+		t.Errorf("third message = %+v, want an initialized notification", initialized)
 	}
 	if got := client.Server(); got.Name != "test-server" || got.Version != "1.0" {
 		t.Errorf("Server() = %+v", got)
+	}
+	if got := client.ProtocolVersion(); got != legacyProtocolVersion {
+		t.Errorf("ProtocolVersion() = %q, want %q", got, legacyProtocolVersion)
 	}
 
 	// A second Initialize is a no-op.
 	if err := client.Initialize(context.Background()); err != nil {
 		t.Fatalf("second Initialize error = %v", err)
 	}
-	if len(transport.sent) != 2 {
-		t.Errorf("sent %d messages after re-initialize, want 2", len(transport.sent))
+	if len(transport.sent) != 3 {
+		t.Errorf("sent %d messages after re-initialize, want 3", len(transport.sent))
 	}
 }
 
@@ -141,15 +172,26 @@ func TestOperationsRequireInitialization(t *testing.T) {
 func TestInitializeProtocolError(t *testing.T) {
 	transport := &funcTransport{handle: func(sent []byte) [][]byte {
 		var message rpcMessage
-		if err := json.Unmarshal(sent, &message); err != nil || message.Method != "initialize" || len(message.ID) == 0 {
+		if err := json.Unmarshal(sent, &message); err != nil || len(message.ID) == 0 {
 			return nil
 		}
-		encoded, _ := json.Marshal(rpcMessage{
-			JSONRPC: "2.0",
-			ID:      message.ID,
-			Error:   &rpcError{Code: -32602, Message: "invalid params"},
-		})
-		return [][]byte{encoded}
+		switch message.Method {
+		case "server/discover":
+			encoded, _ := json.Marshal(rpcMessage{
+				JSONRPC: "2.0",
+				ID:      message.ID,
+				Error:   &rpcError{Code: methodNotFound, Message: "method not found: server/discover"},
+			})
+			return [][]byte{encoded}
+		case "initialize":
+			encoded, _ := json.Marshal(rpcMessage{
+				JSONRPC: "2.0",
+				ID:      message.ID,
+				Error:   &rpcError{Code: -32602, Message: "invalid params"},
+			})
+			return [][]byte{encoded}
+		}
+		return nil
 	}}
 	if err := NewClient(transport).Initialize(context.Background()); err == nil {
 		t.Fatal("Initialize should fail on an error response")
@@ -158,6 +200,225 @@ func TestInitializeProtocolError(t *testing.T) {
 		if !errors.As(err, &protocolErr) || protocolErr.Code != -32602 {
 			t.Errorf("Initialize error = %v, want *ProtocolError code -32602", err)
 		}
+	}
+}
+
+// modernHandler answers server/discover with a modern discovery result
+// and routes later requests to extra.
+func modernHandler(t *testing.T, extra func(method string, id json.RawMessage, params json.RawMessage) [][]byte) func([]byte) [][]byte {
+	return func(sent []byte) [][]byte {
+		var message rpcMessage
+		if err := json.Unmarshal(sent, &message); err != nil {
+			t.Errorf("sent message is not valid JSON-RPC: %v", err)
+			return nil
+		}
+		if message.Method == "" || len(message.ID) == 0 {
+			return nil // a reply or notification
+		}
+		if message.Method == "server/discover" {
+			return [][]byte{serverReply(message.ID, `{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}},"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"modern-server","version":"3.0"}}}`)}
+		}
+		if extra != nil {
+			return extra(message.Method, message.ID, message.Params)
+		}
+		return nil
+	}
+}
+
+// assertModernMeta fails unless params carries the required modern
+// per-request metadata.
+func assertModernMeta(t *testing.T, method string, params json.RawMessage) {
+	t.Helper()
+	var request struct {
+		Meta struct {
+			ProtocolVersion    string     `json:"io.modelcontextprotocol/protocolVersion"`
+			ClientInfo         ServerInfo `json:"io.modelcontextprotocol/clientInfo"`
+			ClientCapabilities struct{}   `json:"io.modelcontextprotocol/clientCapabilities"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(params, &request); err != nil {
+		t.Fatalf("%s params: %v", method, err)
+	}
+	if request.Meta.ProtocolVersion != modernProtocolVersion || request.Meta.ClientInfo.Name != "golem" {
+		t.Errorf("%s metadata = %+v, want the modern revision and client identity", method, request.Meta)
+	}
+}
+
+func TestInitializeNegotiatesModernEra(t *testing.T) {
+	transport := &funcTransport{handle: modernHandler(t, nil)}
+	client := NewClient(transport)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	if got := client.ProtocolVersion(); got != modernProtocolVersion {
+		t.Errorf("ProtocolVersion() = %q, want %q", got, modernProtocolVersion)
+	}
+	if got := client.Server(); got.Name != "modern-server" || got.Version != "3.0" {
+		t.Errorf("Server() = %+v, want the _meta identity", got)
+	}
+	if len(transport.sent) != 1 {
+		t.Fatalf("sent %d messages, want only the discovery probe", len(transport.sent))
+	}
+	if probe := decodeSent(t, transport, 0); probe.Method != "server/discover" {
+		t.Errorf("first message method = %q, want server/discover", probe.Method)
+	}
+}
+
+func TestModernRequestsCarryMetadata(t *testing.T) {
+	transport := &funcTransport{handle: modernHandler(t, func(method string, id json.RawMessage, params json.RawMessage) [][]byte {
+		assertModernMeta(t, method, params)
+		switch method {
+		case "tools/list":
+			return [][]byte{serverReply(id, `{"resultType":"complete","tools":[{"name":"echo","inputSchema":{"type":"object"}}]}`)}
+		case "tools/call":
+			return [][]byte{serverReply(id, `{"resultType":"complete","content":[{"type":"text","text":"hi"}],"isError":false}`)}
+		}
+		t.Errorf("unexpected method %q", method)
+		return nil
+	})}
+	client := NewClient(transport)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	tools, err := AsTools[struct{}](context.Background(), client)
+	if err != nil {
+		t.Fatalf("AsTools error = %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "echo" {
+		t.Fatalf("AsTools = %+v, want one echo tool", tools)
+	}
+	result, err := tools[0].Exec(context.Background(), struct{}{}, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Exec error = %v", err)
+	}
+	if result.Text != "hi" {
+		t.Errorf("Exec result = %q, want %q", result, "hi")
+	}
+}
+
+func TestModernUnsupportedProtocolVersion(t *testing.T) {
+	transport := &funcTransport{handle: func(sent []byte) [][]byte {
+		var message rpcMessage
+		if err := json.Unmarshal(sent, &message); err != nil || message.Method != "server/discover" || len(message.ID) == 0 {
+			return nil
+		}
+		encoded, _ := json.Marshal(rpcMessage{
+			JSONRPC: "2.0",
+			ID:      message.ID,
+			Error: &rpcError{
+				Code:    unsupportedProtocolVersionCode,
+				Message: "unsupported protocol version",
+				Data:    json.RawMessage(`{"requested":"2026-07-28","supported":["2025-11-25"]}`),
+			},
+		})
+		return [][]byte{encoded}
+	}}
+	err := NewClient(transport).Initialize(context.Background())
+	var unsupported *UnsupportedProtocolVersionError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Initialize error = %v, want *UnsupportedProtocolVersionError", err)
+	}
+	if unsupported.Requested != modernProtocolVersion {
+		t.Errorf("Requested = %q, want %q", unsupported.Requested, modernProtocolVersion)
+	}
+	if len(unsupported.Supported) != 1 || unsupported.Supported[0] != "2025-11-25" {
+		t.Errorf("Supported = %v, want [2025-11-25]", unsupported.Supported)
+	}
+	if !strings.Contains(err.Error(), "2025-11-25") {
+		t.Errorf("Error() = %q, want the supported list", err)
+	}
+	if len(transport.sent) != 1 {
+		t.Errorf("sent %d messages, want no legacy fallback after a recognized modern error", len(transport.sent))
+	}
+}
+
+func TestModernDiscoveryWithoutClientVersionIsRefused(t *testing.T) {
+	transport := &funcTransport{handle: func(sent []byte) [][]byte {
+		var message rpcMessage
+		if err := json.Unmarshal(sent, &message); err != nil || message.Method != "server/discover" || len(message.ID) == 0 {
+			return nil
+		}
+		return [][]byte{serverReply(message.ID, `{"resultType":"complete","supportedVersions":["2025-11-25"],"capabilities":{}}`)}
+	}}
+	err := NewClient(transport).Initialize(context.Background())
+	var unsupported *UnsupportedProtocolVersionError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Initialize error = %v, want *UnsupportedProtocolVersionError", err)
+	}
+	if len(unsupported.Supported) != 1 || unsupported.Supported[0] != "2025-11-25" {
+		t.Errorf("Supported = %v, want the advertised versions", unsupported.Supported)
+	}
+}
+
+func TestModernInputRequiredIsReported(t *testing.T) {
+	transport := &funcTransport{handle: modernHandler(t, func(method string, id json.RawMessage, _ json.RawMessage) [][]byte {
+		if method != "tools/call" {
+			return nil
+		}
+		return [][]byte{serverReply(id, `{"resultType":"input_required","inputRequests":[{"method":"elicitation/create"}]}`)}
+	})}
+	client := NewClient(transport)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	_, err := client.CallTool(context.Background(), "echo", nil)
+	var input *InputRequiredError
+	if !errors.As(err, &input) {
+		t.Fatalf("CallTool error = %v, want *InputRequiredError", err)
+	}
+	if !strings.Contains(string(input.Result), "elicitation/create") {
+		t.Errorf("InputRequiredError.Result = %s, want the server's result", input.Result)
+	}
+}
+
+func TestModernUnknownResultTypeIsRejected(t *testing.T) {
+	transport := &funcTransport{handle: modernHandler(t, func(method string, id json.RawMessage, _ json.RawMessage) [][]byte {
+		if method != "tools/list" {
+			return nil
+		}
+		return [][]byte{serverReply(id, `{"resultType":"streaming","tools":[]}`)}
+	})}
+	client := NewClient(transport)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	_, err := client.ListTools(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown resultType") {
+		t.Errorf("ListTools error = %v, want an unknown-resultType failure", err)
+	}
+}
+
+func TestModernServerRequestIsRejected(t *testing.T) {
+	transport := &funcTransport{handle: modernHandler(t, func(method string, id json.RawMessage, _ json.RawMessage) [][]byte {
+		if method != "tools/call" {
+			return nil
+		}
+		request, _ := json.Marshal(rpcMessage{JSONRPC: "2.0", ID: json.RawMessage("7"), Method: "roots/list"})
+		return [][]byte{request, serverReply(id, `{"resultType":"complete","content":[]}`)}
+	})}
+	client := NewClient(transport)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	_, err := client.CallTool(context.Background(), "echo", nil)
+	if err == nil || !strings.Contains(err.Error(), "stateless session") {
+		t.Fatalf("CallTool error = %v, want a stateless-session failure", err)
+	}
+	for i := range transport.sent {
+		if string(decodeSent(t, transport, i).ID) == "7" {
+			t.Error("client answered a server request in a modern session")
+		}
+	}
+}
+
+func TestNegotiationErrorMessages(t *testing.T) {
+	unsupported := &UnsupportedProtocolVersionError{Requested: modernProtocolVersion}
+	if want := "mcp: server does not support protocol version " + modernProtocolVersion; unsupported.Error() != want {
+		t.Errorf("Error() = %q, want %q", unsupported.Error(), want)
+	}
+	input := &InputRequiredError{}
+	if want := "mcp: server requested client input, which this client does not support"; input.Error() != want {
+		t.Errorf("Error() = %q, want %q", input.Error(), want)
 	}
 }
 

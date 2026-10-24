@@ -110,7 +110,7 @@ flowchart TB
 go get github.com/abubakarsiddik31/golem
 ```
 
-Requires **Go 1.26.5** or newer. Zero external dependencies.
+Requires **Go 1.26** or newer. Zero external dependencies.
 
 ---
 

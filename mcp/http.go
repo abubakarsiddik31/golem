@@ -4,12 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// errorBodyLimit bounds how much of a non-2xx response body is kept for
+// the client's protocol-error detection.
+const errorBodyLimit = 64 << 10
 
 // HTTPConfig configures a streamable-HTTP transport: every message is
 // one POST to the endpoint, and responses arrive either as a JSON body
@@ -33,11 +39,16 @@ type HTTPConfig struct {
 // the response carries; Read returns staged messages, then blocks
 // until the context is done. The session header a server assigns at
 // initialize is captured and sent on every later request.
+//
+// A request carrying modern per-request _meta is sent with the modern
+// protocol headers and never with a session header, because the modern
+// revision is stateless.
 type HTTPTransport struct {
 	endpoint   *url.URL
 	client     *http.Client
 	header     http.Header
 	sessionID  string
+	errorBody  []byte
 	pending    [][]byte
 	body       io.ReadCloser
 	bodyReader *bufio.Reader
@@ -91,25 +102,42 @@ func (e *HTTPStatusError) Error() string {
 // them, and a bodyless 2xx (a notification's Accepted) stages nothing.
 func (t *HTTPTransport) Send(ctx context.Context, message []byte) error {
 	t.discardBody()
+	t.errorBody = nil
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint.String(), bytes.NewReader(message))
 	if err != nil {
 		return fmt.Errorf("mcp: build request: %w", err)
 	}
+	meta := parseRequestMetadata(message)
 	request.Header = t.header.Clone()
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
-	if t.sessionID != "" {
+	if meta.version != "" {
+		// Modern revision: stateless, with the body mirrored into
+		// headers so intermediaries can route without parsing it.
+		request.Header.Set("MCP-Protocol-Version", meta.version)
+		request.Header.Del("Mcp-Session-Id")
+		if meta.method != "" {
+			request.Header.Set("Mcp-Method", meta.method)
+		}
+		if meta.name != "" {
+			request.Header.Set("Mcp-Name", encodeHeaderValue(meta.name))
+		}
+	} else if t.sessionID != "" {
 		request.Header.Set("Mcp-Session-Id", t.sessionID)
 	}
 	response, err := t.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("mcp: POST %s: %w", t.endpoint.String(), err)
 	}
-	if session := response.Header.Get("Mcp-Session-Id"); session != "" {
-		t.sessionID = session
+	if meta.version == "" {
+		if session := response.Header.Get("Mcp-Session-Id"); session != "" {
+			t.sessionID = session
+		}
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
 		response.Body.Close()
+		t.errorBody = body
 		return &HTTPStatusError{StatusCode: response.StatusCode, URL: t.endpoint.String()}
 	}
 
@@ -163,6 +191,75 @@ func (t *HTTPTransport) Read(ctx context.Context) ([]byte, error) {
 func (t *HTTPTransport) Close() error {
 	t.discardBody()
 	return nil
+}
+
+// lastErrorBody returns the body of the most recent non-2xx response,
+// so the client can recognize a modern protocol error that arrives
+// with an HTTP error status.
+func (t *HTTPTransport) lastErrorBody() []byte {
+	return t.errorBody
+}
+
+// requestMetadata is the modern header material derived from a request
+// body. An empty version means the message is a legacy one.
+type requestMetadata struct {
+	version string
+	method  string
+	name    string
+}
+
+// parseRequestMetadata reads the modern per-request _meta and the
+// method and name fields the transport mirrors into headers. A message
+// the transport cannot parse, or one without modern _meta, yields the
+// zero value and is sent as a legacy message.
+func parseRequestMetadata(message []byte) requestMetadata {
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+			URI  string `json:"uri"`
+			Meta struct {
+				ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
+			} `json:"_meta"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(message, &request); err != nil {
+		return requestMetadata{}
+	}
+	meta := requestMetadata{version: request.Params.Meta.ProtocolVersion, method: request.Method}
+	switch request.Method {
+	case "tools/call", "prompts/get":
+		meta.name = request.Params.Name
+	case "resources/read":
+		meta.name = request.Params.URI
+	}
+	return meta
+}
+
+// encodeHeaderValue renders a name for the Mcp-Name header. Values that
+// are not plainly header-safe, and values that look like the Base64
+// sentinel itself, are encoded so the server can decode them
+// unambiguously.
+func encodeHeaderValue(value string) string {
+	if plainHeaderValue(value) {
+		return value
+	}
+	return "=?base64?" + base64.StdEncoding.EncodeToString([]byte(value)) + "?="
+}
+
+// plainHeaderValue reports whether value can be sent as-is: printable
+// ASCII with no surrounding whitespace, and not shaped like the Base64
+// sentinel.
+func plainHeaderValue(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return !strings.HasPrefix(value, "=?base64?") || !strings.HasSuffix(value, "?=")
 }
 
 // discardBody drops an unfinished event-stream body.

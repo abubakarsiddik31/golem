@@ -99,6 +99,10 @@ func serve() {
 			continue
 		}
 		switch message.Method {
+		case "server/discover":
+			// A legacy server: the modern probe is refused, so the
+			// client falls back to the initialize handshake.
+			replyError(out, message.ID, -32601, "method not found: server/discover")
 		case "initialize":
 			reply(out, message.ID, `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"echo-server","version":"1.0"}}`)
 		case "tools/list":
@@ -115,6 +119,20 @@ func reply(out *bufio.Writer, id json.RawMessage, result string) {
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
 	}{JSONRPC: "2.0", ID: id, Result: json.RawMessage(result)})
+	if err != nil {
+		return
+	}
+	out.Write(encoded)
+	out.WriteByte('\n')
+	out.Flush()
+}
+
+func replyError(out *bufio.Writer, id json.RawMessage, code int, message string) {
+	encoded, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	})
 	if err != nil {
 		return
 	}

@@ -18,10 +18,10 @@ type xlsxSheetInfo struct {
 	Path    string
 }
 
-func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
+func extractXlsx(src *zipSource, opts Options) (*Document, error) {
 	// 1. Parse xl/workbook.xml for sheet names and r:ids
 	var wbFile *zip.File
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "xl/workbook.xml" {
 			wbFile = f
 			break
@@ -31,7 +31,7 @@ func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
 		return nil, fmt.Errorf("docextract: invalid xlsx: missing xl/workbook.xml")
 	}
 
-	rc, err := wbFile.Open()
+	rc, err := src.open(wbFile)
 	if err != nil {
 		return nil, fmt.Errorf("docextract: open xl/workbook.xml: %w", err)
 	}
@@ -43,9 +43,9 @@ func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
 
 	// 2. Parse xl/_rels/workbook.xml.rels for target paths
 	rels := make(map[string]string)
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "xl/_rels/workbook.xml.rels" {
-			rc, err := f.Open()
+			rc, err := src.open(f)
 			if err == nil {
 				rels = parseDocxRels(rc)
 				rc.Close()
@@ -70,9 +70,9 @@ func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
 
 	// 3. Parse shared strings if present
 	var sharedStrings []string
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "xl/sharedStrings.xml" {
-			rc, err := f.Open()
+			rc, err := src.open(f)
 			if err == nil {
 				sharedStrings = parseXlsxSharedStrings(rc)
 				rc.Close()
@@ -110,7 +110,7 @@ func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
 		}
 
 		var sheetFile *zip.File
-		for _, f := range r.File {
+		for _, f := range src.files {
 			if f.Name == s.Path {
 				sheetFile = f
 				break
@@ -120,8 +120,11 @@ func extractXlsx(r *zip.Reader, opts Options) (*Document, error) {
 			continue
 		}
 
-		rc, err := sheetFile.Open()
+		rc, err := src.open(sheetFile)
 		if err != nil {
+			if isDecompressionLimit(err) {
+				return nil, err
+			}
 			continue
 		}
 		grid, totalRows, totalCols, err := parseXlsxWorksheet(rc, sharedStrings, maxRows)

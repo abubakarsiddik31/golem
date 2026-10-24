@@ -9,12 +9,12 @@ import (
 )
 
 // extractDocx extracts structured Markdown and an outline from a Word .docx archive.
-func extractDocx(r *zip.Reader, opts Options) (*Document, error) {
+func extractDocx(src *zipSource, opts Options) (*Document, error) {
 	// 1. Read relationships from word/_rels/document.xml.rels for hyperlinks and media.
 	rels := make(map[string]string)
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "word/_rels/document.xml.rels" {
-			rc, err := f.Open()
+			rc, err := src.open(f)
 			if err == nil {
 				rels = parseDocxRels(rc)
 				rc.Close()
@@ -25,7 +25,7 @@ func extractDocx(r *zip.Reader, opts Options) (*Document, error) {
 
 	// 2. Locate word/document.xml.
 	var docFile *zip.File
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "word/document.xml" {
 			docFile = f
 			break
@@ -35,7 +35,7 @@ func extractDocx(r *zip.Reader, opts Options) (*Document, error) {
 		return nil, fmt.Errorf("docextract: invalid docx: missing word/document.xml")
 	}
 
-	rc, err := docFile.Open()
+	rc, err := src.open(docFile)
 	if err != nil {
 		return nil, fmt.Errorf("docextract: open word/document.xml: %w", err)
 	}

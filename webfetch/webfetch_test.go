@@ -80,7 +80,7 @@ func TestFetchExtractsHTML(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{})
+	fetched := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 	result, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
@@ -109,7 +109,7 @@ func TestFetchPassesThroughTextTypes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			fetched := MustNew[struct{}](Config{})
+			fetched := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 			result, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 			if err != nil {
 				t.Fatalf("Exec error = %v", err)
@@ -127,7 +127,7 @@ func TestFetchNon2xxFailsWithStatusError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{})
+	fetched := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 	_, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 	if err == nil {
 		t.Fatal("Exec should fail on a non-2xx response")
@@ -152,7 +152,7 @@ func TestFetchUnsupportedContentType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{})
+	fetched := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 	_, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 	var typeErr *UnsupportedContentTypeError
 	if !errors.As(err, &typeErr) {
@@ -181,13 +181,30 @@ func TestFetchMissingContentTypeRejected(t *testing.T) {
 		}, nil
 	})}
 	fetched := MustNew[struct{}](Config{HTTPClient: client})
-	_, err := fetched.Exec(context.Background(), struct{}{}, urlArgs("https://example.com/unlabeled"))
+	// A documentation-range IP literal keeps the guard's resolution
+	// check out of the test and needs no network access.
+	_, err := fetched.Exec(context.Background(), struct{}{}, urlArgs("https://203.0.113.10/unlabeled"))
 	var typeErr *UnsupportedContentTypeError
 	if !errors.As(err, &typeErr) {
 		t.Fatalf("Exec error = %v, want *UnsupportedContentTypeError for an unlabeled body", err)
 	}
 	if typeErr.ContentType != "" {
 		t.Errorf("ContentType = %q, want empty for a missing header", typeErr.ContentType)
+	}
+}
+
+func TestErrorMessages(t *testing.T) {
+	status := &StatusError{StatusCode: http.StatusForbidden, URL: "https://example.com/private"}
+	if want := "webfetch: GET https://example.com/private: status 403 Forbidden"; status.Error() != want {
+		t.Errorf("StatusError.Error() = %q, want %q", status.Error(), want)
+	}
+	unsupported := &UnsupportedContentTypeError{ContentType: "image/png", URL: "https://example.com/image"}
+	if want := `webfetch: GET https://example.com/image: unsupported content type "image/png"`; unsupported.Error() != want {
+		t.Errorf("UnsupportedContentTypeError.Error() = %q, want %q", unsupported.Error(), want)
+	}
+	unlabeled := &UnsupportedContentTypeError{URL: "https://example.com/blob"}
+	if want := "webfetch: GET https://example.com/blob: no content type and the body is not text-like"; unlabeled.Error() != want {
+		t.Errorf("UnsupportedContentTypeError.Error() = %q, want %q", unlabeled.Error(), want)
 	}
 }
 
@@ -198,7 +215,7 @@ func TestFetchTruncatesLargeBodies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{MaxBytes: 16})
+	fetched := MustNew[struct{}](Config{MaxBytes: 16, AllowPrivateNetworks: true})
 	result, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 	if err != nil {
 		t.Fatalf("Exec error = %v", err)
@@ -216,7 +233,7 @@ func TestFetchTimeoutIsNotCorrectable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{Timeout: time.Millisecond})
+	fetched := MustNew[struct{}](Config{Timeout: time.Millisecond, AllowPrivateNetworks: true})
 	_, err := fetched.Exec(context.Background(), struct{}{}, urlArgs(server.URL))
 	if err == nil {
 		t.Fatal("Exec should fail when the fetch exceeds its timeout")
@@ -264,11 +281,11 @@ func TestUserAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	byDefault := MustNew[struct{}](Config{})
+	byDefault := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 	if _, err := byDefault.Exec(context.Background(), struct{}{}, urlArgs(server.URL)); err != nil {
 		t.Fatalf("default client Exec error = %v", err)
 	}
-	custom := MustNew[struct{}](Config{UserAgent: "research-bot/1"})
+	custom := MustNew[struct{}](Config{UserAgent: "research-bot/1", AllowPrivateNetworks: true})
 	if _, err := custom.Exec(context.Background(), struct{}{}, urlArgs(server.URL)); err != nil {
 		t.Fatalf("custom client Exec error = %v", err)
 	}
@@ -285,7 +302,7 @@ func TestComposesWithAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetched := MustNew[struct{}](Config{})
+	fetched := MustNew[struct{}](Config{AllowPrivateNetworks: true})
 	client := testmodel.New().Respond(
 		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
 			{ID: "call-1", Name: ToolName, Args: urlArgs(server.URL)},
