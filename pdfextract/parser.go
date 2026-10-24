@@ -3,6 +3,7 @@ package pdfextract
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/ascii85"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -74,12 +75,14 @@ type VectorRect struct {
 
 // PageImage represents an embedded image placed on a page.
 type PageImage struct {
-	Name   string
-	BBox   Rect
-	Format string // "jpeg", "png", "raw"
-	Width  int
-	Height int
-	Data   []byte
+	Name             string
+	BBox             Rect
+	Format           string // "jpeg", "png", "raw"
+	Width            int
+	Height           int
+	Data             []byte
+	ColorSpace       string // /DeviceRGB, /DeviceGray, /DeviceCMYK, ...
+	BitsPerComponent int    // 1, 2, 4, 8, or 16; 0 when unspecified
 }
 
 // ParsedPage holds all raw extracted elements from a single PDF page.
@@ -158,10 +161,38 @@ type PDFDoc struct {
 	pages        []pdfDict
 	root         pdfDict
 	rootRef      any
+	encrypted    bool
 }
 
+// Limits that keep a malformed or hostile PDF from exhausting the process.
+// They are deliberately generous: real documents stay far below every one.
+const (
+	// maxPageTreeDepth bounds /Pages recursion so a /Kids cycle fails instead
+	// of overflowing the stack.
+	maxPageTreeDepth = 64
+	// maxObjectDepth bounds nested dictionaries and arrays in parseObject.
+	maxObjectDepth = 256
+	// maxDecompressedStreamBytes bounds a single FlateDecode expansion.
+	maxDecompressedStreamBytes = 64 << 20 // 64 MiB
+	// maxXRefFieldWidth bounds each /W field; valid widths are 1-8 bytes.
+	maxXRefFieldWidth = 8
+)
+
+// ErrEncrypted reports a PDF whose streams are encrypted. Decryption is not
+// implemented, so callers get a typed error instead of garbled text.
+var ErrEncrypted = errors.New("pdfextract: encrypted PDFs are not supported")
+
 // ParsePDF parses raw PDF bytes into a PDFDoc structure.
-func ParsePDF(data []byte) (*PDFDoc, error) {
+func ParsePDF(data []byte) (doc *PDFDoc, err error) {
+	// A parser bug or a hostile file must return an error, not take the host
+	// process down. Recover at the boundary and report the failure.
+	defer func() {
+		if r := recover(); r != nil {
+			doc = nil
+			err = fmt.Errorf("pdfextract: malformed PDF: %v", r)
+		}
+	}()
+
 	if len(data) < 8 || !bytes.HasPrefix(data, []byte("%PDF-")) {
 		// Attempt to find %PDF- marker within the first 1024 bytes (some files have junk headers)
 		idx := bytes.Index(data, []byte("%PDF-"))
@@ -171,7 +202,7 @@ func ParsePDF(data []byte) (*PDFDoc, error) {
 		data = data[idx:]
 	}
 
-	doc := &PDFDoc{
+	doc = &PDFDoc{
 		data:         data,
 		objects:      make(map[pdfRef]any),
 		xrefOffsets:  make(map[uint32]int64),
@@ -184,6 +215,12 @@ func ParsePDF(data []byte) (*PDFDoc, error) {
 		if scanErr := doc.linearScanObjects(); scanErr != nil {
 			return nil, fmt.Errorf("pdfextract: failed to parse PDF objects: %w", err)
 		}
+	}
+
+	// Encryption is fatal: the object graph parses, but every stream and
+	// string is ciphertext, so continuing would emit garbage as text.
+	if doc.encrypted {
+		return nil, ErrEncrypted
 	}
 
 	if err := doc.resolvePages(); err != nil {
@@ -231,6 +268,9 @@ func (d *PDFDoc) readXRefsAndTrailer() error {
 				break
 			}
 			if dict, ok := trailerObj.(pdfDict); ok {
+				if _, hasEncrypt := dict["Encrypt"]; hasEncrypt {
+					d.encrypted = true
+				}
 				if rootRef, hasRoot := dict["Root"]; hasRoot && d.rootRef == nil {
 					d.rootRef = rootRef
 				}
@@ -248,6 +288,9 @@ func (d *PDFDoc) readXRefsAndTrailer() error {
 			objNum, genNum, val, err := d.parseIndirectObjectAt(currOffset)
 			if err == nil {
 				if stream, ok := val.(pdfStream); ok {
+					if _, hasEncrypt := stream.Dict["Encrypt"]; hasEncrypt {
+						d.encrypted = true
+					}
 					if typeVal, ok := stream.Dict["Type"].(pdfName); ok && typeVal == "XRef" {
 						if err := d.parseXRefStream(stream); err == nil {
 							if prev, hasPrev := stream.Dict["Prev"]; hasPrev {
@@ -362,17 +405,20 @@ func (d *PDFDoc) parseXRefStream(stream pdfStream) error {
 	w0, _ := toInt(wArr[0])
 	w1, _ := toInt(wArr[1])
 	w2, _ := toInt(wArr[2])
+	// Widths are attacker-controlled and index into the entry buffer; a
+	// negative or oversized width would slice out of bounds.
+	if w0 < 0 || w1 < 0 || w2 < 0 ||
+		w0 > maxXRefFieldWidth || w1 > maxXRefFieldWidth || w2 > maxXRefFieldWidth {
+		return errors.New("invalid field width in XRef stream")
+	}
 	entrySize := int(w0 + w1 + w2)
 	if entrySize <= 0 {
 		return errors.New("invalid entry size in XRef stream")
 	}
 
-	data := stream.Data
-	if filter, ok := stream.Dict["Filter"].(pdfName); ok && filter == "FlateDecode" {
-		decoded, err := decompressZlib(data)
-		if err == nil {
-			data = decoded
-		}
+	data, err := d.decodeStream(stream)
+	if err != nil {
+		return err
 	}
 
 	// Handle Predictor if present
@@ -381,6 +427,9 @@ func (d *PDFDoc) parseXRefStream(stream pdfStream) error {
 			columns := int(entrySize)
 			if c, ok := toInt(parms["Columns"]); ok && c > 0 {
 				columns = int(c)
+			}
+			if columns <= 0 || columns > 1<<20 {
+				return errors.New("invalid Columns in XRef stream DecodeParms")
 			}
 			unpredicted, err := undoPNGPrediction(data, columns)
 			if err == nil {
@@ -715,6 +764,14 @@ func (d *PDFDoc) resolvePages() error {
 }
 
 func (d *PDFDoc) collectPages(dict pdfDict) error {
+	return d.collectPagesAt(dict, 0)
+}
+
+func (d *PDFDoc) collectPagesAt(dict pdfDict, depth int) error {
+	if depth > maxPageTreeDepth {
+		return errors.New("pdfextract: page tree is too deep (possible cycle)")
+	}
+
 	nodeType, _ := dict["Type"].(pdfName)
 	if nodeType == "Page" {
 		d.pages = append(d.pages, dict)
@@ -743,7 +800,7 @@ func (d *PDFDoc) collectPages(dict pdfDict) error {
 		if !ok {
 			continue
 		}
-		if err := d.collectPages(childDict); err != nil {
+		if err := d.collectPagesAt(childDict, depth+1); err != nil {
 			return err
 		}
 	}
@@ -806,7 +863,15 @@ func pageRotationMatrix(rotate int, mb Rect) (Matrix, Rect) {
 }
 
 // ExtractPage parses and extracts all text, lines, rects, and images on page index (0-based).
-func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
+func (d *PDFDoc) ExtractPage(pageIndex int) (page *ParsedPage, err error) {
+	// A malformed content stream must fail this page, not crash the process.
+	defer func() {
+		if r := recover(); r != nil {
+			page = nil
+			err = fmt.Errorf("pdfextract: page %d: malformed content: %v", pageIndex+1, r)
+		}
+	}()
+
 	if pageIndex < 0 || pageIndex >= len(d.pages) {
 		return nil, fmt.Errorf("pdfextract: page index %d out of bounds (total %d)", pageIndex, len(d.pages))
 	}
@@ -865,37 +930,8 @@ func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
 		}
 	}
 
-	// Resolve Fonts in Resources
-	fonts := make(map[string]*pdfFont)
-	if fontVal, ok := resourcesDict["Font"]; ok {
-		if fontResolved, err := d.Resolve(fontVal); err == nil {
-			if fDict, ok := fontResolved.(pdfDict); ok {
-				for fname, fRef := range fDict {
-					if fObj, err := d.Resolve(fRef); err == nil {
-						if fontSpec, ok := fObj.(pdfDict); ok {
-							fonts[fname] = d.parseFont(fontSpec)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Resolve XObjects in Resources
-	xobjects := make(map[string]pdfStream)
-	if xVal, ok := resourcesDict["XObject"]; ok {
-		if xResolved, err := d.Resolve(xVal); err == nil {
-			if xDict, ok := xResolved.(pdfDict); ok {
-				for xname, xRef := range xDict {
-					if xObj, err := d.Resolve(xRef); err == nil {
-						if stream, ok := xObj.(pdfStream); ok {
-							xobjects[xname] = stream
-						}
-					}
-				}
-			}
-		}
-	}
+	// Resolve fonts and XObjects declared by the page resources.
+	fonts, xobjects := d.loadFontsAndXObjects(resourcesDict)
 
 	// Get Content stream(s)
 	var contentBytes []byte
@@ -927,28 +963,128 @@ func (d *PDFDoc) ExtractPage(pageIndex int) (*ParsedPage, error) {
 
 	rotMatrix, visualMediaBox := pageRotationMatrix(rotate, mediaBox)
 
-	page := &ParsedPage{
+	page = &ParsedPage{
 		Index:    pageIndex,
 		MediaBox: visualMediaBox,
 	}
 
 	if len(contentBytes) > 0 {
-		interpreter := newContentInterpreter(contentBytes, fonts, xobjects, visualMediaBox, rotMatrix)
+		interpreter := newContentInterpreter(contentBytes, fonts, xobjects, visualMediaBox, rotMatrix, d, 0)
 		interpreter.interpret(page)
 	}
 
 	return page, nil
 }
 
+// loadFontsAndXObjects resolves the /Font and /XObject entries of a resource
+// dictionary. It is shared by page resources and Form XObject resources, which
+// carry their own dictionary and often override the page's.
+func (d *PDFDoc) loadFontsAndXObjects(resourcesDict pdfDict) (map[string]*pdfFont, map[string]pdfStream) {
+	fonts := make(map[string]*pdfFont)
+	if fontVal, ok := resourcesDict["Font"]; ok {
+		if fontResolved, err := d.Resolve(fontVal); err == nil {
+			if fDict, ok := fontResolved.(pdfDict); ok {
+				for fname, fRef := range fDict {
+					if fObj, err := d.Resolve(fRef); err == nil {
+						if fontSpec, ok := fObj.(pdfDict); ok {
+							fonts[fname] = d.parseFont(fontSpec)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	xobjects := make(map[string]pdfStream)
+	if xVal, ok := resourcesDict["XObject"]; ok {
+		if xResolved, err := d.Resolve(xVal); err == nil {
+			if xDict, ok := xResolved.(pdfDict); ok {
+				for xname, xRef := range xDict {
+					if xObj, err := d.Resolve(xRef); err == nil {
+						if stream, ok := xObj.(pdfStream); ok {
+							xobjects[xname] = stream
+						}
+					}
+				}
+			}
+		}
+	}
+	return fonts, xobjects
+}
+
 func (d *PDFDoc) decodeStream(stream pdfStream) ([]byte, error) {
 	data := stream.Data
-	if filter, ok := stream.Dict["Filter"].(pdfName); ok && filter == "FlateDecode" {
-		decoded, err := decompressZlib(data)
-		if err == nil {
+	for _, filter := range streamFilters(stream.Dict) {
+		switch filter {
+		case "FlateDecode", "Fl":
+			decoded, err := decompressZlib(data)
+			if err != nil {
+				return nil, fmt.Errorf("pdfextract: flate decode: %w", err)
+			}
 			data = decoded
+		case "ASCII85Decode", "A85":
+			decoded, err := decodeASCII85(data)
+			if err != nil {
+				return nil, fmt.Errorf("pdfextract: ASCII85 decode: %w", err)
+			}
+			data = decoded
+		case "ASCIIHexDecode", "AHx":
+			decoded, err := decodeASCIIHex(data)
+			if err != nil {
+				return nil, fmt.Errorf("pdfextract: ASCIIHex decode: %w", err)
+			}
+			data = decoded
+		case "Crypt":
+			// The identity crypt filter is a no-op.
+		default:
+			return nil, fmt.Errorf("pdfextract: unsupported stream filter %q", filter)
 		}
 	}
 	return data, nil
+}
+
+// streamFilters returns a stream's filters in application order. PDF allows
+// either a single name or an array, and both forms appear in the wild.
+func streamFilters(dict pdfDict) []string {
+	switch f := dict["Filter"].(type) {
+	case pdfName:
+		return []string{string(f)}
+	case pdfArray:
+		out := make([]string, 0, len(f))
+		for _, item := range f {
+			if name, ok := item.(pdfName); ok {
+				out = append(out, string(name))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func decodeASCII85(in []byte) ([]byte, error) {
+	s := strings.TrimSpace(string(in))
+	s = strings.TrimPrefix(s, "<~")
+	s = strings.TrimSuffix(s, "~>")
+	return io.ReadAll(ascii85.NewDecoder(strings.NewReader(s)))
+}
+
+func decodeASCIIHex(in []byte) ([]byte, error) {
+	var sb strings.Builder
+	for _, b := range in {
+		if b == '>' {
+			break
+		}
+		if b == ' ' || b == '\n' || b == '\r' || b == '\t' || b == '\f' {
+			continue
+		}
+		sb.WriteByte(b)
+	}
+	s := sb.String()
+	if len(s)%2 != 0 {
+		s += "0"
+	}
+	return hex.DecodeString(s)
 }
 
 // pdfFont holds font metadata and ToUnicode translation.
@@ -1303,6 +1439,8 @@ type contentInterpreter struct {
 	fonts    map[string]*pdfFont
 	xobjects map[string]pdfStream
 	mediaBox Rect
+	doc      *PDFDoc
+	depth    int
 
 	// Graphics State Stack
 	ctmStack []Matrix
@@ -1319,13 +1457,15 @@ type contentInterpreter struct {
 	currPath []Point
 }
 
-func newContentInterpreter(content []byte, fonts map[string]*pdfFont, xobjects map[string]pdfStream, mediaBox Rect, initialCTM Matrix) *contentInterpreter {
+func newContentInterpreter(content []byte, fonts map[string]*pdfFont, xobjects map[string]pdfStream, mediaBox Rect, initialCTM Matrix, doc *PDFDoc, depth int) *contentInterpreter {
 	tokens := tokenizeContentStream(content)
 	return &contentInterpreter{
 		tokens:     tokens,
 		fonts:      fonts,
 		xobjects:   xobjects,
 		mediaBox:   mediaBox,
+		doc:        doc,
+		depth:      depth,
 		ctmStack:   nil,
 		ctm:        initialCTM,
 		tm:         IdentityMatrix(),
@@ -1576,14 +1716,24 @@ func (ci *contentInterpreter) emitTJ(arrayToken string, page *ParsedPage) {
 	}
 }
 
+// maxFormDepth bounds Form XObject recursion so a self-referencing form fails
+// instead of overflowing the stack.
+const maxFormDepth = 8
+
 func (ci *contentInterpreter) emitXObject(name string, stream pdfStream, page *ParsedPage) {
 	subType, _ := stream.Dict["Subtype"].(pdfName)
-	if subType != "Image" {
-		return
+	switch subType {
+	case "Image":
+		ci.emitImageXObject(name, stream, page)
+	case "Form":
+		ci.emitFormXObject(stream, page)
 	}
+}
 
+func (ci *contentInterpreter) emitImageXObject(name string, stream pdfStream, page *ParsedPage) {
 	width, _ := toInt(stream.Dict["Width"])
 	height, _ := toInt(stream.Dict["Height"])
+	bpc, _ := toInt(stream.Dict["BitsPerComponent"])
 
 	// Determine rendered bounding box on page using CTM
 	// An image in PDF occupies unit square [0,0,1,1] in local space
@@ -1599,26 +1749,98 @@ func (ci *contentInterpreter) emitXObject(name string, stream pdfStream, page *P
 
 	bbox := Rect{X0: minX, Y0: minY, X1: maxX, Y1: maxY}
 
-	format := "raw"
-	data := stream.Data
-	filter, _ := stream.Dict["Filter"].(pdfName)
-	if filter == "DCTDecode" {
-		format = "jpeg"
-	} else if filter == "FlateDecode" {
-		format = "png"
-		if decoded, err := decompressZlib(stream.Data); err == nil {
-			data = decoded
+	format, data := decodeImageData(stream)
+
+	page.Images = append(page.Images, PageImage{
+		Name:             name,
+		BBox:             bbox,
+		Format:           format,
+		Width:            int(width),
+		Height:           int(height),
+		Data:             data,
+		ColorSpace:       imageColorSpace(stream.Dict),
+		BitsPerComponent: int(bpc),
+	})
+}
+
+// emitFormXObject interprets a Form XObject's content stream in place. Forms
+// carry their own resources and an optional matrix, and are extremely common
+// for headers, footers, and watermarks.
+func (ci *contentInterpreter) emitFormXObject(stream pdfStream, page *ParsedPage) {
+	if ci.depth >= maxFormDepth || ci.doc == nil {
+		return
+	}
+	content, err := ci.doc.decodeStream(stream)
+	if err != nil || len(content) == 0 {
+		return
+	}
+
+	fonts, xobjects := ci.fonts, ci.xobjects
+	if resVal, ok := stream.Dict["Resources"]; ok {
+		if resObj, err := ci.doc.Resolve(resVal); err == nil {
+			if resDict, ok := resObj.(pdfDict); ok {
+				fonts, xobjects = ci.doc.loadFontsAndXObjects(resDict)
+			}
 		}
 	}
 
-	page.Images = append(page.Images, PageImage{
-		Name:   name,
-		BBox:   bbox,
-		Format: format,
-		Width:  int(width),
-		Height: int(height),
-		Data:   data,
-	})
+	formMatrix := IdentityMatrix()
+	if mArr, ok := stream.Dict["Matrix"].(pdfArray); ok && len(mArr) >= 6 {
+		for i := 0; i < 6; i++ {
+			formMatrix[i], _ = toFloat(mArr[i])
+		}
+	}
+
+	sub := newContentInterpreter(content, fonts, xobjects, ci.mediaBox, formMatrix.Multiply(ci.ctm), ci.doc, ci.depth+1)
+	sub.interpret(page)
+}
+
+// decodeImageData applies a stream's filters up to the terminal image codec
+// and reports the format of the bytes it returns. Raw samples are labelled
+// "raw" so callers do not mistake them for an encoded PNG.
+func decodeImageData(stream pdfStream) (string, []byte) {
+	data := stream.Data
+	for _, filter := range streamFilters(stream.Dict) {
+		switch filter {
+		case "FlateDecode", "Fl":
+			if decoded, err := decompressZlib(data); err == nil {
+				data = decoded
+			}
+		case "ASCII85Decode", "A85":
+			if decoded, err := decodeASCII85(data); err == nil {
+				data = decoded
+			}
+		case "ASCIIHexDecode", "AHx":
+			if decoded, err := decodeASCIIHex(data); err == nil {
+				data = decoded
+			}
+		case "DCTDecode", "DCT":
+			return "jpeg", data
+		case "JPXDecode":
+			return "jpx", data
+		case "CCITTFaxDecode", "CCF":
+			return "ccitt", data
+		default:
+			return "raw", data
+		}
+	}
+	return "raw", data
+}
+
+// imageColorSpace reports the image's color space name, unwrapping the array
+// form (for example [/ICCBased 5 0 R]).
+func imageColorSpace(dict pdfDict) string {
+	switch cs := dict["ColorSpace"].(type) {
+	case pdfName:
+		return string(cs)
+	case pdfArray:
+		if len(cs) > 0 {
+			if name, ok := cs[0].(pdfName); ok {
+				return string(name)
+			}
+		}
+	}
+	return ""
 }
 
 func parseMatrixArgs(args []string) Matrix {
@@ -1631,9 +1853,10 @@ func parseMatrixArgs(args []string) Matrix {
 
 // Tokenizer helpers
 type parser struct {
-	data []byte
-	pos  int
-	peek []string
+	data  []byte
+	pos   int
+	peek  []string
+	depth int
 }
 
 func newParser(data []byte) *parser {
@@ -1771,6 +1994,12 @@ func (p *parser) readNameToken() (string, error) {
 }
 
 func (p *parser) parseObject() (any, error) {
+	if p.depth >= maxObjectDepth {
+		return nil, errors.New("pdfextract: object nesting is too deep")
+	}
+	p.depth++
+	defer func() { p.depth-- }()
+
 	tok, err := p.nextNonSpaceToken()
 	if err != nil {
 		return nil, err
@@ -1903,7 +2132,17 @@ func decompressZlib(in []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Close()
-	return io.ReadAll(r)
+
+	// Bound the expansion: a tiny Flate stream can otherwise decompress to
+	// gigabytes and exhaust memory.
+	out, err := io.ReadAll(io.LimitReader(r, maxDecompressedStreamBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxDecompressedStreamBytes {
+		return nil, fmt.Errorf("pdfextract: decompressed stream exceeds %d bytes", maxDecompressedStreamBytes)
+	}
+	return out, nil
 }
 
 func undoPNGPrediction(data []byte, columns int) ([]byte, error) {

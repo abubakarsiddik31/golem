@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +25,11 @@ type OCREngine interface {
 	// RecognizePage performs text recognition on an image of a page and returns extracted TextSpans.
 	RecognizePage(ctx context.Context, imageBytes []byte, format string, pageBox Rect) ([]TextSpan, error)
 }
+
+// ErrNoOCREngine reports that no OCR engine is configured or available. It is
+// never converted into placeholder text: a page that could not be OCR'd stays
+// empty and is marked PageSourceEmpty.
+var ErrNoOCREngine = errors.New("pdfextract: no OCR engine configured")
 
 // MarkdownResult holds the recognized text, token usage, and dollar cost for a page.
 type MarkdownResult struct {
@@ -72,20 +76,16 @@ func IsScannedPage(page *ParsedPage) bool {
 	return (imageArea/pageArea) >= 0.30 || (totalChars == 0 && len(page.Images) > 0)
 }
 
-// NoopOCR is a fallback OCR engine that notes scanned pages without running heavy models.
+// NoopOCR is the "no engine configured" implementation. It reports
+// ErrNoOCREngine rather than inventing text, so a caller can never mistake
+// a missing engine for OCR output.
 type NoopOCR struct{}
 
 func (NoopOCR) RecognizePage(ctx context.Context, imageBytes []byte, format string, pageBox Rect) ([]TextSpan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return []TextSpan{
-		{
-			Text:     "[Scanned page: OCR engine not configured]",
-			FontSize: 12.0,
-			BBox:     Rect{X0: pageBox.X0 + 50, Y0: pageBox.Y1 - 50, X1: pageBox.X1 - 50, Y1: pageBox.Y1 - 30},
-		},
-	}, nil
+	return nil, ErrNoOCREngine
 }
 
 // DefaultModelOCRPrompt is the system prompt used by ModelOCREngine for scanned document transcription.
@@ -607,7 +607,9 @@ func parseIndraTables(markdown string) []Table {
 	return tables
 }
 
-// CommandOCR executes a standalone modern OCR command (such as 'ocrs' or 'rapidocr').
+// CommandOCR executes a standalone OCR command (such as 'ocrs' or 'rapidocr').
+// The page image is written to a temporary file and its path is appended as the
+// final argument, after Args. A command that reads from stdin is not supported.
 type CommandOCR struct {
 	BinaryPath string
 	Args       []string
@@ -618,10 +620,35 @@ func (c *CommandOCR) RecognizePage(ctx context.Context, imageBytes []byte, forma
 		return nil, err
 	}
 	if c.BinaryPath == "" {
-		return NoopOCR{}.RecognizePage(ctx, imageBytes, format, pageBox)
+		return nil, ErrNoOCREngine
 	}
 
-	cmd := exec.CommandContext(ctx, c.BinaryPath, c.Args...)
+	// The command needs the page image on disk. It receives the path as its
+	// final argument, after any configured Args.
+	ext := ".img"
+	switch format {
+	case "jpeg":
+		ext = ".jpg"
+	case "png":
+		ext = ".png"
+	}
+	f, err := os.CreateTemp("", "golem-ocr-*"+ext)
+	if err != nil {
+		return nil, fmt.Errorf("pdfextract: create OCR input: %w", err)
+	}
+	name := f.Name()
+	defer os.Remove(name)
+
+	if _, err := f.Write(imageBytes); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("pdfextract: write OCR input: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("pdfextract: write OCR input: %w", err)
+	}
+
+	args := append(append([]string{}, c.Args...), name)
+	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("pdfextract: ocr command %s failed: %w", c.BinaryPath, err)
@@ -631,26 +658,24 @@ func (c *CommandOCR) RecognizePage(ctx context.Context, imageBytes []byte, forma
 	return linesToSpans(strings.Split(string(out), "\n"), pageBox), nil
 }
 
-// AppleVisionOCR leverages macOS native Vision Framework for ultra-fast deep-learning OCR without Python.
+// AppleVisionOCR is retained for source compatibility. It never had a Vision
+// implementation: every call delegated to NoopOCR. It now reports
+// ErrNoOCREngine directly.
+//
+// Deprecated: use IndraOCREngine or ModelOCREngine.
 type AppleVisionOCR struct{}
 
 func (a AppleVisionOCR) RecognizePage(ctx context.Context, imageBytes []byte, format string, pageBox Rect) ([]TextSpan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if runtime.GOOS != "darwin" {
-		return NoopOCR{}.RecognizePage(ctx, imageBytes, format, pageBox)
-	}
-
-	// If a system vision helper is available, execute it; otherwise fallback to NoopOCR gracefully
-	return NoopOCR{}.RecognizePage(ctx, imageBytes, format, pageBox)
+	return nil, ErrNoOCREngine
 }
 
-// DefaultOCREngine returns an optimal OCR engine for the host platform.
+// DefaultOCREngine reports that no built-in OCR engine is available. It always
+// returns NoopOCR, which returns ErrNoOCREngine; configure IndraOCREngine or
+// ModelOCREngine explicitly. The package intentionally ships no bundled model.
 func DefaultOCREngine() OCREngine {
-	if runtime.GOOS == "darwin" {
-		return AppleVisionOCR{}
-	}
 	return NoopOCR{}
 }
 

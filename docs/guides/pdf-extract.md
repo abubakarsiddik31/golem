@@ -69,7 +69,11 @@ string relative to `Root`, with an optional `pages` filter. One call:
    Caption](images/page_1_img_1.png)`. Full-page background scans are
    distinguished from embedded figures (`page.IsScanned` and `page.ScanImage`)
    and do not emit false figure placeholders.
-8. Caps text at `MaxBytes` (default 2 MiB) with a truncation marker.
+8. Decodes stream filter chains and follows Form XObjects, so content that
+   generators wrap in forms (headers, footers, watermarks) is not skipped.
+9. Caps text at `MaxBytes` with a truncation marker. The tool defaults to 2 MiB;
+   direct `Extract`/`ExtractBytes` calls cap only when `Options.MaxBytes` is
+   set. Truncation never splits a UTF-8 rune.
 
 The package also exposes standalone Go APIs `pdfextract.Extract` and
 `pdfextract.ExtractBytes` for direct use outside agents.
@@ -203,7 +207,7 @@ for _, tbl := range doc.Tables {
 - `pdfextract.Config{Root string, MaxBytes int64, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, Mode OCRMode, DisableOCR bool}`
 - `pdfextract.Options{Pages string, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, Mode OCRMode, DisableOCR bool, MaxBytes int64}`
 - `pdfextract.Document{NumPages int, Pages []Page, Markdown string, Tables []Table, Images []ImageRef, Usage model.Usage, Cost float64}`
-- `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, Source PageSource, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64}`
+- `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, Source PageSource, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64, Err error}`
 - `pdfextract.OCRMode`, `pdfextract.ModeAuto`, `pdfextract.ModePreferText`, `pdfextract.ModeForceOCR`
 - `pdfextract.PageSource`, `pdfextract.PageSourceDigital`, `pdfextract.PageSourceOCR`, `pdfextract.PageSourceHybrid`, `pdfextract.PageSourceEmpty`
 - `pdfextract.NewModelOCR(model.Model, ...ModelOCROption) (*ModelOCREngine, error)`
@@ -220,7 +224,10 @@ for _, tbl := range doc.Tables {
 - `pdfextract.MarkdownRecognizer`, `pdfextract.MarkdownResult`
 - `pdfextract.ToolName`, `pdfextract.ToolDescription`
 - `pdfextract.DefaultMaxBytes`
-- `pdfextract.OCREngine`
+- `pdfextract.OCREngine`, `pdfextract.NoopOCR`, `pdfextract.CommandOCR`, `pdfextract.DefaultOCREngine`
+- `pdfextract.AppleVisionOCR` (deprecated; reports `ErrNoOCREngine`)
+- `pdfextract.ErrNoOCREngine`, `pdfextract.ErrEncrypted`
+- `pdfextract.UnsupportedFileError` (`errors.Is` reaches the underlying parse error)
 
 ## Gotchas
 
@@ -228,8 +235,21 @@ for _, tbl := range doc.Tables {
   models and prompts depend on them staying stable.
 - The confinement promise is per-read and structural: paths resolve inside
   the root after symlink resolution.
-- Digital vector pages extract with 100% character accuracy from the embedded
-  text stream; scanned raster documents require an OCR engine or `ReturnScannedPageParts`.
+- Digital vector pages are extracted from the embedded text stream without OCR;
+  scanned raster documents require an OCR engine or `ReturnScannedPageParts`.
+- A nil `OCREngine` means no OCR. Scanned pages stay `Source: "empty"`;
+  `NoopOCR` and `DefaultOCREngine` report `ErrNoOCREngine` instead of returning
+  placeholder text, so a missing engine can never be mistaken for OCR output.
+- Encrypted PDFs return an error matching `ErrEncrypted`; decryption is not
+  implemented.
+- `CommandOCR` writes the page image to a temporary file and appends its path as
+  the final argument, after `Args`. Commands that read from stdin are not
+  supported.
+- Parser limits keep hostile files from exhausting the process: page-tree depth
+  64, object nesting 256, and 64 MiB per decompressed stream. Malformed input
+  returns an error rather than panicking.
+- A page that fails to extract is still present in `Document.Pages` with
+  `Page.Err` set and a marker in the Markdown, so page counts stay accurate.
 - When using `ModelOCREngine`, small vision models (`gemini-2.5-flash-lite`, `qwen2.5-vl:3b`)
   are recommended for speed, cost efficiency, and low latency.
 - `IndraOCREngine` is not selected by `DefaultOCREngine`; pass it explicitly as
@@ -238,8 +258,9 @@ for _, tbl := range doc.Tables {
   prefer a future batch path. The Indra model weights are OpenRAIL-M; review
   their terms (they are free for research, personal use, and small startups)
   before commercial deployment.
-- `Page.IsScanned` is pure detection and does not change with `Mode`; read
-  `Page.Source` to learn what the extractor actually did with the page.
+- `Page.IsScanned` is pure detection and does not change with `Mode` or
+  `DisableOCR`; read `Page.Source` to learn what the extractor actually did with
+  the page.
   `ModeForceOCR` needs a page image to rasterize and silently falls back to the
   text layer on image-less pages.
 - Tables recovered through OCR carry `Rows` and `Markdown` but no `BBox`/`Ruled`:
