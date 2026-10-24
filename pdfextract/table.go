@@ -1070,14 +1070,14 @@ func formatMarkdownTable(rows [][]string) string {
 				val = sanitizeCellText(rows[r][c])
 			}
 			normalized[r][c] = val
-			if len(val) > colWidths[c] {
-				colWidths[c] = len(val)
+			if w := displayWidth(val); w > colWidths[c] {
+				colWidths[c] = w
 			}
 		}
 	}
 
 	for c := 0; c < numCols; c++ {
-		fallbackLen := len(fmt.Sprintf("Col %d", c+1))
+		fallbackLen := displayWidth(fmt.Sprintf("Col %d", c+1))
 		if colWidths[c] < fallbackLen {
 			colWidths[c] = fallbackLen
 		}
@@ -1092,7 +1092,7 @@ func formatMarkdownTable(rows [][]string) string {
 		if val == "" {
 			val = fmt.Sprintf("Col %d", c+1)
 		}
-		padLen := colWidths[c] - len(val)
+		padLen := colWidths[c] - displayWidth(val)
 		if padLen < 0 {
 			padLen = 0
 		}
@@ -1113,7 +1113,7 @@ func formatMarkdownTable(rows [][]string) string {
 		sb.WriteString("|")
 		for c := 0; c < numCols; c++ {
 			val := normalized[r][c]
-			padLen := colWidths[c] - len(val)
+			padLen := colWidths[c] - displayWidth(val)
 			if padLen < 0 {
 				padLen = 0
 			}
@@ -1124,6 +1124,56 @@ func formatMarkdownTable(rows [][]string) string {
 	}
 
 	return sb.String()
+}
+
+// displayWidth reports how many terminal columns s occupies: combining marks
+// and variation selectors take none, East Asian wide and fullwidth runes take
+// two, everything else takes one. Padding tables by byte length misaligns every
+// CJK and emoji cell, so widths are measured by rune instead.
+func displayWidth(s string) int {
+	width := 0
+	for _, r := range s {
+		switch {
+		case r == 0:
+			continue
+		case isZeroWidth(r):
+			continue
+		case isWideRune(r):
+			width += 2
+		default:
+			width++
+		}
+	}
+	return width
+}
+
+func isZeroWidth(r rune) bool {
+	return (r >= 0x0300 && r <= 0x036F) || // combining diacritics
+		(r >= 0x1AB0 && r <= 0x1AFF) || // combining diacritics extended
+		(r >= 0x1DC0 && r <= 0x1DFF) || // combining diacritics supplement
+		(r >= 0x20D0 && r <= 0x20FF) || // combining marks for symbols
+		(r >= 0xFE00 && r <= 0xFE0F) || // variation selectors
+		(r >= 0xFE20 && r <= 0xFE2F) || // combining half marks
+		(r >= 0xE0100 && r <= 0xE01EF) // variation selectors supplement
+}
+
+func isWideRune(r rune) bool {
+	return (r >= 0x1100 && r <= 0x115F) || // Hangul Jamo
+		(r >= 0x2E80 && r <= 0x303E) || // CJK radicals, Kangxi, CJK symbols
+		(r >= 0x3041 && r <= 0x33FF) || // Hiragana, Katakana, CJK compatibility
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK extension A
+		(r >= 0x4E00 && r <= 0x9FFF) || // CJK unified ideographs
+		(r >= 0xA000 && r <= 0xA4CF) || // Yi
+		(r >= 0xA960 && r <= 0xA97F) || // Hangul Jamo extended A
+		(r >= 0xAC00 && r <= 0xD7A3) || // Hangul syllables
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK compatibility ideographs
+		(r >= 0xFE10 && r <= 0xFE19) || // vertical forms
+		(r >= 0xFE30 && r <= 0xFE6F) || // CJK compatibility forms
+		(r >= 0xFF00 && r <= 0xFF60) || // fullwidth forms
+		(r >= 0xFFE0 && r <= 0xFFE6) || // fullwidth signs
+		(r >= 0x1F300 && r <= 0x1F64F) || // emoji (misc symbols, emoticons)
+		(r >= 0x1F900 && r <= 0x1F9FF) || // supplemental symbols and pictographs
+		(r >= 0x20000 && r <= 0x3FFFD) // CJK extensions B and beyond
 }
 
 func sanitizeCellText(s string) string {
