@@ -16,10 +16,10 @@ type pptxSlideRef struct {
 	Path  string
 }
 
-func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
+func extractPptx(src *zipSource, opts Options) (*Document, error) {
 	// 1. Locate and parse ppt/presentation.xml
 	var presFile *zip.File
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "ppt/presentation.xml" {
 			presFile = f
 			break
@@ -29,7 +29,7 @@ func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
 		return nil, fmt.Errorf("docextract: invalid pptx: missing ppt/presentation.xml")
 	}
 
-	rc, err := presFile.Open()
+	rc, err := src.open(presFile)
 	if err != nil {
 		return nil, fmt.Errorf("docextract: open ppt/presentation.xml: %w", err)
 	}
@@ -41,9 +41,9 @@ func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
 
 	// 2. Locate and parse ppt/_rels/presentation.xml.rels
 	rels := make(map[string]string)
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == "ppt/_rels/presentation.xml.rels" {
-			rc, err := f.Open()
+			rc, err := src.open(f)
 			if err == nil {
 				rels = parseDocxRels(rc)
 				rc.Close()
@@ -88,7 +88,7 @@ func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
 		}
 
 		var slideFile *zip.File
-		for _, f := range r.File {
+		for _, f := range src.files {
 			if f.Name == s.Path {
 				slideFile = f
 				break
@@ -98,8 +98,11 @@ func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
 			continue
 		}
 
-		rc, err := slideFile.Open()
+		rc, err := src.open(slideFile)
 		if err != nil {
+			if isDecompressionLimit(err) {
+				return nil, err
+			}
 			continue
 		}
 		slideTitle, slideBody, err := parsePptxSlide(rc)
@@ -131,7 +134,7 @@ func extractPptx(r *zip.Reader, opts Options) (*Document, error) {
 		})
 
 		// Check for speaker notes in ppt/slides/_rels/slideX.xml.rels
-		notes := extractPptxSpeakerNotes(r, s.Path)
+		notes := extractPptxSpeakerNotes(src, s.Path)
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("## Slide %d: %s\n\n", s.Index, slideTitle))
@@ -360,12 +363,12 @@ func parsePptxSlide(r io.Reader) (title string, body string, err error) {
 	return title, body, nil
 }
 
-func extractPptxSpeakerNotes(r *zip.Reader, slidePath string) string {
+func extractPptxSpeakerNotes(src *zipSource, slidePath string) string {
 	dir, file := path.Split(slidePath)
 	relsPath := path.Join(dir, "_rels", file+".rels")
 
 	var relsFile *zip.File
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == relsPath {
 			relsFile = f
 			break
@@ -375,7 +378,7 @@ func extractPptxSpeakerNotes(r *zip.Reader, slidePath string) string {
 		return ""
 	}
 
-	rc, err := relsFile.Open()
+	rc, err := src.open(relsFile)
 	if err != nil {
 		return ""
 	}
@@ -394,7 +397,7 @@ func extractPptxSpeakerNotes(r *zip.Reader, slidePath string) string {
 	}
 
 	var notesFile *zip.File
-	for _, f := range r.File {
+	for _, f := range src.files {
 		if f.Name == notesPath {
 			notesFile = f
 			break
@@ -404,7 +407,7 @@ func extractPptxSpeakerNotes(r *zip.Reader, slidePath string) string {
 		return ""
 	}
 
-	nrc, err := notesFile.Open()
+	nrc, err := src.open(notesFile)
 	if err != nil {
 		return ""
 	}

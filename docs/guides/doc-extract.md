@@ -47,6 +47,14 @@ when you need outline navigation, sheet filtering, or structured table extractio
    filters table rows; `pages` filters slide or sheet indices.
 7. Caps text at `MaxBytes` (default 2 MiB) with a truncation marker.
 
+The Office paths apply a decompression budget before parsing: no single
+archive entry may exceed `DefaultMaxEntryBytes` (64 MiB) and the archive
+total may not exceed `DefaultMaxUncompressedBytes` (256 MiB). The
+declared sizes are checked first and every actual read is capped, so a
+forged header cannot stream past the budget. A zip bomb is rejected
+with `*docextract.DecompressionLimitError` instead of being streamed
+through the XML decoder.
+
 The package also exposes standalone Go APIs `docextract.Extract` and
 `docextract.ExtractBytes` for direct use outside agents.
 
@@ -76,7 +84,8 @@ agent, err := golem.New[struct{}, string](client, decoder,
 - `docextract.Options{Outline bool, Query string, Pages string, MaxBytes int64, MaxRowsPerSheet int}`
 - `docextract.Document`, `docextract.OutlineItem`, `docextract.Format`
 - `docextract.ToolName`, `docextract.ToolDescription`
-- `docextract.DefaultMaxBytes`
+- `docextract.DefaultMaxBytes`, `docextract.DefaultMaxEntryBytes`, `docextract.DefaultMaxUncompressedBytes`
+- `docextract.DecompressionLimitError{Entry string, Limit int64, Total bool}`
 
 ## Gotchas
 
@@ -86,4 +95,7 @@ agent, err := golem.New[struct{}, string](client, decoder,
   the root after symlink resolution.
 - Outline mode (`outline: true`) should be favored by agents on large documents
   before reading full text to prevent context exhaustion.
+- The decompression budget is fixed and generous for agent use rather than
+  tunable. A document that legitimately exceeds it should be split or
+  pre-filtered before extraction.
 - Where common tools live was decided in `docs/adr/0015-common-tools-package.md`.

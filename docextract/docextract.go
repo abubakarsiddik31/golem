@@ -333,25 +333,25 @@ func ExtractBytes(ctx context.Context, data []byte, filename string, opts Option
 
 	switch format {
 	case FormatDocx:
-		r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		src, err := openOfficeArchive(data, "docx")
 		if err != nil {
-			return nil, fmt.Errorf("docextract: parse docx zip: %w", err)
+			return nil, err
 		}
-		return extractDocx(r, opts)
+		return extractDocx(src, opts)
 
 	case FormatXlsx:
-		r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		src, err := openOfficeArchive(data, "xlsx")
 		if err != nil {
-			return nil, fmt.Errorf("docextract: parse xlsx zip: %w", err)
+			return nil, err
 		}
-		return extractXlsx(r, opts)
+		return extractXlsx(src, opts)
 
 	case FormatPptx:
-		r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		src, err := openOfficeArchive(data, "pptx")
 		if err != nil {
-			return nil, fmt.Errorf("docextract: parse pptx zip: %w", err)
+			return nil, err
 		}
-		return extractPptx(r, opts)
+		return extractPptx(src, opts)
 
 	case FormatPDF:
 		pdfDoc, err := pdfextract.ExtractBytes(ctx, data, pdfextract.Options{

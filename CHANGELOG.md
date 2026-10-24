@@ -5,6 +5,7 @@
 ### Security
 
 - **`webfetch` refuses non-public destinations by default.** A model-produced URL can no longer reach loopback, private, link-local, multicast, unspecified, or carrier-grade NAT addresses, closing the SSRF path to internal services and cloud metadata endpoints. Hostnames are resolved and every address must be public; the dialer validates the address it actually connects to, and every redirect hop is re-checked. The refusal is a `*webfetch.BlockedAddressError` at the tool stage, not a correctable model mistake. `webfetch.Config.AllowPrivateNetworks` opts out for agents meant to fetch from a trusted private network.
+- **`docextract` bounds Office archive decompression.** Word, Excel, and PowerPoint archives are now rejected when a single entry exceeds `DefaultMaxEntryBytes` (64 MiB) or the archive total exceeds `DefaultMaxUncompressedBytes` (256 MiB). Declared central-directory sizes are checked before parsing and every actual read is capped, so a forged header cannot stream a zip bomb through the XML decoder. The refusal is a `*docextract.DecompressionLimitError`.
 
 ## v0.8.6 — 2026-10-18
 
