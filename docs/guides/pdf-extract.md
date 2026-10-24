@@ -208,6 +208,7 @@ for _, tbl := range doc.Tables {
 - `pdfextract.Options{Pages string, ImageDir string, ReturnImageParts bool, ReturnScannedPageParts bool, OCREngine OCREngine, Mode OCRMode, DisableOCR bool, MaxBytes int64}`
 - `pdfextract.Document{NumPages int, Pages []Page, Markdown string, Tables []Table, Images []ImageRef, Usage model.Usage, Cost float64}`
 - `pdfextract.Page{Index int, Width float64, Height float64, IsScanned bool, Source PageSource, ScanImage *ImageRef, Markdown string, Tables []Table, Images []ImageRef, Blocks []LayoutBlock, Usage model.Usage, Cost float64, Err error}`
+- `pdfextract.ImageRef{ID string, Page int, Caption string, Format string, Path string, Data []byte, Width int, Height int, X0 float64, Y0 float64, X1 float64, Y1 float64, IsPageScan bool, Err error}`
 - `pdfextract.OCRMode`, `pdfextract.ModeAuto`, `pdfextract.ModePreferText`, `pdfextract.ModeForceOCR`
 - `pdfextract.PageSource`, `pdfextract.PageSourceDigital`, `pdfextract.PageSourceOCR`, `pdfextract.PageSourceHybrid`, `pdfextract.PageSourceEmpty`
 - `pdfextract.NewModelOCR(model.Model, ...ModelOCROption) (*ModelOCREngine, error)`
@@ -250,6 +251,9 @@ for _, tbl := range doc.Tables {
   returns an error rather than panicking.
 - A page that fails to extract is still present in `Document.Pages` with
   `Page.Err` set and a marker in the Markdown, so page counts stay accurate.
+- When `ImageDir` is set and a write fails, the image stays in memory and
+  `ImageRef.Err` reports the failure; `ImageRef.Path` keeps the relative
+  placeholder path instead of pointing at a file that does not exist.
 - When using `ModelOCREngine`, small vision models (`gemini-2.5-flash-lite`, `qwen2.5-vl:3b`)
   are recommended for speed, cost efficiency, and low latency.
 - `IndraOCREngine` is not selected by `DefaultOCREngine`; pass it explicitly as

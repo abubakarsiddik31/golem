@@ -16,11 +16,12 @@ import (
 )
 
 // ImageRef represents an extracted image and its detected caption.
+// ImageRef is one extracted image, optionally written to disk.
 type ImageRef struct {
 	ID         string
 	Page       int
 	Caption    string
-	Format     string // "jpeg" or "png"
+	Format     string // "jpeg", "png", or "raw"
 	Path       string
 	Data       []byte
 	Width      int
@@ -30,6 +31,10 @@ type ImageRef struct {
 	X1         float64
 	Y1         float64
 	IsPageScan bool // true if this image represents a full-page scanned background
+	// Err reports a failed disk write when ImageDir was configured. Data still
+	// holds the image bytes and Path stays the relative placeholder path, so a
+	// caller can retry or keep the image in memory.
+	Err error
 }
 
 var captionRegex = regexp.MustCompile(`(?i)^(figure|fig\.|illustration|chart|graph|map|photo|image|diagram)\s*([0-9a-z.-]+)?\s*[:.-]?\s*(.*)`)
@@ -89,13 +94,21 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 		}
 
 		relPath := filepath.ToSlash(filepath.Join("images", baseName))
+		var writeErr error
 		if imageDir != "" {
-			_ = os.MkdirAll(imageDir, 0755)
 			diskPath := filepath.Join(imageDir, baseName)
-			if len(imgBytes) > 0 {
-				_ = os.WriteFile(diskPath, imgBytes, 0644)
+			if err := os.MkdirAll(imageDir, 0o755); err != nil {
+				writeErr = fmt.Errorf("pdfextract: create image directory %s: %w", imageDir, err)
+			} else if len(imgBytes) > 0 {
+				if err := os.WriteFile(diskPath, imgBytes, 0o644); err != nil {
+					writeErr = fmt.Errorf("pdfextract: write image %s: %w", diskPath, err)
+				}
 			}
-			relPath = diskPath
+			// Only claim the disk path when the write succeeded; otherwise the
+			// placeholder keeps the relative path and Err explains why.
+			if writeErr == nil {
+				relPath = diskPath
+			}
 		}
 
 		imageRefs = append(imageRefs, ImageRef{
@@ -112,6 +125,7 @@ func ProcessPageImages(page *ParsedPage, imageDir string, pageNum int) ([]ImageR
 			X1:         img.BBox.X1,
 			Y1:         img.BBox.Y1,
 			IsPageScan: isPageScan,
+			Err:        writeErr,
 		})
 	}
 
@@ -287,10 +301,12 @@ func cmykImage(data []byte, width, height int) image.Image {
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			c, m, yel, k := data[idx], data[idx+1], data[idx+2], data[idx+3]
+			// Samples are ink amounts: 0 means no ink, so the reflected light
+			// is (255-ink) per channel, dimmed by black.
 			rgba.SetRGBA(x, y, color.RGBA{
-				R: uint8((uint16(c) * uint16(255-k)) / 255),
-				G: uint8((uint16(m) * uint16(255-k)) / 255),
-				B: uint8((uint16(yel) * uint16(255-k)) / 255),
+				R: uint8((uint16(255-c) * uint16(255-k)) / 255),
+				G: uint8((uint16(255-m) * uint16(255-k)) / 255),
+				B: uint8((uint16(255-yel) * uint16(255-k)) / 255),
 				A: 255,
 			})
 			idx += 4
