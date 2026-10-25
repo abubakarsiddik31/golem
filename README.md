@@ -358,6 +358,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
+| [`mcp-auth`](examples/mcp-auth/main.go) | MCP bearer-token credentials and 401/403 challenge handling, offline |
 | [`mcp-elicitation`](examples/mcp-elicitation/main.go) | MCP elicitation through multi round-trip requests, offline |
 | [`mcp-http`](examples/mcp-http/main.go) | MCP server bridged over streamable HTTP |
 | [`skills`](examples/skills/main.go) | The `skills` common tool loading a standard SKILL.md folder |

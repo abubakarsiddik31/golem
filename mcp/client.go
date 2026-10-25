@@ -382,6 +382,14 @@ func (c *Client) detectEra(ctx context.Context) error {
 		return fmt.Errorf("mcp: detect protocol era: %w", err)
 	}
 
+	// Credentials were refused. Falling back to the legacy handshake
+	// would only be refused too, and it would bury the challenge the
+	// application needs to re-authorize.
+	var unauthorized *AuthError
+	if errors.As(err, &unauthorized) {
+		return err
+	}
+
 	c.modern = false
 	c.version = legacyProtocolVersion
 	return nil

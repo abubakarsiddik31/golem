@@ -66,12 +66,13 @@ series ends in the freeze, not a date.
   `ListPrompts`, `GetPrompt` — rather than bridged tools, because the
   protocol makes both application-driven (ADR 0032).
 
-- ~~**MCP client breadth: metadata, progress, elicitation.**~~ Shipped
-  as tool annotations and structured results, `OnProgress` for
-  in-flight calls, and `OnElicitation` over multi round-trip requests.
-  Sampling and roots are deprecated by the `2026-07-28` revision and
-  stay unimplemented; OAuth for the HTTP transport follows
-  (ADRs 0034, 0035, 0036).
+- ~~**MCP client breadth: metadata, progress, elicitation, and
+  authorization.**~~ Shipped as tool annotations and structured results,
+  `OnProgress` for in-flight calls, `OnElicitation` over multi
+  round-trip requests, and `TokenSource` plus `AuthError` challenge
+  reporting for the HTTP transport. Sampling and roots are deprecated by
+  the `2026-07-28` revision and stay unimplemented; OAuth itself stays in
+  the application (ADRs 0034, 0035, 0036, 0037).
 
 - ~~**Tool search / deferred tool loading.**~~ Shipped as
   `WithDeferredTools` plus a runner-owned `search_tools` discovery tool:

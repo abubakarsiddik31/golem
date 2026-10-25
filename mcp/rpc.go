@@ -10,8 +10,9 @@
 // docs/adr/0016-mcp-client-package.md,
 // docs/adr/0032-mcp-resources-and-prompts.md,
 // docs/adr/0034-mcp-tool-metadata.md,
-// docs/adr/0035-mcp-progress-notifications.md, and
-// docs/adr/0036-mcp-elicitation.md.
+// docs/adr/0035-mcp-progress-notifications.md,
+// docs/adr/0036-mcp-elicitation.md, and
+// docs/adr/0037-mcp-authorization.md.
 package mcp
 
 import (
