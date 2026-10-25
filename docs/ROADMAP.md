@@ -7,7 +7,8 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v1.0.0 is the next release: the compatibility promise is ADR 0041, and
+v1.0.0 is released: the compatibility promise is ADR 0041 — SemVer,
+additive-only below v2 — and
 every pre-freeze and parity item has landed. In-tool run cancellation
 cleanly stops a
 run with evidence on `RunError.Partial`; `golem.SanitizeHistory`
@@ -36,7 +37,7 @@ added benchmarks with a recorded baseline, run boundary events and the
 retrieval index and its agent tool, DeepSeek reasoning capture and the
 Groq preset, and the orchestration and templating recipes.
 
-## Toward v1.0.0 — the feature series
+## The series that built v1.0.0
 
 A parity pass against Pydantic AI and a survey of the Go ecosystem
 (cloudwego/eino) produced a pre-freeze series. Each item lands as its
