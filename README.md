@@ -13,7 +13,7 @@
   <a href="https://abubakarsiddik31.github.io/golem/"><img src="https://img.shields.io/badge/docs-website-00ADD8.svg" alt="Documentation"></a>
   <a href="go.mod"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-brightgreen.svg" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/badge/release-v0.8.6-orange.svg" alt="Release v0.8.6"></a>
+  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/badge/release-v0.9.0-orange.svg" alt="Release v0.9.0"></a>
 </p>
 
 <p align="center">
@@ -431,7 +431,7 @@ docs/adr/     Decisions that shape public contracts
 
 ## Status & Roadmap
 
-Golem is currently at **v0.8.6**.
+Golem is currently at **v0.9.0**.
 
 The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. The public API adheres strictly to additive-only changes on the road to **v1.0.0**.
 
