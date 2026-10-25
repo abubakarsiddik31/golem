@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,9 @@ const (
 	// unsupportedProtocolVersionCode is the JSON-RPC code a modern
 	// server returns when it does not implement the requested revision.
 	unsupportedProtocolVersionCode = -32022
+	// progressNotification is the method of a server's progress
+	// notification.
+	progressNotification = "notifications/progress"
 	// probeTimeout bounds era detection so a silent legacy stdio server
 	// cannot stall Initialize indefinitely. A late probe response is
 	// dropped because it carries the probe's request id.
@@ -66,6 +70,9 @@ type requestMeta struct {
 	ProtocolVersion    string     `json:"io.modelcontextprotocol/protocolVersion"`
 	ClientInfo         ServerInfo `json:"io.modelcontextprotocol/clientInfo"`
 	ClientCapabilities struct{}   `json:"io.modelcontextprotocol/clientCapabilities"`
+	// ProgressToken asks the server to report progress for this request.
+	// It is zero when no handler is installed.
+	ProgressToken int64 `json:"progressToken,omitempty"`
 }
 
 // discoverResult is the response to server/discover. Server identity
@@ -181,6 +188,19 @@ func (r CallResult) Text() string {
 	return text
 }
 
+// Progress is one update a server sent for the request in flight. It is
+// delivered to the handler installed with OnProgress, on the goroutine
+// that made the call.
+type Progress struct {
+	// Completed is the amount completed so far.
+	Completed float64
+	// Total is the expected total, or zero when the server did not
+	// report one.
+	Total float64
+	// Message is an optional human-readable update.
+	Message string
+}
+
 // Client speaks MCP to one server over a Transport. It is
 // synchronous: each operation sends a request and waits for its
 // response, so operations serialize behind an internal mutex and no
@@ -191,13 +211,22 @@ func (r CallResult) Text() string {
 // servers. The negotiated revision decides whether requests carry
 // per-request _meta and whether server-initiated requests are legal.
 type Client struct {
-	transport Transport
-	mu        sync.Mutex
-	nextID    int64
-	server    ServerInfo
-	version   string
-	modern    bool
-	ready     bool
+	transport     Transport
+	mu            sync.Mutex
+	nextID        int64
+	server        ServerInfo
+	version       string
+	modern        bool
+	ready         bool
+	progress      *progressHandler
+	nextProgress  int64
+	progressToken int64
+}
+
+// progressHandler holds the installed progress callback. It is a pointer
+// so Client stays comparable; the client never copies it.
+type progressHandler struct {
+	fn func(Progress)
 }
 
 // NewClient returns a Client speaking to t. Call Initialize before
@@ -320,6 +349,23 @@ func (c *Client) ProtocolVersion() string {
 	return c.version
 }
 
+// OnProgress installs a handler for the progress notifications a server
+// sends while a request is in flight. With a handler installed, every
+// request asks for progress by carrying a fresh token in its metadata;
+// the handler runs inline on the goroutine that made the call, while the
+// client holds its lock, so it must be quick and must not call back into
+// this client. Passing nil removes the handler and stops requesting
+// progress.
+func (c *Client) OnProgress(handler func(Progress)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if handler == nil {
+		c.progress = nil
+		return
+	}
+	c.progress = &progressHandler{fn: handler}
+}
+
 // Close closes the underlying transport, terminating the server
 // connection or process.
 func (c *Client) Close() error {
@@ -399,6 +445,11 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 // notifications. The caller holds c.mu.
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	c.nextID++
+	c.progressToken = 0
+	if c.progress != nil {
+		c.nextProgress++
+		c.progressToken = c.nextProgress
+	}
 	id, err := json.Marshal(c.nextID)
 	if err != nil {
 		return fmt.Errorf("mcp: encode request id: %w", err)
@@ -434,7 +485,11 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 				return err
 			}
 		case message.Method != "":
-			// A notification; nothing to answer.
+			// A notification. Progress is the only one this client
+			// consumes; everything else is dropped.
+			if message.Method == progressNotification {
+				c.deliverProgress(message.Params)
+			}
 		case len(message.ID) > 0:
 			if !sameID(message.ID, id) {
 				// A late response to a call that already gave up;
@@ -472,9 +527,34 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 	}
 }
 
-// encodeParams marshals one request's params. In the modern era it also
-// adds the required per-request _meta, creating an object for a request
-// that has no other params. A legacy request keeps its params verbatim.
+// deliverProgress hands one progress notification to the installed
+// handler, dropping it when no handler is set or when the token does not
+// match the request in flight — a late notification from an earlier call
+// must not be reported as the current one. The caller holds c.mu.
+func (c *Client) deliverProgress(params json.RawMessage) {
+	if c.progress == nil {
+		return
+	}
+	var note struct {
+		ProgressToken json.RawMessage `json:"progressToken"`
+		Progress      float64         `json:"progress"`
+		Total         float64         `json:"total"`
+		Message       string          `json:"message"`
+	}
+	if err := json.Unmarshal(params, &note); err != nil {
+		return
+	}
+	if canonicalJSON(note.ProgressToken) != strconv.FormatInt(c.progressToken, 10) {
+		return
+	}
+	c.progress.fn(Progress{Completed: note.Progress, Total: note.Total, Message: note.Message})
+}
+
+// encodeParams marshals one request's params. A modern request also
+// carries the required per-request _meta, creating an object for a
+// request that has no other params; a legacy request carries _meta only
+// to ask for progress. Either way the metadata includes a progress token
+// when a handler is installed.
 //
 // The caller holds c.mu.
 func (c *Client) encodeParams(method string, params any) (json.RawMessage, error) {
@@ -488,11 +568,11 @@ func (c *Client) encodeParams(method string, params any) (json.RawMessage, error
 			return nil, fmt.Errorf("mcp: encode %s params: %w", method, err)
 		}
 	}
-	if c.modern {
+	if c.modern || c.progress != nil {
 		if object == nil {
 			object = make(map[string]json.RawMessage, 1)
 		}
-		meta, err := json.Marshal(newRequestMeta())
+		meta, err := json.Marshal(c.meta())
 		if err != nil {
 			return nil, fmt.Errorf("mcp: encode %s metadata: %w", method, err)
 		}
@@ -506,6 +586,22 @@ func (c *Client) encodeParams(method string, params any) (json.RawMessage, error
 		return nil, fmt.Errorf("mcp: encode %s params: %w", method, err)
 	}
 	return encoded, nil
+}
+
+// meta builds the per-request metadata: the modern revision's required
+// fields, plus the progress token when a handler is installed. A legacy
+// request carries only the token.
+//
+// The caller holds c.mu.
+func (c *Client) meta() any {
+	if c.modern {
+		meta := newRequestMeta()
+		meta.ProgressToken = c.progressToken
+		return meta
+	}
+	return struct {
+		ProgressToken int64 `json:"progressToken"`
+	}{ProgressToken: c.progressToken}
 }
 
 // newRequestMeta builds the per-request metadata a modern revision

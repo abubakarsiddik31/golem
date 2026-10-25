@@ -87,12 +87,24 @@ The client is synchronous and serialized — one in-flight request at a
 time, no goroutines — and honors the caller's context on every
 operation. In a legacy session, while a call waits, a server-initiated
 `ping` is answered inline, any other server-initiated request gets a
-method-not-found reply, and notifications are dropped. A modern session
-has no server-initiated requests: client features arrive as input
-requests inside a result, and this client implements none of them, so a
-result of type `input_required` fails with
-`*mcp.InputRequiredError` rather than being silently dropped. A server
-that sends a request anyway fails the call.
+method-not-found reply, and notifications other than progress are
+dropped. A modern session has no server-initiated requests: client
+features arrive as input requests inside a result, and this client
+implements none of them, so a result of type `input_required` fails
+with `*mcp.InputRequiredError` rather than being silently dropped. A
+server that sends a request anyway fails the call.
+
+`OnProgress(handler)` installs a callback for the progress a server
+reports while a request is in flight. With a handler installed, every
+request carries a fresh `progressToken` in its metadata — in both eras,
+because `_meta` is the same mechanism in each — and each
+`notifications/progress` whose token matches the request in flight is
+delivered as `Progress{Completed, Total, Message}`. A notification
+carrying any other token is dropped, so a late update from an earlier
+call is never reported as the current one. The handler runs inline on
+the goroutine that made the call, while the client holds its lock:
+keep it quick, and do not call back into the client. Passing nil
+removes it and stops asking for progress.
 
 Resources and prompts are **not** bridged into tools, because the
 protocol makes them application-driven: the host decides what to load
@@ -158,6 +170,7 @@ for _, message := range rendered.Messages {
 - `mcp.Transport` — the `Send`/`Read`/`Close` boundary other transports implement
 - `mcp.NewClient(mcp.Transport) *Client`
 - `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).ProtocolVersion()` / `(*Client).Close()`
+- `(*Client).OnProgress(handler func(mcp.Progress))` — `Progress{Completed, Total, Message}`; nil stops requesting progress
 - `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Title, Description, InputSchema, OutputSchema, Annotations}`, `ToolAnnotations{Title, ReadOnlyHint, DestructiveHint, IdempotentHint, OpenWorldHint}`
 - `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, StructuredContent, IsError}`, `CallResult.Text()`
 - `mcp.AsTools[Deps](ctx, *Client) ([]tool.Tool[Deps], error)`
@@ -176,6 +189,10 @@ for _, message := range rendered.Messages {
   application's decision.
 - Concurrent calls serialize at the client — parallel tool groups, and
   any resource or prompt read, run one server call at a time.
+- A progress handler runs inline while the client holds its lock. A slow
+  handler stalls the call, and calling back into the same client from
+  it deadlocks; hand the update to your own queue or channel instead.
+  Progress is per client, not per call, because calls are serialized.
 - `AsTools`, `ListTools`, `ListResources`, and `ListPrompts` are
   point-in-time snapshots; a server that changes them dynamically is
   re-read by calling again, not by push notification.
@@ -212,5 +229,6 @@ for _, message := range rendered.Messages {
 - The package depends only on the standard library, `model`, and
   `tool` — never on the root package or a provider.
 - Decisions live in `docs/adr/0016-mcp-client-package.md`,
-  `docs/adr/0032-mcp-resources-and-prompts.md`, and
-  `docs/adr/0034-mcp-tool-metadata.md`.
+  `docs/adr/0032-mcp-resources-and-prompts.md`,
+  `docs/adr/0034-mcp-tool-metadata.md`, and
+  `docs/adr/0035-mcp-progress-notifications.md`.
