@@ -208,8 +208,9 @@ func TestToolCancelEmitsDeterministicEvents(t *testing.T) {
 		t.Fatalf("Run() error = %v, want the sentinel", err)
 	}
 	want := []golem.EventKind{
-		golem.EventModelStart, golem.EventModelEnd,
+		golem.EventRunStart, golem.EventModelStart, golem.EventModelEnd,
 		golem.EventToolStart, golem.EventToolEnd, golem.EventCanceled,
+		golem.EventRunEnd,
 	}
 	if len(kinds) != len(want) {
 		t.Fatalf("events = %v, want %v", kinds, want)

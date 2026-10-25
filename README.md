@@ -334,6 +334,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
 | [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
+| [Tracing](docs/guides/tracing.md) | Spans through the `telemetry` port: an OpenTelemetry adapter without an SDK dependency |
 | [Thinking](docs/guides/thinking.md) | Reasoning models: requesting thinking, keeping signatures, replay |
 | [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
@@ -357,6 +358,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
+| [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
 | [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
 | [`mcp-auth`](examples/mcp-auth/main.go) | MCP bearer-token credentials and 401/403 challenge handling, offline |
 | [`mcp-elicitation`](examples/mcp-elicitation/main.go) | MCP elicitation through multi round-trip requests, offline |

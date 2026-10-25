@@ -32,9 +32,10 @@ example, and the README index agree.
 19. [Retries](retries.md) — surviving transient model failures and falling back to another model.
 20. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
 21. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
-22. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
-23. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-24. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
-25. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
-26. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
-27. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
+22. [Tracing](tracing.md) — spans for runs, provider attempts, and tool calls, through a port an OpenTelemetry SDK implements.
+23. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
+24. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+25. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
+26. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+27. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+28. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.

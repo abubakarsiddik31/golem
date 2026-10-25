@@ -7,8 +7,9 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-All ten pre-freeze items have landed — nine in v0.9.0 and tool search on
-main ahead of the next release. In-tool run cancellation cleanly stops a
+All ten pre-freeze items have landed — nine in v0.9.0, and tool
+search, the benchmark suites, and the observability work on main ahead
+of the next release. In-tool run cancellation cleanly stops a
 run with evidence on `RunError.Partial`; `golem.SanitizeHistory`
 sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`
@@ -91,6 +92,13 @@ series ends in the freeze, not a date.
   `docs/benchmarks.md` that explains what each number means.
   Deliberately outside the CI gate: absolute numbers vary by machine,
   so the gate is a diff on a change that touches one of those paths.
+
+- ~~**Observability: run boundaries and a tracing port.**~~ Shipped as
+  `run_start`/`run_end` boundary events bracketing every pass of the
+  loop, and `package telemetry` — a `Tracer`/`Span` port in
+  OpenTelemetry's shape plus an observer that turns the event stream
+  into a span tree, so an application's OTel SDK plugs in behind a
+  dozen-line adapter with no dependency on Golem's side (ADR 0038).
 
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,

@@ -128,6 +128,16 @@ type ToolConfig struct {
 type EventKind string
 
 const (
+	// EventRunStart precedes a run's first model turn, after
+	// configuration is validated. It is the first event of a run and is
+	// followed, eventually, by exactly one EventRunEnd.
+	EventRunStart EventKind = "run_start"
+	// EventRunEnd follows a run's terminal point: success, failure,
+	// cancellation, loop exhaustion, or a pause on deferred calls. It
+	// carries the run's accumulated usage and, on failure, the terminal
+	// error. It is the last event of a run; no other event of that run
+	// follows it.
+	EventRunEnd EventKind = "run_end"
 	// EventModelStart precedes one provider call attempt.
 	EventModelStart EventKind = "model_start"
 	// EventModelEnd follows one provider call attempt, carrying the
@@ -204,10 +214,11 @@ func (ids RunIdentity) Stamp(message *model.Message) {
 }
 
 // Observer receives run events synchronously, in deterministic
-// execution order: model attempts in call order, tool starts before and
-// tool ends after execution, with parallel groups emitting starts in
-// model emission order before the group runs and ends in the same order
-// after it completes. A call whose execution returns a deferred sentinel
+// execution order: EventRunStart first, then model attempts in call
+// order — tool starts before and tool ends after execution, with
+// parallel groups emitting starts in model emission order before the
+// group runs and ends in the same order after it completes — and
+// EventRunEnd last, on every terminal path. A call whose execution returns a deferred sentinel
 // reports EventDeferred in place of its tool end, in emission order
 // within its group. A call whose execution returns the *tool.Canceled
 // sentinel reports EventCanceled right after its tool end, as the final
@@ -385,7 +396,7 @@ func execute[Deps any](
 	preSend func(ctx context.Context, req model.Request) error,
 	ids RunIdentity,
 	call turnCall,
-) (Outcome, error) {
+) (outcome Outcome, err error) {
 	var counts runCounts
 	if maxIterations < 1 {
 		return Outcome{}, fmt.Errorf("runner: maxIterations must be at least 1, got %d", maxIterations)
@@ -402,6 +413,15 @@ func execute[Deps any](
 	if outputTool != "" && findSpec(req.ToolSpecs, outputTool) == nil {
 		return Outcome{}, fmt.Errorf("runner: output tool %q has no matching tool spec", outputTool)
 	}
+
+	// The run's boundary events bracket everything the loop emits, so a
+	// tracer can open one root span per run. They fire on every terminal
+	// path — success, failure, cancellation, loop exhaustion, and the
+	// deferred pause — because the deferred call below runs on each.
+	emitEvent(emit, Event{Kind: EventRunStart})
+	defer func() {
+		emitEvent(emit, Event{Kind: EventRunEnd, Usage: outcome.Usage, Err: err})
+	}()
 
 	index := newSearchIndex(toolConfig.Search, tools)
 	dispatch := tools
