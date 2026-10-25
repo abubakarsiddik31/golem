@@ -53,6 +53,20 @@ func run() error {
 	fmt.Printf("connected to %s %s; bridged %d tool(s)\n\n",
 		client.Server().Name, client.Server().Version, len(tools))
 
+	// A tool's metadata is available before any call: the title, the
+	// behavioral hints an approval flow reads, and the output schema.
+	infos, err := client.ListTools(ctx)
+	if err != nil {
+		return fmt.Errorf("ListTools: %w", err)
+	}
+	for _, info := range infos {
+		hints := info.Annotations
+		fmt.Printf("tool %s (%s): read-only=%s destructive=%s idempotent=%s open-world=%s structured-output=%v\n",
+			info.Name, info.Title, hint(hints.ReadOnlyHint), hint(hints.DestructiveHint),
+			hint(hints.IdempotentHint), hint(hints.OpenWorldHint), len(info.OutputSchema) > 0)
+	}
+	fmt.Println()
+
 	// The server's tools are ordinary tool.Tool values.
 	fakeModel := testmodel.New().Respond(
 		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
@@ -152,9 +166,11 @@ func serve() {
 		case "initialize":
 			reply(out, message.ID, `{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{},"prompts":{}},"serverInfo":{"name":"echo-server","version":"1.0"}}`)
 		case "tools/list":
-			reply(out, message.ID, `{"tools":[{"name":"echo","description":"Echo a message back.","inputSchema":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}]}`)
+			reply(out, message.ID, `{"tools":[{"name":"echo","title":"Echo","description":"Echo a message back.","inputSchema":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]},"outputSchema":{"type":"object","properties":{"echo":{"type":"string"}},"required":["echo"]},"annotations":{"title":"Echo","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}]}`)
 		case "tools/call":
-			reply(out, message.ID, `{"content":[{"type":"text","text":"echo: hello mcp"}],"isError":false}`)
+			// A tool with an output schema may answer with structured
+			// content only; AsTools hands the JSON to the model.
+			reply(out, message.ID, `{"structuredContent":{"echo":"hello mcp"},"isError":false}`)
 		case "resources/list":
 			reply(out, message.ID, `{"resources":[{"uri":"file:///notes/welcome.md","name":"welcome","title":"Welcome note","description":"A short greeting.","mimeType":"text/markdown","size":42}]}`)
 		case "resources/templates/list":
@@ -195,4 +211,16 @@ func replyError(out *bufio.Writer, id json.RawMessage, code int, message string)
 	out.Write(encoded)
 	out.WriteByte('\n')
 	out.Flush()
+}
+
+// hint renders a declared-or-not annotation hint for the example's
+// output. Nil means the server did not declare it.
+func hint(value *bool) string {
+	if value == nil {
+		return "unset"
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
 }
