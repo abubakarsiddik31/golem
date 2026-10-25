@@ -84,22 +84,28 @@ func TestRunEventsCoverTwoTurnToolExchange(t *testing.T) {
 	}
 
 	want := []string{
+		"run_start t0 a0 ",
 		"model_start t0 a1 ", "model_end t0 a1 ",
 		"tool_start t0 a0 c1", "tool_end t0 a0 c1",
 		"model_start t1 a1 ", "model_end t1 a1 ",
+		"run_end t0 a0 ",
 	}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
-	// Attempt usage and tool arguments travel on their events.
-	if events[1].Usage != (model.Usage{InputTokens: 3, OutputTokens: 1}) || events[5].Usage != (model.Usage{InputTokens: 5, OutputTokens: 2}) {
-		t.Fatalf("model_end usage = %v, %v", events[1].Usage, events[5].Usage)
+	// Attempt usage and tool arguments travel on their events, and the
+	// run bracket carries the total.
+	if events[2].Usage != (model.Usage{InputTokens: 3, OutputTokens: 1}) || events[6].Usage != (model.Usage{InputTokens: 5, OutputTokens: 2}) {
+		t.Fatalf("model_end usage = %v, %v", events[2].Usage, events[6].Usage)
 	}
-	if events[2].ToolName != "lookup" || string(events[2].Args) != `{}` {
-		t.Fatalf("tool_start = %+v", events[2])
+	if events[7].Usage != (model.Usage{InputTokens: 8, OutputTokens: 3}) {
+		t.Fatalf("run_end usage = %v, want the run total", events[7].Usage)
 	}
-	if events[3].Result != "42" || events[3].Err != nil {
-		t.Fatalf("tool_end = %+v", events[3])
+	if events[3].ToolName != "lookup" || string(events[3].Args) != `{}` {
+		t.Fatalf("tool_start = %+v", events[3])
+	}
+	if events[4].Result != "42" || events[4].Err != nil {
+		t.Fatalf("tool_end = %+v", events[4])
 	}
 }
 
@@ -130,14 +136,16 @@ func TestRunEventsExposeRetriedAttempts(t *testing.T) {
 	}
 
 	want := []string{
+		"run_start t0 a0 ",
 		"model_start t0 a1 ", "model_end t0 a1 ",
 		"model_start t0 a2 ", "model_end t0 a2 ",
+		"run_end t0 a0 ",
 	}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
-	if !errors.Is(events[1].Err, sentinel) {
-		t.Fatalf("failed attempt error chain = %v", events[1].Err)
+	if !errors.Is(events[2].Err, sentinel) {
+		t.Fatalf("failed attempt error chain = %v", events[2].Err)
 	}
 	if events[3].Err != nil {
 		t.Fatalf("successful attempt end carries error %v", events[3].Err)
@@ -232,10 +240,12 @@ func TestRunEventsParallelGroupsStayOrdered(t *testing.T) {
 	}
 
 	want := []string{
+		"run_start t0 a0 ",
 		"model_start t0 a1 ", "model_end t0 a1 ",
 		"tool_start t0 a0 c1", "tool_start t0 a0 c2",
 		"tool_end t0 a0 c1", "tool_end t0 a0 c2",
 		"model_start t1 a1 ", "model_end t1 a1 ",
+		"run_end t0 a0 ",
 	}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
@@ -274,17 +284,23 @@ func TestRunEventsMarkOutputCorrectionRounds(t *testing.T) {
 	}
 
 	want := []string{
+		"run_start t0 a0 ",
 		"model_start t0 a1 ", "model_end t0 a1 ",
+		"run_end t0 a0 ",
+		// The agent emits the rejection between loop passes; the
+		// correction round is a second bracketed pass.
 		"output_rejected t0 a1 ",
+		"run_start t0 a0 ",
 		// The correction round restarts turn numbering.
 		"model_start t0 a1 ", "model_end t0 a1 ",
+		"run_end t0 a0 ",
 	}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
 	var rejection *model.ModelRetry
-	if !errors.As(events[2].Err, &rejection) || rejection.Err == nil {
-		t.Fatalf("output_rejected error = %v, want the ModelRetry", events[2].Err)
+	if !errors.As(events[4].Err, &rejection) || rejection.Err == nil {
+		t.Fatalf("output_rejected error = %v, want the ModelRetry", events[4].Err)
 	}
 }
 
@@ -309,12 +325,12 @@ func TestRunStreamEmitsTheSameEvents(t *testing.T) {
 		t.Fatalf("RunStream() error = %v", err)
 	}
 
-	want := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	want := []string{"run_start t0 a0 ", "model_start t0 a1 ", "model_end t0 a1 ", "run_end t0 a0 "}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
 	}
-	if events[1].Usage != (model.Usage{InputTokens: 1, OutputTokens: 1}) {
-		t.Fatalf("model_end usage = %v", events[1].Usage)
+	if events[2].Usage != (model.Usage{InputTokens: 1, OutputTokens: 1}) {
+		t.Fatalf("model_end usage = %v", events[2].Usage)
 	}
 }
 
@@ -342,14 +358,14 @@ func TestRunObserverRoutesEventsPerRun(t *testing.T) {
 		t.Fatalf("Run(two) error = %v", err)
 	}
 
-	wantOneTurn := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	wantOneTurn := []string{"run_start t0 a0 ", "model_start t0 a1 ", "model_end t0 a1 ", "run_end t0 a0 "}
 	if got := summarize(first); !equalStrings(got, wantOneTurn) {
 		t.Fatalf("first run events = %v, want %v", got, wantOneTurn)
 	}
 	if got := summarize(second); !equalStrings(got, wantOneTurn) {
 		t.Fatalf("second run events = %v, want %v", got, wantOneTurn)
 	}
-	if first[1].Usage.InputTokens != 3 || second[1].Usage.InputTokens != 7 {
+	if first[2].Usage.InputTokens != 3 || second[2].Usage.InputTokens != 7 {
 		t.Fatalf("model_end usage = %d, %d; each observer must see its own run's usage",
 			first[1].Usage.InputTokens, second[1].Usage.InputTokens)
 	}
@@ -380,8 +396,10 @@ func TestRunObserverComposesWithAgentObserver(t *testing.T) {
 	}
 
 	want := []string{
+		"agent:run_start", "run:run_start",
 		"agent:model_start", "run:model_start",
 		"agent:model_end", "run:model_end",
+		"agent:run_end", "run:run_end",
 	}
 	if !equalStrings(order, want) {
 		t.Fatalf("observer order = %v, want %v", order, want)
@@ -423,12 +441,12 @@ func TestRunObserverWorksOnStreamRuns(t *testing.T) {
 		t.Fatalf("RunStream() error = %v", err)
 	}
 
-	want := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	want := []string{"run_start t0 a0 ", "model_start t0 a1 ", "model_end t0 a1 ", "run_end t0 a0 "}
 	if got := summarize(events); !equalStrings(got, want) {
 		t.Fatalf("streamed run events = %v, want %v", got, want)
 	}
-	if events[1].Usage != (model.Usage{InputTokens: 4, OutputTokens: 2}) {
-		t.Fatalf("model_end usage = %v", events[1].Usage)
+	if events[2].Usage != (model.Usage{InputTokens: 4, OutputTokens: 2}) {
+		t.Fatalf("model_end usage = %v", events[2].Usage)
 	}
 }
 
@@ -468,8 +486,10 @@ func TestRunObserverWorksOnDeferredResume(t *testing.T) {
 		t.Fatal("run did not pause for approval")
 	}
 	wantPause := []string{
+		"run_start t0 a0 ",
 		"model_start t0 a1 ", "model_end t0 a1 ",
 		"tool_start t0 a0 c1", "deferred t0 a0 c1",
+		"run_end t0 a0 ",
 	}
 	if got := summarize(pauseEvents); !equalStrings(got, wantPause) {
 		t.Fatalf("pause events = %v, want %v", got, wantPause)
@@ -492,7 +512,7 @@ func TestRunObserverWorksOnDeferredResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunWithDeferredResults() error = %v", err)
 	}
-	wantResume := []string{"model_start t0 a1 ", "model_end t0 a1 "}
+	wantResume := []string{"run_start t0 a0 ", "model_start t0 a1 ", "model_end t0 a1 ", "run_end t0 a0 "}
 	if got := summarize(resumeEvents); !equalStrings(got, wantResume) {
 		t.Fatalf("resume events = %v, want %v", got, wantResume)
 	}

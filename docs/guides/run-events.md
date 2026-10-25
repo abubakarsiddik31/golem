@@ -65,6 +65,14 @@ and decided in ADR 0027.
 Events arrive in deterministic execution order, and that order is a
 compatibility promise:
 
+- `run_start` / `run_end` bracket the run: `run_start` precedes the
+  first model turn, after configuration is validated, and `run_end` is
+  the last event of the run on every terminal path — success, failure,
+  cancellation, loop exhaustion, or the deferred pause — carrying the
+  run's accumulated usage and, on failure, the terminal error. A
+  configuration rejected before the loop emits nothing. A decoder
+  correction round is a second bracketed pass under the same `RunID`,
+  with `output_rejected` between the passes.
 - `model_start` / `model_end` bracket every provider call attempt,
   carrying the turn index and 1-based attempt number; `model_end` carries
   the attempt's usage and error. A retried attempt is individually
@@ -106,7 +114,8 @@ agent, err := golem.New[string, string](client,
 - `golem.WithRunEvents[Deps, Output](onEvent func(RunEvent)) Option[Deps, Output]`
 - `golem.WithRunObserver(onEvent func(RunEvent)) RunOption`
 - `golem.RunEvent{Kind, Turn, Attempt, CallID, ToolName, Args, Result, Err, Usage, RunID, ConversationID}`
-- `golem.EventKind` — `golem.EventModelStart`, `golem.EventModelEnd`,
+- `golem.EventKind` — `golem.EventRunStart`, `golem.EventRunEnd`,
+  `golem.EventModelStart`, `golem.EventModelEnd`,
   `golem.EventToolStart`, `golem.EventToolEnd`, `golem.EventOutputRejected`,
   `golem.EventDeferred`, `golem.EventCanceled`
 - `golem.WithRunID(id string) RunOption`, `golem.WithConversationID(id string) RunOption`, `golem.NewID()` — see [Conversations and history](conversations-and-history.md#run-and-conversation-identity)
@@ -121,4 +130,11 @@ agent, err := golem.New[string, string](client,
   alongside its fragments, with a model turn's events bracketing its
   fragments.
 - Which fields carry meaning depends on the kind; the rest are zero.
-- Decisions live in `docs/adr/0014-run-event-stream.md`.
+  `run_end`'s `Usage` is its pass's total; a corrected run's two passes
+  each report their own, so the whole agent run's usage is the sum
+  across the passes under one `RunID`.
+- For spans, use the `telemetry` package — see [Tracing](tracing.md) —
+  rather than building a tree from events yourself: the correction
+  round bracketing and the parallel-tool barrier are handled there.
+- Decisions live in `docs/adr/0014-run-event-stream.md` and
+  `docs/adr/0038-run-events-tracing-port.md`.

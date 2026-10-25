@@ -15,6 +15,16 @@ type RunEvent = runner.Event
 type EventKind = runner.EventKind
 
 const (
+	// EventRunStart precedes a run's first model turn, after
+	// configuration is validated. It is the first event of a run: a
+	// tracer opens its root span here.
+	EventRunStart = runner.EventRunStart
+	// EventRunEnd follows a run's terminal point — success, failure,
+	// cancellation, loop exhaustion, or a pause on deferred calls —
+	// carrying the run's accumulated usage and, on failure, the
+	// terminal error. It is the last event of a run: a tracer closes
+	// the root span here.
+	EventRunEnd = runner.EventRunEnd
 	// EventModelStart precedes one provider call attempt.
 	EventModelStart = runner.EventModelStart
 	// EventModelEnd follows one provider call attempt, carrying the

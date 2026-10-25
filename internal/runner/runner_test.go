@@ -55,6 +55,87 @@ func textResponse(content string, usage model.Usage) model.Response {
 	}
 }
 
+// TestRunBoundaryEventsBracketEveryTerminalPath verifies the run_start
+// and run_end contract: the pair is the first and last event of every
+// terminal path — success, provider failure, loop exhaustion — and run_end
+// carries the accumulated usage and the terminal error. A configuration
+// rejected before the loop emits nothing.
+func TestRunBoundaryEventsBracketEveryTerminalPath(t *testing.T) {
+	t.Parallel()
+
+	request := model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}
+	run := func(t *testing.T, m model.Model, maxIterations int) []runner.Event {
+		t.Helper()
+		var events []runner.Event
+		_, _ = runner.ExecuteWithToolConfig(context.Background(), m, nil, deps{},
+			request, maxIterations, noRetries, runner.ToolConfig{}, "", func(event runner.Event) {
+				events = append(events, event)
+			}, nil, runner.RunIdentity{RunID: "run-1", ConversationID: "con-1"})
+		return events
+	}
+
+	t.Run("success carries the usage total", func(t *testing.T) {
+		t.Parallel()
+		events := run(t, &scriptedModel{responses: []model.Response{
+			textResponse("42", model.Usage{InputTokens: 10, OutputTokens: 2}),
+		}}, 1)
+		if events[0].Kind != runner.EventRunStart || events[len(events)-1].Kind != runner.EventRunEnd {
+			t.Fatalf("boundary kinds = %s, %s", events[0].Kind, events[len(events)-1].Kind)
+		}
+		last := events[len(events)-1]
+		if last.Usage != (model.Usage{InputTokens: 10, OutputTokens: 2}) || last.Err != nil {
+			t.Fatalf("run_end = %+v, want the usage total and no error", last)
+		}
+		if last.RunID != "run-1" || last.ConversationID != "con-1" {
+			t.Fatalf("run_end identity = %q/%q", last.RunID, last.ConversationID)
+		}
+	})
+
+	t.Run("provider failure still closes the run", func(t *testing.T) {
+		t.Parallel()
+		sentinel := errors.New("provider down")
+		events := run(t, &scriptedModel{errs: []error{sentinel}}, 1)
+		last := events[len(events)-1]
+		if last.Kind != runner.EventRunEnd {
+			t.Fatalf("last kind = %s, want run_end", last.Kind)
+		}
+		if !errors.Is(last.Err, sentinel) {
+			t.Fatalf("run_end.Err = %v, want the provider error", last.Err)
+		}
+	})
+
+	t.Run("loop exhaustion still closes the run", func(t *testing.T) {
+		t.Parallel()
+		tools := []tool.Tool[deps]{echoTool(t)}
+		exhausting := model.Request{
+			Messages:  []model.Message{{Role: model.RoleUser, Content: "hi"}},
+			ToolSpecs: specsFor(t, tools...),
+		}
+		m := &scriptedModel{responses: []model.Response{
+			toolResponse(model.ToolCall{ID: "c1", Name: "echo", Args: json.RawMessage(`{}`)}),
+		}}
+		var events []runner.Event
+		_, err := runner.ExecuteWithToolConfig(context.Background(), m, tools, deps{},
+			exhausting, 1, noRetries, runner.ToolConfig{}, "", func(event runner.Event) {
+				events = append(events, event)
+			}, nil, runner.RunIdentity{RunID: "run-1"})
+		if err == nil || !errors.Is(err, runner.ErrLoopLimit) {
+			t.Fatalf("Execute error = %v, want loop-limit exhaustion", err)
+		}
+		last := events[len(events)-1]
+		if last.Kind != runner.EventRunEnd || !errors.Is(last.Err, runner.ErrLoopLimit) {
+			t.Fatalf("run_end = %+v, want loop-limit exhaustion", last)
+		}
+	})
+
+	t.Run("invalid configuration emits nothing", func(t *testing.T) {
+		t.Parallel()
+		if events := run(t, &scriptedModel{}, 0); len(events) != 0 {
+			t.Fatalf("events = %v, want none for a rejected configuration", events)
+		}
+	})
+}
+
 func toolResponse(calls ...model.ToolCall) model.Response {
 	return model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: calls}}
 }
