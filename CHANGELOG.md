@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Tool search keeps a large catalog out of every request.** `golem.WithDeferredTools[Deps, Output](tools ...tool.Tool[Deps])` declares tools that stay dispatchable but unadvertised until the model finds them, and `golem.WithToolSearchLimit[Deps, Output](limit int)` caps matches per search (default 5). When anything is deferred, the runner synthesizes one `search_tools` tool taking `{"query": string}` and advertises it beside the eager tools. Matching is deterministic and stdlib-only — query tokens score against tool names (3), schema property names (2), and descriptions (1), with prefix hits one lower, ranked by score then name — and the result text lists the matches with their arguments. Reveals are derived from the conversation history on every turn, so they survive output-correction rounds and resumed runs with no stored state; a call to an unrevealed deferred tool fails at the tool stage naming `search_tools`. `search_tools` is a reserved name, `WithToolChoice` and `WithDeferredTools` are mutually exclusive, and bad search arguments are a correctable `*model.ModelRetry`. Provider-native tool search remains post-v1 (ADR 0033).
+
 ## v0.9.0 — 2026-10-25
 
 This minor release completes the MCP client — resources and prompts on

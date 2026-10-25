@@ -50,6 +50,8 @@ type Agent[Deps any, Output any] struct {
 	instructionsFunc  func(ctx context.Context, runCtx RunContext[Deps]) string
 	historyProcessor  HistoryProcessor
 	tools             []tool.Tool[Deps]
+	deferredTools     []tool.Tool[Deps]
+	toolSearchLimit   int
 	maxIterations     int
 	maxAttempts       int
 	retryBackoff      func(attempt int) time.Duration
@@ -100,6 +102,29 @@ func WithInstructionsFunc[Deps any, Output any](fn InstructionsFunc[Deps]) Optio
 func WithTools[Deps any, Output any](tools ...tool.Tool[Deps]) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.tools = append(agent.tools, tools...)
+	}
+}
+
+// WithDeferredTools registers tools the model may request but is not
+// shown until it searches for them. Deferred tools are declared up front
+// — name, description, and schema — and dispatched like any other tool;
+// only their advertisement is withheld, so a large catalog costs one
+// search_tools round trip instead of a schema on every request. The
+// agent advertises a runner-owned search_tools tool when at least one
+// tool is deferred (ADR 0033). WithToolChoice and WithDeferredTools are
+// mutually exclusive.
+func WithDeferredTools[Deps any, Output any](tools ...tool.Tool[Deps]) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.deferredTools = append(agent.deferredTools, tools...)
+	}
+}
+
+// WithToolSearchLimit caps how many tools one search_tools call reveals.
+// Zero uses the default of 5; a negative limit fails New. It has no
+// effect without WithDeferredTools.
+func WithToolSearchLimit[Deps any, Output any](limit int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolSearchLimit = limit
 	}
 }
 
@@ -443,8 +468,25 @@ func New[Deps any, Output any](
 	if agent.usageLimit.Cost > 0 && agent.price == nil {
 		return nil, fmt.Errorf("golem: usage limit Cost requires WithPrice; wire a model.Price to enforce a cost bound")
 	}
-	if err := validateTools(agent.tools); err != nil {
+	if err := validateTools(declaredTools(agent.tools, agent.deferredTools)); err != nil {
 		return nil, err
+	}
+	if agent.toolSearchLimit < 0 {
+		return nil, fmt.Errorf("golem: tool search limit must not be negative, got %d", agent.toolSearchLimit)
+	}
+	if len(agent.deferredTools) > 0 {
+		if agent.toolChoice != "" {
+			return nil, fmt.Errorf("golem: WithToolChoice and WithDeferredTools are mutually exclusive; a pinned tool leaves nothing to search")
+		}
+		if _, ok := findDeclaredTool(agent.tools, runner.SearchToolName); ok {
+			return nil, fmt.Errorf("golem: tool name %q is reserved for tool search", runner.SearchToolName)
+		}
+		if _, ok := findDeclaredTool(agent.deferredTools, runner.SearchToolName); ok {
+			return nil, fmt.Errorf("golem: tool name %q is reserved for tool search", runner.SearchToolName)
+		}
+		if agent.outputToolName == runner.SearchToolName {
+			return nil, fmt.Errorf("golem: tool name %q is reserved for tool search", runner.SearchToolName)
+		}
 	}
 	if agent.toolChoice != "" {
 		if _, ok := findDeclaredTool(agent.tools, agent.toolChoice); !ok {
@@ -459,6 +501,15 @@ func New[Deps any, Output any](
 		}
 	}
 	return agent, nil
+}
+
+// declaredTools returns every tool the agent can dispatch — eager and
+// deferred — as one slice for validation. It never aliases the agent's
+// own slices, so appending cannot corrupt them.
+func declaredTools[Deps any](eager, deferred []tool.Tool[Deps]) []tool.Tool[Deps] {
+	all := make([]tool.Tool[Deps], 0, len(eager)+len(deferred))
+	all = append(all, eager...)
+	return append(all, deferred...)
 }
 
 func validateTools[Deps any](tools []tool.Tool[Deps]) error {
@@ -684,6 +735,23 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 	if a.outputToolName != "" {
 		specs = append(specs, a.outputToolSpec)
 	}
+	// Deferred tools stay declared and dispatchable but out of the
+	// advertised set until the model searches for them.
+	declared := declaredTools(a.tools, a.deferredTools)
+	var search *runner.SearchConfig
+	if len(a.deferredTools) > 0 {
+		names := make([]string, len(a.deferredTools))
+		for i, t := range a.deferredTools {
+			names[i] = t.Name
+		}
+		search = &runner.SearchConfig{Deferred: names, Limit: a.toolSearchLimit}
+	}
+	toolConfig := runner.ToolConfig{
+		DefaultRetries: a.toolRetries,
+		DefaultTimeout: a.toolTimeout,
+		Parallel:       a.parallelToolCalls,
+		Search:         search,
+	}
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
 	if retry.Backoff == nil && a.maxAttempts > 1 {
 		retry.Backoff = exponentialBackoff
@@ -704,11 +772,11 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		var outcome runner.Outcome
 		var err error
 		if onDelta != nil {
-			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, onDelta, preSend, identity)
+			outcome, err = runner.ExecuteStreamWithToolConfig(ctx, a.model, declared, runCtx.Deps,
+				request, a.maxIterations, toolConfig, a.outputToolName, emit, onDelta, preSend, identity)
 		} else {
-			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, a.tools, runCtx.Deps,
-				request, a.maxIterations, retry, runner.ToolConfig{DefaultRetries: a.toolRetries, DefaultTimeout: a.toolTimeout, Parallel: a.parallelToolCalls}, a.outputToolName, emit, preSend, identity)
+			outcome, err = runner.ExecuteWithToolConfig(ctx, a.model, declared, runCtx.Deps,
+				request, a.maxIterations, retry, toolConfig, a.outputToolName, emit, preSend, identity)
 		}
 		if err != nil {
 			addUsage(&usage, outcome.Usage)

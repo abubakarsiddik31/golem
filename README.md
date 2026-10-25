@@ -338,6 +338,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
 | [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
 | [Deferred tools](docs/guides/deferred-tools.md) | Approvals and external results: pausing a run and resuming it |
+| [Tool search](docs/guides/tool-search.md) | Deferred tool loading: model-driven discovery over a large catalog |
 
 Design records live in [docs/adr/](docs/adr/); each guide links the ADR that decided its behavior.
 

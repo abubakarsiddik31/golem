@@ -37,3 +37,4 @@ example, and the README index agree.
 24. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
 25. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
 26. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+27. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
