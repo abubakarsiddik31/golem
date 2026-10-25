@@ -328,6 +328,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
+| [Sessions](docs/guides/sessions.md) | The `session.Store` port and `WithSession`: conversations that persist between runs, failures included |
 | [Multimodal input](docs/guides/multimodal-input.md) | Images, documents, audio, and video in prompts, per-provider mapping |
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
@@ -356,6 +357,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
+| [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
