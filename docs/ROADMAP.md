@@ -7,9 +7,9 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-All ten pre-freeze items have landed — nine in v0.9.0, and tool
-search, the benchmark suites, and the observability work on main ahead
-of the next release. In-tool run cancellation cleanly stops a
+v1.0.0 is the next release: the compatibility promise is ADR 0041, and
+every pre-freeze and parity item has landed. In-tool run cancellation
+cleanly stops a
 run with evidence on `RunError.Partial`; `golem.SanitizeHistory`
 sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`
@@ -30,7 +30,11 @@ prompts as application-driven client operations; deferred tool loading
 keeps a large catalog behind a runner-owned `search_tools` discovery
 tool, with reveals derived from history; and
 the durable message-JSON contract is under continuous fuzz, with `-race`
-CI and the offline examples running on every check.
+CI and the offline examples running on every check. The parity series
+added benchmarks with a recorded baseline, run boundary events and the
+`telemetry` tracing port, the `session` persistence port, the
+retrieval index and its agent tool, DeepSeek reasoning capture and the
+Groq preset, and the orchestration and templating recipes.
 
 ## Toward v1.0.0 — the feature series
 
@@ -141,12 +145,13 @@ series ends in the freeze, not a date.
   the cached share arrives on `Usage.CacheReadTokens`
   (see [Providers](guides/providers.md#prompt-caching)).
 
-After the series: the freeze ADR — the compatibility promise,
-additive-only below v2, deprecations removed only at the next major,
-checked by apidiff between the v1 tag and main on every release — and
-the v1.0.0 cut. The v1 criteria stand: documentation complete, no
-known provider gaps, MCP shipped, and a review of the public surface
-against real usage.
+The series is closed and the freeze is written: ADR 0041 records the
+compatibility promise — SemVer, additive-only below v2, deprecations
+documented and removed only at v2, `apidiff` between the last v1 tag
+and every release — and the v1 criteria are met: documentation
+complete (31 guides), no known provider gaps, MCP shipped, and the
+public surface reviewed through the parity series itself. The next
+release is v1.0.0.
 
 ## After v1 — additive minors
 
@@ -158,6 +163,11 @@ against real usage.
   request) and **native provider-executed tools** (server-side search,
   code execution), demand-gated.
 - **MCP server mode**, exposing a Golem agent as an MCP server.
+- **Agent2Agent (A2A) protocol**, an agent-serving surface like MCP
+  server mode and deferred for the same reason: no requester yet, and
+  the seams an adapter would use — agent-as-tool outward, the model
+  port inward — are the ones v1 froze. When users ask, it lands
+  additively.
 
 ## Not planned
 
