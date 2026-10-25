@@ -69,7 +69,7 @@ A feature-by-feature look at Golem against the other actively maintained Go agen
 | Batteries-included document/web tools (PDF, Office docs, web fetch, shell, OCR) | :white_check_mark: in-repo, pure Go | Partial — community-contributed, varying quality/maintenance | :x: left to `eino-ext` or user code | :x: left to user code |
 | Streaming run events (attempts, tool calls, corrections) | :white_check_mark: `WithRunEvents` | Partial — token streaming only | :white_check_mark: via callbacks | Partial — tracing spans, not a structured event stream |
 | Primary design model | Linear, explicit agent run loop | LangChain-style chains/agents ported to Go | Graph/workflow orchestration (DAG-style composition) | Flow-based functions with OpenTelemetry tracing |
-| Maturity / stability posture | Pre-1.0; every release so far additive (API freeze planned at v1.0.0) | Community-maintained, API has shifted across versions | Actively developed by CloudWeGo/ByteDance, frequent releases | Agent API explicitly marked experimental |
+| Maturity / stability posture | **v1.0.0** — SemVer, additive-only below v2, apidiff-gated (ADR 0041) | Community-maintained, API has shifted across versions | Actively developed by CloudWeGo/ByteDance, frequent releases | Agent API explicitly marked experimental |
 | License | MIT | MIT | Apache-2.0 | Apache-2.0 |
 
 **Where Golem wins:** it is the only one of the four with zero non-stdlib dependencies, compile-time-typed tool dependency injection, a native MCP client in the core module, and production guardrails (self-correction, fallback, cost/token budgets, deferred human-in-the-loop execution) shipped together as one coherent runtime instead of assembled from separate packages.
@@ -447,7 +447,7 @@ docs/adr/     Decisions that shape public contracts
 
 Golem is currently at **v0.9.0**.
 
-The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. The public API adheres strictly to additive-only changes on the road to **v1.0.0**.
+The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. As of **v1.0.0** the public API follows SemVer with additive-only changes below v2, checked by API diff on every release (ADR 0041).
 
 - **Resilient Execution:** Self-correction loops (`ModelRetry`), fallback models, exponential backoff, per-tool timeouts, in-tool cancellation (`tool.Canceled`), and partial evidence preservation (`RunError.Partial`).
 - **Comprehensive Multimodal:** Text, images, PDF documents, audio, and video inputs mapped natively across all model adapters.

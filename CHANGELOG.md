@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## v1.0.0 — 2026-10-25
+
+The first stable release. The compatibility promise is ADR 0041: SemVer
+with an additive-only exported surface below v2, checked by `apidiff`
+between the last v1 tag and every release; the durable contracts stay
+durable, deprecations are documentation rather than removals, and
+behavior fixes are not breaking. This release completes the pre-freeze
+series and the parity series that followed it: tool search, benchmarks,
+run boundary events and the `telemetry` tracing port, the `session`
+persistence port, the `retrieval` index and its agent tool, DeepSeek
+reasoning capture, the Groq preset, and the orchestration and prompt
+templating recipes. MCP server mode and the Agent2Agent protocol are
+explicitly deferred to post-v1 additive minors.
 
 ### Added
 
