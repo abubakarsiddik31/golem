@@ -43,6 +43,23 @@ onto `model.FinishReason` — identical on streamed and plain runs:
 | Bedrock | `stopReason` | `end_turn`, `stop_sequence` | `max_tokens` | `tool_use` | `guardrail_intervened`, `content_filtered` |
 | Gemini | `finishReason` | `STOP` | `MAX_TOKENS` | — | `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` |
 
+### OpenAI-compatible endpoints beyond OpenAI
+
+`providers/openai` speaks for every OpenAI-compatible API through its
+`BaseURL`; two get first-class treatment:
+
+- **DeepSeek** — point `BaseURL` at `https://api.deepseek.com/v1`
+  with `Model` `deepseek-chat` or `deepseek-reasoner`. Reasoning is
+  captured either way the API reports it: the `reasoning_content`
+  field, or a `<think>` block inlined at the start of the content —
+  how R1 behaves through generic completion runtimes. Capture-only;
+  see [Thinking](thinking.md).
+- **Groq** — `providers/groq` is a preset, not a protocol: it fills
+  the default base URL (`https://api.groq.com/openai/v1`), requires
+  the API key, and names a couple of catalog constants. Everything
+  else — tools, streaming, structured output — is the OpenAI adapter,
+  because Groq speaks the same wire.
+
 ## Prompt caching
 
 Every provider can serve a repeated prompt prefix from cache instead of
@@ -206,6 +223,7 @@ focusedClient, _ := openai.New(openai.Config{
 ## API surface
 
 - `openai.New(openai.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
+- `groq.New(openai.Config{APIKey, Model, ...})` — the Groq preset: base URL filled, key required; `groq.DefaultBaseURL`, `groq.ModelLlama3370B`, `groq.ModelDeepSeekR1DistillLlama`
 - `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, Effort, CacheControl, HTTPClient})`
 - `anthropic.CacheControl{TTL}` — automatic prompt caching; `anthropic.CacheOneHour`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
@@ -230,7 +248,7 @@ focusedClient, _ := openai.New(openai.Config{
 
   | Provider | BaseURL |
   | --- | --- |
-  | Groq | `https://api.groq.com/openai/v1` |
+  | Groq | `https://api.groq.com/openai/v1` — or the `providers/groq` preset |
   | OpenRouter | `https://openrouter.ai/api/v1` |
   | DeepSeek | `https://api.deepseek.com/v1` |
   | Mistral | `https://api.mistral.ai/v1` |

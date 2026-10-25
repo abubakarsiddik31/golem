@@ -122,6 +122,13 @@ series ends in the freeze, not a date.
   `embedding.Embedder`. Chunking and vector-database backends stay
   application-side behind the two methods (ADR 0040).
 
+- ~~**Provider breadth: DeepSeek reasoning and Groq.**~~ Shipped in
+  `providers/openai`: leading `<think>` blocks join
+  `reasoning_content` as captured thinking, in streams and plain
+  responses, so DeepSeek R1 works through any completion runtime.
+  `providers/groq` presets the base URL and key handling for Groq
+  without duplicating the wire protocol (closes #54, #55).
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and

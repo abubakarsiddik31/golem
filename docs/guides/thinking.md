@@ -56,6 +56,16 @@ Provider mapping:
   `reasoning_content` field populate the blocks; nothing is replayed,
   because chat-completions endpoints disagree on replay (OpenAI ignores
   it, DeepSeek-style APIs reject it).
+- **OpenAI-compatible reasoning runtimes (DeepSeek R1 and friends)** —
+  two capture paths, both automatic. The `reasoning_content` message
+  field is captured as above; a `<think>` block at the very start of
+  the content — how R1 served through generic completion runtimes
+  reports reasoning — is extracted into a thinking block, with the
+  visible answer remaining `Content`. The tag is honored only at the
+  start: a `<think>` mentioned mid-answer is content, not reasoning.
+  Streaming handles tags split across fragments. Point
+  `providers/openai` at `https://api.deepseek.com/v1` (see
+  [Providers](providers.md)).
 
 ## Example
 

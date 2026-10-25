@@ -469,13 +469,20 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 	}
 	var thinking []model.ThinkingBlock
 	if choice.ReasoningContent != "" {
-		thinking = []model.ThinkingBlock{model.ThinkingText(choice.ReasoningContent)}
+		thinking = append(thinking, model.ThinkingText(choice.ReasoningContent))
+	}
+	// A think block inlined at the start of the content — DeepSeek R1
+	// through generic completion runtimes — is reasoning too.
+	content := contentText(choice.Content)
+	if text, tagThinking, found := splitLeadingThink(content); found {
+		content = text
+		thinking = append(thinking, model.ThinkingText(tagThinking))
 	}
 
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
-			Content:   contentText(choice.Content),
+			Content:   content,
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},
