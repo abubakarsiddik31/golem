@@ -326,6 +326,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
+| [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
 | [Sessions](docs/guides/sessions.md) | The `session.Store` port and `WithSession`: conversations that persist between runs, failures included |
@@ -373,6 +374,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`doc-extract`](examples/doc-extract/main.go) | The `docextract` common tool extracting Word, Excel, and Markdown, offline |
 | [`ocr-scanned-pdf`](examples/ocr-scanned-pdf/main.go) | The `pdfextract` local Indra OCR engine on a scanned page, offline |
 | [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
+| [`orchestration`](examples/orchestration/main.go) | Multi-agent fan-out and pipeline in plain Go, offline |
 | [`tool-results`](examples/tool-results/main.go) | Tools returning parts and definitive failures, offline |
 | [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
 | [`fallback`](examples/fallback/main.go) | Primary model with a fallback and a request bound |

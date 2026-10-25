@@ -108,6 +108,13 @@ series ends in the freeze, not a date.
   implementation; file and database backends stay application-side
   behind two methods (ADR 0039).
 
+- ~~**Orchestration.**~~ Shipped as the composition guide and
+  `examples/orchestration`: fan-out/fan-in, pipelines, routers, and
+  bounded maps written in plain Go over the existing seams — no new
+  API. The claim is deliberate: shared agents already serve concurrent
+  runs and results are already immutable, so a graph engine would
+  re-express the language; it stays out per the foundation non-goals.
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and
