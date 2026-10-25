@@ -31,6 +31,15 @@ type HTTPConfig struct {
 	// Header carries extra headers sent on every request, such as
 	// Authorization. It is copied at construction.
 	Header http.Header
+	// TokenSource supplies a bearer token for each request. It is
+	// called before every POST with that request's context, so a token
+	// can be refreshed between requests; it must not call back into
+	// this transport or the client that drives it. A non-empty token
+	// is sent as "Bearer <token>" and replaces any Authorization
+	// header from Header. An empty token sends the request with no
+	// Authorization header at all, and an error fails the request. Use
+	// Header instead for another authentication scheme.
+	TokenSource func(context.Context) (string, error)
 }
 
 // HTTPTransport speaks MCP over the streamable-HTTP transport. It
@@ -44,14 +53,15 @@ type HTTPConfig struct {
 // protocol headers and never with a session header, because the modern
 // revision is stateless.
 type HTTPTransport struct {
-	endpoint   *url.URL
-	client     *http.Client
-	header     http.Header
-	sessionID  string
-	errorBody  []byte
-	pending    [][]byte
-	body       io.ReadCloser
-	bodyReader *bufio.Reader
+	endpoint    *url.URL
+	client      *http.Client
+	header      http.Header
+	tokenSource func(context.Context) (string, error)
+	sessionID   string
+	errorBody   []byte
+	pending     [][]byte
+	body        io.ReadCloser
+	bodyReader  *bufio.Reader
 }
 
 var _ Transport = (*HTTPTransport)(nil)
@@ -78,14 +88,17 @@ func NewHTTP(cfg HTTPConfig) (*HTTPTransport, error) {
 		header[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
 	}
 	return &HTTPTransport{
-		endpoint: endpoint,
-		client:   client,
-		header:   header,
+		endpoint:    endpoint,
+		client:      client,
+		header:      header,
+		tokenSource: cfg.TokenSource,
 	}, nil
 }
 
 // HTTPStatusError reports a non-2xx response from the server,
-// including the 404 a server uses when its session no longer exists.
+// including the 404 a server uses when its session no longer exists. A
+// 401 or 403 is reported as *AuthError instead, which unwraps to this
+// type.
 type HTTPStatusError struct {
 	// StatusCode is the HTTP status the server returned.
 	StatusCode int
@@ -111,6 +124,21 @@ func (t *HTTPTransport) Send(ctx context.Context, message []byte) error {
 	request.Header = t.header.Clone()
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
+	if t.tokenSource != nil {
+		token, err := t.tokenSource(ctx)
+		if err != nil {
+			return fmt.Errorf("mcp: token source: %w", err)
+		}
+		// The token source is authoritative: an empty token means the
+		// request carries no credentials, even if Header set one.
+		request.Header.Del("Authorization")
+		if token != "" {
+			if !bearerToken(token) {
+				return fmt.Errorf("mcp: token source returned a token that is not header-safe")
+			}
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
 	if meta.version != "" {
 		// Modern revision: stateless, with the body mirrored into
 		// headers so intermediaries can route without parsing it.
@@ -138,7 +166,16 @@ func (t *HTTPTransport) Send(ctx context.Context, message []byte) error {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
 		response.Body.Close()
 		t.errorBody = body
-		return &HTTPStatusError{StatusCode: response.StatusCode, URL: t.endpoint.String()}
+		status := &HTTPStatusError{StatusCode: response.StatusCode, URL: t.endpoint.String()}
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			// The server refused the credentials. Report what it asked
+			// for instead of only the status, so the application can
+			// re-authorize. A response may carry one header line per
+			// challenge.
+			header := strings.Join(response.Header.Values("WWW-Authenticate"), ", ")
+			return &AuthError{Status: status, Header: header, Challenge: parseBearerChallenge(header)}
+		}
+		return status
 	}
 
 	mediaType := mediaType(response.Header.Get("Content-Type"))

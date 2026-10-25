@@ -22,13 +22,13 @@ subprocess or remote service speaking JSON-RPC.
 
 `mcp.NewStdio(mcp.StdioConfig{Command, Args, Dir, Env})` starts the
 server as a subprocess and owns its lifecycle — `Close` terminates it.
-`mcp.NewHTTP(mcp.HTTPConfig{URL, HTTPClient, Header})` reaches a
-remote endpoint: every message is one POST, answered as a JSON body or
-a text/event-stream whose events arrive one by one; the session header
-a server assigns at initialize is captured and sent automatically, and
-extra headers (such as `Authorization`) ride along on every request.
-The server-to-client GET stream is not opened — pushes are not needed
-for tool use.
+`mcp.NewHTTP(mcp.HTTPConfig{URL, HTTPClient, Header, TokenSource})`
+reaches a remote endpoint: every message is one POST, answered as a JSON
+body or a text/event-stream whose events arrive one by one; the session
+header a server assigns at initialize is captured and sent
+automatically, and extra headers (such as `Authorization`) ride along on
+every request. The server-to-client GET stream is not opened — pushes
+are not needed for tool use.
 
 `mcp.NewClient(transport)` wraps any Transport; `Initialize` negotiates
 the protocol era, announces this client, and records the server's
@@ -55,6 +55,25 @@ mirrored from the body, with names outside the safe ASCII set Base64
 encoded behind the `=?base64?…?=` sentinel. A modern request never
 carries `Mcp-Session-Id`, and a session header the server assigns is
 ignored, because the modern revision is stateless.
+
+Over streamable HTTP, credentials are the application's. `TokenSource`
+is called before every request with that request's context, so a
+refreshed token takes effect on the next call without rebuilding the
+transport. A non-empty result is sent as `Authorization: Bearer …` and
+replaces any `Authorization` from `Header`; an empty result sends no
+`Authorization` at all; an error fails the request before it is sent.
+The transport never obtains a token and never retries.
+
+A refused request — 401 or 403 — is reported as `*mcp.AuthError`, which
+carries the raw `WWW-Authenticate` value and the parsed `Challenge`:
+`Error` (`invalid_token` or `insufficient_scope`), `Scope`, and
+`ResourceMetadata`, the RFC 9728 document an application discovers the
+authorization server from. `AuthError` unwraps to the underlying
+`*HTTPStatusError`, so a status-only check keeps working, and every other
+non-2xx status is still a plain `*HTTPStatusError`. Golem implements no
+OAuth flow: discovery, registration, PKCE, refresh, and step-up belong to
+the application, and any OAuth library can drive them behind
+`TokenSource`.
 
 `mcp.AsTools[Deps](ctx, client)` snapshots the server's tool list and
 returns each as a `tool.Tool[Deps]` carrying the server's name,
@@ -161,7 +180,9 @@ for the streamable-HTTP transport against a local endpoint. Run
 `examples/mcp-elicitation` for the modern multi-round-trip flow: the
 server's tool asks for confirmation, the client answers through
 `OnElicitation`, and the call is retried with the answer and the echoed
-state.
+state. Run `examples/mcp-auth` for authorization: the server refuses an
+anonymous request and then a scope-starved one, and the application
+re-authorizes and retries.
 
 ```go
 transport, _ := mcp.NewStdio(mcp.StdioConfig{Command: "npx", Args: []string{"-y", "some-mcp-server"}})
@@ -197,10 +218,34 @@ for _, message := range rendered.Messages {
 }
 ```
 
+Over HTTP, credentials come from a token source the application controls:
+
+```go
+token := "" // replaced whenever your OAuth flow refreshes it
+
+transport, _ := mcp.NewHTTP(mcp.HTTPConfig{
+    URL: "https://example.com/mcp",
+    TokenSource: func(ctx context.Context) (string, error) {
+        return token, nil
+    },
+})
+client := mcp.NewClient(transport)
+defer client.Close()
+
+_, err := client.ListTools(ctx)
+var unauthorized *mcp.AuthError
+if errors.As(err, &unauthorized) {
+    // unauthorized.Challenge.Error   — "invalid_token" or "insufficient_scope"
+    // unauthorized.Challenge.Scope   — what the operation needs
+    // unauthorized.Challenge.ResourceMetadata — where to discover the AS
+    token = reauthorize(unauthorized.Challenge)
+}
+```
+
 ## API surface
 
 - `mcp.NewStdio(mcp.StdioConfig) (*StdioTransport, error)` — `StdioConfig{Command, Args, Dir, Env}`
-- `mcp.NewHTTP(mcp.HTTPConfig) (*HTTPTransport, error)` — `HTTPConfig{URL, HTTPClient, Header}`
+- `mcp.NewHTTP(mcp.HTTPConfig) (*HTTPTransport, error)` — `HTTPConfig{URL, HTTPClient, Header, TokenSource}`
 - `mcp.Transport` — the `Send`/`Read`/`Close` boundary other transports implement
 - `mcp.NewClient(mcp.Transport) *Client`
 - `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).ProtocolVersion()` / `(*Client).Close()`
@@ -215,6 +260,7 @@ for _, message := range rendered.Messages {
 - `(*Client).ListPrompts(ctx) ([]Prompt, error)` — `Prompt{Name, Title, Description, Arguments}`, `PromptArgument{Name, Title, Description, Required}`
 - `(*Client).GetPrompt(ctx, name, arguments) (PromptResult, error)` — `PromptResult{Description, Messages}`, `PromptMessage{Role, Content}`, `PromptContent{Type, Text, MIMEType, Data, Resource}`, `PromptMessage.Text()`
 - `mcp.ProtocolError{Code, Message, Data}`, `mcp.HTTPStatusError{StatusCode, URL}`
+- `mcp.AuthError{Status, Header, Challenge}` — unwraps to `*HTTPStatusError`; `mcp.Challenge{Scheme, Realm, Error, Description, Scope, ResourceMetadata}`
 - `mcp.UnsupportedProtocolVersionError{Requested, Supported}`, `mcp.InputRequiredError{Result, Method}`
 
 ## Gotchas
@@ -239,6 +285,16 @@ for _, message := range rendered.Messages {
   not validate form `Content` against `RequestedSchema`; validate it in
   the handler if you rely on its shape, and never ask for passwords or
   API keys in form mode.
+- `TokenSource` runs inline on the calling goroutine while the client
+  holds its lock, once per request. A refresh that blocks stalls the
+  call, and calling back into the same client from it deadlocks; cache a
+  token that is expensive to mint. The token must be visible ASCII with
+  no surrounding whitespace — one carrying a newline is rejected rather
+  than sent, because it could inject a header.
+- A 401 or 403 is `*mcp.AuthError`, not `*mcp.HTTPStatusError`, though it
+  unwraps to one. `Challenge` is zero when the response carried no Bearer
+  challenge, and Golem never retries on its own — a step-up flow is your
+  two calls, not one.
 - `AsTools`, `ListTools`, `ListResources`, and `ListPrompts` are
   point-in-time snapshots; a server that changes them dynamically is
   re-read by calling again, not by push notification.
@@ -279,5 +335,6 @@ for _, message := range rendered.Messages {
 - Decisions live in `docs/adr/0016-mcp-client-package.md`,
   `docs/adr/0032-mcp-resources-and-prompts.md`,
   `docs/adr/0034-mcp-tool-metadata.md`,
-  `docs/adr/0035-mcp-progress-notifications.md`, and
-  `docs/adr/0036-mcp-elicitation.md`.
+  `docs/adr/0035-mcp-progress-notifications.md`,
+  `docs/adr/0036-mcp-elicitation.md`, and
+  `docs/adr/0037-mcp-authorization.md`.
