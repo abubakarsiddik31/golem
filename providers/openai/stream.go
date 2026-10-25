@@ -109,6 +109,10 @@ type streamAssembler struct {
 	// thinking accumulates reasoning fragments from endpoints that return
 	// a reasoning_content field on deltas.
 	thinking strings.Builder
+	// filter routes content fragments, extracting a leading <think>
+	// block into tagThinking; see think.go.
+	filter      thinkFilter
+	tagThinking strings.Builder
 }
 
 // consume decodes one data payload, accumulates it, and reports the
@@ -132,12 +136,19 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	var delta model.Delta
 	message := chunk.Choices[0].Delta
 	if message.Content != "" {
-		a.content.WriteString(message.Content)
-		delta.Content = message.Content
+		text, thinkFragment := a.filter.feed(message.Content)
+		if thinkFragment != "" {
+			a.tagThinking.WriteString(thinkFragment)
+			delta.Thinking = append(delta.Thinking, model.ThinkingDelta{Index: 1, Text: thinkFragment})
+		}
+		if text != "" {
+			a.content.WriteString(text)
+			delta.Content = text
+		}
 	}
 	if message.ReasoningContent != "" {
 		a.thinking.WriteString(message.ReasoningContent)
-		delta.Thinking = []model.ThinkingDelta{{Index: 0, Text: message.ReasoningContent}}
+		delta.Thinking = append(delta.Thinking, model.ThinkingDelta{Index: 0, Text: message.ReasoningContent})
 	}
 	for _, call := range message.ToolCalls {
 		delta.ToolCalls = append(delta.ToolCalls, a.toolCallFragment(call))
@@ -184,14 +195,24 @@ func (a *streamAssembler) response() model.Response {
 	if len(calls) == 0 {
 		calls = nil
 	}
+	// Flush the think filter: an unclosed block is reasoning, an
+	// undecided buffer is content.
+	tailContent, tailThinking := a.filter.finish()
+	if tailThinking != "" {
+		a.tagThinking.WriteString(tailThinking)
+	}
+	content := a.content.String() + tailContent
 	var thinking []model.ThinkingBlock
 	if a.thinking.Len() > 0 {
-		thinking = []model.ThinkingBlock{model.ThinkingText(a.thinking.String())}
+		thinking = append(thinking, model.ThinkingText(a.thinking.String()))
+	}
+	if a.tagThinking.Len() > 0 {
+		thinking = append(thinking, model.ThinkingText(strings.TrimSpace(a.tagThinking.String())))
 	}
 	return model.Response{
 		Message: model.Message{
 			Role:      model.RoleAssistant,
-			Content:   a.content.String(),
+			Content:   content,
 			ToolCalls: calls,
 			Thinking:  thinking,
 		},

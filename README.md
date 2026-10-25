@@ -250,6 +250,8 @@ Golem ships with standard-library-only adapters for all major frontier and open-
 | **AWS Bedrock** | `providers/bedrock` | :white_check_mark: | :white_check_mark: | :white_check_mark: | — | :white_check_mark: |
 | **Azure OpenAI** | `providers/azure` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
 | **Ollama / Local** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
+| **DeepSeek** | `providers/openai` | :white_check_mark: | :white_check_mark: (`reasoning_content` + `<think>`) | — | — | — |
+| **Groq** | `providers/groq` | :white_check_mark: | :white_check_mark: | — | — | — |
 | **OpenAI-Compatible** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
 
 ---
