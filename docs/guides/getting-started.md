@@ -31,6 +31,35 @@ requests and tool executions. `Partial` is nil when the run failed
 before any of that; feed `Partial.Messages` to `RunWithHistory` to
 resume a failed conversation.
 
+## Prompt templating
+
+Instructions that depend on runtime state are a function:
+`WithInstructionsFunc` evaluates per run against the run's typed
+dependencies, and its result replaces any system messages in history,
+so guidance never goes stale. When the prompt is genuinely a template,
+render it with Go's `text/template` inside that function — Golem adds
+no template engine, on purpose:
+
+```go
+var policy = template.Must(template.New("policy").Parse(
+    "You are the {{.Product}} support agent. Answer in a {{.Tone}} tone."))
+
+agent, _ := golem.New[config, string](client, decoder,
+    golem.WithInstructionsFunc[config, string](func(_ context.Context, runCtx golem.RunContext[config]) string {
+        var rendered strings.Builder
+        if err := policy.Execute(&rendered, runCtx.Deps); err != nil {
+            return "Instructions are temporarily unavailable: " + err.Error()
+        }
+        return rendered.String()
+    }),
+)
+```
+
+Parse the template once at construction so a broken template fails at
+startup; execute per run so the prompt follows the dependency value.
+Run `examples/prompt-template` — offline — to see two agents render
+the same template differently.
+
 ## Example
 
 Run `examples/minimal`:
@@ -55,6 +84,7 @@ result, err := agent.Run(ctx, golem.RunContext[struct{}]{}, "Reply with exactly 
 - `(*Agent).Run(ctx, runCtx, prompt) (Result[Output], error)`
 - `golem.RunContext[Deps]{Deps: value}`
 - `golem.DecodeFunc[Output](func(ctx, model.Response) (Output, error))`
+- `golem.WithInstructionsFunc[Deps, Output](func(ctx, RunContext[Deps]) string)` — per-run instructions; compose with `text/template` for templating
 
 ## Gotchas
 

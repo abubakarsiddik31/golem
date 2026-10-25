@@ -129,6 +129,18 @@ series ends in the freeze, not a date.
   `providers/groq` presets the base URL and key handling for Groq
   without duplicating the wire protocol (closes #54, #55).
 
+- ~~**Prompt templating.**~~ Shipped as the recipe in
+  [Getting started](guides/getting-started.md#prompt-templating) and
+  `examples/prompt-template`: `WithInstructionsFunc` plus Go's
+  `text/template` over typed dependencies — parse once, execute per
+  run. No first-party template engine; the stdlib one is the point.
+
+- ~~**Prompt caching.**~~ Shipped in v0.9.0: `anthropic.CacheControl`
+  and `bedrock.Config.CacheControl` place explicit checkpoints,
+  OpenAI, Azure, and Gemini cache eligible prefixes implicitly, and
+  the cached share arrives on `Usage.CacheReadTokens`
+  (see [Providers](guides/providers.md#prompt-caching)).
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and
