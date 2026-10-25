@@ -60,6 +60,7 @@ nav:
   - Agent skills: skills.md
   - MCP client: mcp-client.md
   - Agent delegation: agent-delegation.md
+  - Orchestration: orchestration.md
   - Tool timeouts: tool-timeouts.md
   - Conversations and history: conversations-and-history.md
   - Sessions: sessions.md
