@@ -49,6 +49,7 @@ nav:
   - Getting started: getting-started.md
   - Providers: providers.md
   - Embeddings: embeddings.md
+  - Retrieval: retrieval.md
   - Token counting: token-counting.md
   - Cost: cost.md
   - Tools and dependencies: tools-and-dependencies.md
