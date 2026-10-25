@@ -41,6 +41,10 @@ func run() error {
 	}
 	client := mcp.NewClient(transport)
 	defer client.Close()
+	// Progress is interim: the handler runs while the call waits.
+	client.OnProgress(func(update mcp.Progress) {
+		fmt.Printf("progress: %.0f/%.0f %s\n", update.Completed, update.Total, update.Message)
+	})
 
 	ctx := context.Background()
 	if err := client.Initialize(ctx); err != nil {
@@ -154,6 +158,11 @@ func serve() {
 		var message struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params struct {
+				Meta struct {
+					ProgressToken json.RawMessage `json:"progressToken"`
+				} `json:"_meta"`
+			} `json:"params"`
 		}
 		if json.Unmarshal([]byte(line), &message) != nil || message.Method == "" || len(message.ID) == 0 {
 			continue
@@ -170,6 +179,9 @@ func serve() {
 		case "tools/call":
 			// A tool with an output schema may answer with structured
 			// content only; AsTools hands the JSON to the model.
+			if token := message.Params.Meta.ProgressToken; len(token) > 0 {
+				notifyProgress(out, token, 1, 1, "echoed")
+			}
 			reply(out, message.ID, `{"structuredContent":{"echo":"hello mcp"},"isError":false}`)
 		case "resources/list":
 			reply(out, message.ID, `{"resources":[{"uri":"file:///notes/welcome.md","name":"welcome","title":"Welcome note","description":"A short greeting.","mimeType":"text/markdown","size":42}]}`)
@@ -204,6 +216,30 @@ func replyError(out *bufio.Writer, id json.RawMessage, code int, message string)
 		"jsonrpc": "2.0",
 		"id":      id,
 		"error":   map[string]any{"code": code, "message": message},
+	})
+	if err != nil {
+		return
+	}
+	out.Write(encoded)
+	out.WriteByte('\n')
+	out.Flush()
+}
+
+// notifyProgress sends one progress notification for a request's token.
+func notifyProgress(out *bufio.Writer, token json.RawMessage, completed, total float64, message string) {
+	params, err := json.Marshal(map[string]any{
+		"progressToken": json.RawMessage(token),
+		"progress":      completed,
+		"total":         total,
+		"message":       message,
+	})
+	if err != nil {
+		return
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/progress",
+		"params":  json.RawMessage(params),
 	})
 	if err != nil {
 		return
