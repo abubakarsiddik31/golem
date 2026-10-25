@@ -5,8 +5,9 @@
 Connect Golem agents to the Model Context Protocol ecosystem: the
 `mcp` package speaks MCP to a server over stdio or streamable HTTP,
 discovers its tools and returns them as ordinary `tool.Tool` values any
-agent can register, and offers its resources and prompts as typed
-client operations the application drives.
+agent can register, offers its resources and prompts as typed client
+operations the application drives, and answers the elicitation requests
+a modern server sends mid-call.
 
 ## When to use
 
@@ -89,10 +90,30 @@ operation. In a legacy session, while a call waits, a server-initiated
 `ping` is answered inline, any other server-initiated request gets a
 method-not-found reply, and notifications other than progress are
 dropped. A modern session has no server-initiated requests: client
-features arrive as input requests inside a result, and this client
-implements none of them, so a result of type `input_required` fails
-with `*mcp.InputRequiredError` rather than being silently dropped. A
-server that sends a request anyway fails the call.
+features arrive as input requests inside a result instead, and a server
+that sends a request anyway fails the call.
+
+`OnElicitation(handler)` answers the elicitation requests a modern
+server sends inside an `input_required` result. With a handler
+installed, every modern request declares the `elicitation` capability in
+its metadata, so a compliant server may ask. The client calls the
+handler for each request, retries the original call with
+`inputResponses` keyed to the server's identifiers, and echoes
+`requestState` verbatim; each retry is a new JSON-RPC request with a new
+id. `Elicitation` carries the server's `Message`, its `Mode` (`form` or
+`url`), the form's `RequestedSchema`, and the url mode's `URL`.
+`ElicitationResult` carries the `Action` (`accept`, `decline`, or
+`cancel`) and, for an accepted form, the `Content`. A handler error
+fails the call; a decline or cancel is sent to the server, which decides
+what happens next. The handler runs inline on the calling goroutine
+under the client lock, and Golem never validates `Content` against
+`RequestedSchema`.
+
+Sampling and roots are deprecated by the `2026-07-28` revision and are
+not implemented, so an `input_required` result that asks for either
+fails with `*mcp.InputRequiredError` — as does an elicitation when no
+handler is installed, or a result that asks for nothing at all. A server
+that keeps asking is cut off after eight rounds.
 
 `OnProgress(handler)` installs a callback for the progress a server
 reports while a request is in flight. With a handler installed, every
@@ -136,7 +157,11 @@ application — Golem does not auto-inject either.
 
 Run `examples/mcp-client` — offline: the example binary doubles as a
 minimal MCP stdio server and spawns itself. Run `examples/mcp-http`
-for the streamable-HTTP transport against a local endpoint.
+for the streamable-HTTP transport against a local endpoint. Run
+`examples/mcp-elicitation` for the modern multi-round-trip flow: the
+server's tool asks for confirmation, the client answers through
+`OnElicitation`, and the call is retried with the answer and the echoed
+state.
 
 ```go
 transport, _ := mcp.NewStdio(mcp.StdioConfig{Command: "npx", Args: []string{"-y", "some-mcp-server"}})
@@ -144,6 +169,15 @@ transport, _ := mcp.NewStdio(mcp.StdioConfig{Command: "npx", Args: []string{"-y"
 // transport, _ := mcp.NewHTTP(mcp.HTTPConfig{URL: "https://example.com/mcp"})
 client := mcp.NewClient(transport)
 defer client.Close()
+
+client.OnElicitation(func(ctx context.Context, request mcp.Elicitation) (mcp.ElicitationResult, error) {
+    // A real application prompts the user and honors a decline.
+    // Never fetch or open a url mode URL on the user's behalf.
+    return mcp.ElicitationResult{
+        Action:  mcp.ElicitationAccept,
+        Content: json.RawMessage(`{"name":"Ada"}`),
+    }, nil
+})
 
 _ = client.Initialize(ctx)
 tools, _ := mcp.AsTools[struct{}](ctx, client)
@@ -171,6 +205,7 @@ for _, message := range rendered.Messages {
 - `mcp.NewClient(mcp.Transport) *Client`
 - `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).ProtocolVersion()` / `(*Client).Close()`
 - `(*Client).OnProgress(handler func(mcp.Progress))` — `Progress{Completed, Total, Message}`; nil stops requesting progress
+- `(*Client).OnElicitation(handler func(context.Context, mcp.Elicitation) (mcp.ElicitationResult, error))` — `Elicitation{Message, Mode, RequestedSchema, URL}`, `ElicitationResult{Action, Content}`; `ElicitationModeForm`, `ElicitationModeURL`, `ElicitationAccept`, `ElicitationDecline`, `ElicitationCancel`; nil stops declaring the capability
 - `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Title, Description, InputSchema, OutputSchema, Annotations}`, `ToolAnnotations{Title, ReadOnlyHint, DestructiveHint, IdempotentHint, OpenWorldHint}`
 - `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, StructuredContent, IsError}`, `CallResult.Text()`
 - `mcp.AsTools[Deps](ctx, *Client) ([]tool.Tool[Deps], error)`
@@ -180,7 +215,7 @@ for _, message := range rendered.Messages {
 - `(*Client).ListPrompts(ctx) ([]Prompt, error)` — `Prompt{Name, Title, Description, Arguments}`, `PromptArgument{Name, Title, Description, Required}`
 - `(*Client).GetPrompt(ctx, name, arguments) (PromptResult, error)` — `PromptResult{Description, Messages}`, `PromptMessage{Role, Content}`, `PromptContent{Type, Text, MIMEType, Data, Resource}`, `PromptMessage.Text()`
 - `mcp.ProtocolError{Code, Message, Data}`, `mcp.HTTPStatusError{StatusCode, URL}`
-- `mcp.UnsupportedProtocolVersionError{Requested, Supported}`, `mcp.InputRequiredError{Result}`
+- `mcp.UnsupportedProtocolVersionError{Requested, Supported}`, `mcp.InputRequiredError{Result, Method}`
 
 ## Gotchas
 
@@ -193,6 +228,17 @@ for _, message := range rendered.Messages {
   handler stalls the call, and calling back into the same client from
   it deadlocks; hand the update to your own queue or channel instead.
   Progress is per client, not per call, because calls are serialized.
+- An elicitation handler runs inline under the same lock, so it may
+  block on the context it is given but must not call back into the
+  client. It is called once per request, in the server's key order.
+  Elicitation is modern-era only: a legacy server's server-initiated
+  `elicitation/create` still gets a method-not-found reply, because the
+  legacy handshake does not declare the capability.
+- For url mode, show the full URL and obtain explicit consent before
+  returning accept — Golem never fetches or opens it. Golem also does
+  not validate form `Content` against `RequestedSchema`; validate it in
+  the handler if you rely on its shape, and never ask for passwords or
+  API keys in form mode.
 - `AsTools`, `ListTools`, `ListResources`, and `ListPrompts` are
   point-in-time snapshots; a server that changes them dynamically is
   re-read by calling again, not by push notification.
@@ -204,8 +250,10 @@ for _, message := range rendered.Messages {
   Prompt messages carry typed blocks — text, image, audio, embedded
   resource — but only text and text resources render through
   `PromptMessage.Text()`; inspect `PromptContent` for the rest.
-  Sampling, elicitation, and roots are not implemented, so a modern
-  `input_required` result fails instead of prompting.
+  Sampling and roots are deprecated by the `2026-07-28` revision and are
+  not implemented, so an `input_required` result that asks for either —
+  or an elicitation with no handler — fails with
+  `*mcp.InputRequiredError`.
 - Resource and prompt content is server-published and therefore
   untrusted: treat a fetched resource like any other external input, and
   run it through `golem.SanitizeHistory` if it crosses a trust boundary
@@ -230,5 +278,6 @@ for _, message := range rendered.Messages {
   `tool` — never on the root package or a provider.
 - Decisions live in `docs/adr/0016-mcp-client-package.md`,
   `docs/adr/0032-mcp-resources-and-prompts.md`,
-  `docs/adr/0034-mcp-tool-metadata.md`, and
-  `docs/adr/0035-mcp-progress-notifications.md`.
+  `docs/adr/0034-mcp-tool-metadata.md`,
+  `docs/adr/0035-mcp-progress-notifications.md`, and
+  `docs/adr/0036-mcp-elicitation.md`.

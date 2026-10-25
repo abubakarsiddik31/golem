@@ -7,8 +7,11 @@
 //
 // The client is synchronous — one in-flight request at a time — and
 // introduces no goroutines. Decisions live in
-// docs/adr/0016-mcp-client-package.md and
-// docs/adr/0032-mcp-resources-and-prompts.md.
+// docs/adr/0016-mcp-client-package.md,
+// docs/adr/0032-mcp-resources-and-prompts.md,
+// docs/adr/0034-mcp-tool-metadata.md,
+// docs/adr/0035-mcp-progress-notifications.md, and
+// docs/adr/0036-mcp-elicitation.md.
 package mcp
 
 import (

@@ -417,7 +417,11 @@ func TestNegotiationErrorMessages(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", unsupported.Error(), want)
 	}
 	input := &InputRequiredError{}
-	if want := "mcp: server requested client input, which this client does not support"; input.Error() != want {
+	if want := "mcp: server requested client input this client cannot provide"; input.Error() != want {
+		t.Errorf("Error() = %q, want %q", input.Error(), want)
+	}
+	input = &InputRequiredError{Method: "sampling/createMessage"}
+	if want := "mcp: server requested sampling/createMessage, which this client does not support"; input.Error() != want {
 		t.Errorf("Error() = %q, want %q", input.Error(), want)
 	}
 }
