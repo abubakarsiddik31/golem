@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.9.0 — 2026-10-25
+
+This minor release completes the MCP client — resources and prompts on
+top of tools, plus both protocol eras — and closes the gaps found in the
+pre-v1 readiness review: two hardening fixes (`webfetch` SSRF,
+`docextract` decompression), a hardened PDF parser, and the
+document-extraction contract corrections that followed. The API is
+additive — no exported symbol changed shape — but a few documented
+behaviors were corrected; each is called out under Fixed.
+
+It also publishes `v0.8.6`, which was documented below but never tagged;
+that release is now tagged at its original commit, so the history below
+is accurate.
 
 ### Added
 
@@ -11,6 +23,14 @@
 
 - **`webfetch` refuses non-public destinations by default.** A model-produced URL can no longer reach loopback, private, link-local, multicast, unspecified, or carrier-grade NAT addresses, closing the SSRF path to internal services and cloud metadata endpoints. Hostnames are resolved and every address must be public; the dialer validates the address it actually connects to, and every redirect hop is re-checked. The refusal is a `*webfetch.BlockedAddressError` at the tool stage, not a correctable model mistake. `webfetch.Config.AllowPrivateNetworks` opts out for agents meant to fetch from a trusted private network.
 - **`docextract` bounds Office archive decompression.** Word, Excel, and PowerPoint archives are now rejected when a single entry exceeds `DefaultMaxEntryBytes` (64 MiB) or the archive total exceeds `DefaultMaxUncompressedBytes` (256 MiB). Declared central-directory sizes are checked before parsing and every actual read is capped, so a forged header cannot stream a zip bomb through the XML decoder. The refusal is a `*docextract.DecompressionLimitError`.
+- **`pdfextract` bounds parser work and refuses encrypted input.** `ParsePDF` and `ExtractPage` recover at their boundaries, so malformed input returns an error instead of crashing the process. Page-tree recursion is capped at 64, object nesting at 256, and a single decompressed stream at 64 MiB; xref `/W` widths and `/Columns` are validated. A PDF with an `/Encrypt` dictionary fails with `pdfextract.ErrEncrypted` rather than emitting ciphertext as text.
+
+### Fixed
+
+- **`pdfextract` extraction contracts are consistent.** `Page.IsScanned` is now pure detection and no longer changes with `DisableOCR`, which is applied after mode routing and so wins over `ModeForceOCR`. A page that fails to extract stays in `Document.Pages` with `Page.Err` set and a Markdown marker, so page counts stay accurate. `Options.MaxBytes` is honored by `ExtractBytes` and truncates on a UTF-8 rune boundary. `ReturnImageParts` and `ReturnScannedPageParts` are independent and de-duplicate shared images, and `UnsupportedFileError` unwraps to the parse error.
+- **`pdfextract` OCR never fabricates text.** A nil `OCREngine` means no OCR, and a scanned page stays `PageSourceEmpty`. `NoopOCR`, `DefaultOCREngine`, and the deprecated `AppleVisionOCR` report `ErrNoOCREngine` instead of returning placeholder text, and `CommandOCR` writes the page image to a temp file and passes its path.
+- **`pdfextract` decodes more PDF content correctly.** `/Filter` arrays, ASCII85, and ASCIIHex are decoded, and unknown filters are rejected instead of silently returning encoded bytes. Form XObjects are interpreted recursively to a depth of 8. Images are converted by `/ColorSpace` and `/BitsPerComponent` — 8-bit Gray, RGB, CMYK, and 1-bit — with CMYK ink amounts inverted so a no-ink pixel is white rather than black. Fraction reconstruction and multi-column table heuristics were corrected alongside.
+- **`pdfextract` reports image write failures and pads tables by display width.** A failed `ImageDir` write is recorded in `ImageRef.Err` while the bytes stay in memory and `ImageRef.Path` keeps the relative placeholder path, instead of advertising a path nothing was written to. Markdown tables now measure display width rather than byte length, so CJK and emoji cells align.
 
 ## v0.8.6 — 2026-10-18
 
