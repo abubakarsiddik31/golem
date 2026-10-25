@@ -4,20 +4,30 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 )
 
+// zipWithEntries builds an archive with deterministic entry order.
+// Iterating the map directly would randomize the archive, and a test
+// that asserts which entry crosses a budget would then flake.
 func zipWithEntries(t *testing.T, entries map[string]string) *zip.Reader {
 	t.Helper()
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	for name, content := range entries {
+	for _, name := range names {
 		entry, err := writer.Create(name)
 		if err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
-		if _, err := entry.Write([]byte(content)); err != nil {
+		if _, err := entry.Write([]byte(entries[name])); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
