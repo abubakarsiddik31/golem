@@ -94,9 +94,47 @@ type ServerInfo struct {
 
 // ToolInfo is one tool a server offers, as reported by tools/list.
 type ToolInfo struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
+	// Name is the tool's programmatic name; it is what CallTool takes.
+	Name string `json:"name"`
+	// Title is the human-readable name, when the server supplies one.
+	Title string `json:"title,omitempty"`
+	// Description explains what the tool does.
+	Description string `json:"description"`
+	// InputSchema is the JSON Schema of the arguments object. It is the
+	// model-facing contract and is passed through verbatim.
 	InputSchema json.RawMessage `json:"inputSchema"`
+	// OutputSchema is the JSON Schema of a structured result, when the
+	// server declares one. It is advisory: a tool may still answer with
+	// text only.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	// Annotations are the server's behavioral hints about the tool.
+	Annotations ToolAnnotations `json:"annotations,omitempty"`
+}
+
+// ToolAnnotations carries a server's behavioral hints about one tool.
+// They are hints, not guarantees, and Golem never enforces them; an
+// approval flow may read them to decide what to ask before a call.
+//
+// Each hint is a pointer because the protocol distinguishes "the server
+// did not declare it" from an explicit false. Where the specification
+// gives a default — destructive and open-world default to true,
+// read-only and idempotent to false — nil means the default applies.
+type ToolAnnotations struct {
+	// Title is the human-readable name for the tool.
+	Title string `json:"title,omitempty"`
+	// ReadOnlyHint reports that the tool does not modify its
+	// environment.
+	ReadOnlyHint *bool `json:"readOnlyHint,omitempty"`
+	// DestructiveHint reports that the tool may perform destructive
+	// updates. The protocol's default is true.
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+	// IdempotentHint reports that repeated identical calls have no
+	// additional effect.
+	IdempotentHint *bool `json:"idempotentHint,omitempty"`
+	// OpenWorldHint reports that the tool interacts with an open
+	// world — external entities beyond the server's own data. The
+	// protocol's default is true.
+	OpenWorldHint *bool `json:"openWorldHint,omitempty"`
 }
 
 // ContentItem is one piece of a tool result. Only text carries
@@ -111,13 +149,22 @@ type ContentItem struct {
 type CallResult struct {
 	// Content holds the result's content items in server order.
 	Content []ContentItem `json:"content"`
+	// StructuredContent is the result's JSON payload when the tool
+	// declares an output schema. It is server-produced and therefore
+	// untrusted; an application that relies on it validates it against
+	// the matching ToolInfo.OutputSchema. Text falls back to it when
+	// the result carries no content.
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
 	// IsError reports that the tool ran and failed; its text explains
 	// why. The protocol error signal, not a Go error.
 	IsError bool `json:"isError"`
 }
 
 // Text renders the result's content as tool result text: text items
-// joined by newlines, one placeholder line per non-text item.
+// joined by newlines, one placeholder line per non-text item. When the
+// result carries no content but does carry structured content — a tool
+// with an output schema answering in JSON only — Text returns that
+// JSON verbatim, so the model still sees the result.
 func (r CallResult) Text() string {
 	var parts []string
 	for _, item := range r.Content {
@@ -127,7 +174,11 @@ func (r CallResult) Text() string {
 		}
 		parts = append(parts, fmt.Sprintf("[mcp: unsupported %s content]", item.Type))
 	}
-	return strings.Join(parts, "\n")
+	text := strings.Join(parts, "\n")
+	if text == "" && len(r.StructuredContent) > 0 {
+		return string(r.StructuredContent)
+	}
+	return text
 }
 
 // Client speaks MCP to one server over a Transport. It is

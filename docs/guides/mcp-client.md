@@ -62,13 +62,26 @@ model-facing contract. Executing a bridged tool sends the model's raw
 arguments to `tools/call`:
 
 - Text content comes back as the tool result, items joined by
-  newlines; non-text content renders as placeholder lines.
+  newlines; non-text content renders as placeholder lines. A tool that
+  declares an output schema may answer with `structuredContent` and no
+  content at all; the JSON is then the tool result text, verbatim.
 - A result flagged `isError` rejects as a correctable
   `*model.ModelRetry`: the model sees the server's explanation and may
   retry with fixed arguments under the agent's tool retry budget.
 - Protocol failures surface as the typed `*mcp.ProtocolError`;
   transport and cancellation errors preserve their cause — both fail
   the run at the tool stage, never as correctable rejections.
+
+A tool's declaration carries more than its schema. `ToolInfo` exposes
+the server's `Title`, its `OutputSchema` when one is declared, and its
+`Annotations` — the protocol's behavioral hints. Each hint is a `*bool`
+because "not declared" differs from an explicit false: where the
+specification gives a default (destructive and open-world default to
+true, read-only and idempotent to false), `nil` means the default
+applies. Golem never enforces a hint; an approval flow may read
+`DestructiveHint` to decide whether to ask before a call. `CallResult`
+exposes `StructuredContent` alongside `Content`, so an application
+that needs the JSON payload reads it without re-parsing the text.
 
 The client is synchronous and serialized — one in-flight request at a
 time, no goroutines — and honors the caller's context on every
@@ -145,8 +158,8 @@ for _, message := range rendered.Messages {
 - `mcp.Transport` — the `Send`/`Read`/`Close` boundary other transports implement
 - `mcp.NewClient(mcp.Transport) *Client`
 - `(*Client).Initialize(ctx)` / `(*Client).Server()` / `(*Client).ProtocolVersion()` / `(*Client).Close()`
-- `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Description, InputSchema}`
-- `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, IsError}`, `CallResult.Text()`
+- `(*Client).ListTools(ctx) ([]ToolInfo, error)` — `ToolInfo{Name, Title, Description, InputSchema, OutputSchema, Annotations}`, `ToolAnnotations{Title, ReadOnlyHint, DestructiveHint, IdempotentHint, OpenWorldHint}`
+- `(*Client).CallTool(ctx, name, arguments) (CallResult, error)` — `CallResult{Content, StructuredContent, IsError}`, `CallResult.Text()`
 - `mcp.AsTools[Deps](ctx, *Client) ([]tool.Tool[Deps], error)`
 - `(*Client).ListResources(ctx) ([]Resource, error)` — `Resource{URI, Name, Title, Description, MIMEType, Size}`
 - `(*Client).ListResourceTemplates(ctx) ([]ResourceTemplate, error)` — `ResourceTemplate{URITemplate, Name, Title, Description, MIMEType}`
@@ -167,8 +180,12 @@ for _, message := range rendered.Messages {
   point-in-time snapshots; a server that changes them dynamically is
   re-read by calling again, not by push notification.
 - Tool results carry only text; images and resources render as
-  placeholders. Prompt messages carry typed blocks — text, image, audio,
-  embedded resource — but only text and text resources render through
+  placeholders. A structured-only result becomes its JSON text, but the
+  JSON is not validated against the declared output schema — validate
+  it yourself if you rely on its shape. Annotations are server claims:
+  a server that under-declares `destructiveHint` is still destructive.
+  Prompt messages carry typed blocks — text, image, audio, embedded
+  resource — but only text and text resources render through
   `PromptMessage.Text()`; inspect `PromptContent` for the rest.
   Sampling, elicitation, and roots are not implemented, so a modern
   `input_required` result fails instead of prompting.
@@ -194,5 +211,6 @@ for _, message := range rendered.Messages {
   closes, not immediately.
 - The package depends only on the standard library, `model`, and
   `tool` — never on the root package or a provider.
-- Decisions live in `docs/adr/0016-mcp-client-package.md` and
-  `docs/adr/0032-mcp-resources-and-prompts.md`.
+- Decisions live in `docs/adr/0016-mcp-client-package.md`,
+  `docs/adr/0032-mcp-resources-and-prompts.md`, and
+  `docs/adr/0034-mcp-tool-metadata.md`.
