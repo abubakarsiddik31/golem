@@ -7,9 +7,10 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v0.9.0 — nine of the ten pre-freeze items have landed: in-tool
-run cancellation cleanly stops a run with evidence on
-`RunError.Partial`; `golem.SanitizeHistory` sanitizes histories at
+All ten pre-freeze items have landed — nine in v0.9.0 and tool search on
+main ahead of the next release. In-tool run cancellation cleanly stops a
+run with evidence on `RunError.Partial`; `golem.SanitizeHistory`
+sanitizes histories at
 untrusted boundaries; `package pdfextract` and `package docextract`
 provide layout-aware document extraction across PDF, Word, Excel,
 PowerPoint, Markdown, and CSV, with scanned PDFs transcribed offline by
@@ -24,7 +25,9 @@ damaged pairings while keeping truncated arguments verbatim; every run
 stamps a fresh `RunID` on its events, result, and messages, and
 conversations carry a `ConversationID` through history and storage;
 `package mcp` bridges a server's tools and exposes its resources and
-prompts as application-driven client operations; and
+prompts as application-driven client operations; deferred tool loading
+keeps a large catalog behind a runner-owned `search_tools` discovery
+tool, with reveals derived from history; and
 the durable message-JSON contract is under continuous fuzz, with `-race`
 CI and the offline examples running on every check.
 
@@ -63,9 +66,12 @@ series ends in the freeze, not a date.
   `ListPrompts`, `GetPrompt` — rather than bridged tools, because the
   protocol makes both application-driven (ADR 0032).
 
-- **Tool search / deferred tool loading.** Model-driven discovery over
-  large tool lists. Needs an ADR; may slip behind v1 if skills already
-  cover the need.
+- ~~**Tool search / deferred tool loading.**~~ Shipped as
+  `WithDeferredTools` plus a runner-owned `search_tools` discovery tool:
+  deferred tools stay declared and dispatchable but out of the prompt
+  until matched, and reveals are derived from history rather than
+  stored, so they survive correction rounds and resumed runs (ADR 0033).
+  Provider-native search stays post-v1.
 
 - ~~**Test hardening.**~~ Shipped in v0.7.6: race-detector CI,
   continuous fuzzing of the message-JSON contract, the opt-in live

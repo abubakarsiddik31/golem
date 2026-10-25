@@ -118,6 +118,10 @@ type ToolConfig struct {
 	DefaultRetries int
 	DefaultTimeout time.Duration
 	Parallel       bool
+	// Search, when non-nil, hides the tools it names behind a
+	// runner-owned discovery tool and advertises a match from the next
+	// request onward; see SearchConfig.
+	Search *SearchConfig
 }
 
 // EventKind identifies one observable point of the execution loop.
@@ -392,11 +396,19 @@ func execute[Deps any](
 	if toolConfig.DefaultTimeout < 0 {
 		return Outcome{}, fmt.Errorf("runner: default tool timeout must not be negative, got %s", toolConfig.DefaultTimeout)
 	}
-	if len(req.ToolSpecs) == 0 && len(tools) > 0 {
+	if len(req.ToolSpecs) == 0 && len(tools) > 0 && toolConfig.Search == nil {
 		return Outcome{}, fmt.Errorf("runner: tools registered without matching tool specs")
 	}
 	if outputTool != "" && findSpec(req.ToolSpecs, outputTool) == nil {
 		return Outcome{}, fmt.Errorf("runner: output tool %q has no matching tool spec", outputTool)
+	}
+
+	index := newSearchIndex(toolConfig.Search, tools)
+	dispatch := tools
+	if index != nil {
+		dispatch = make([]tool.Tool[Deps], 0, len(tools)+1)
+		dispatch = append(dispatch, tools...)
+		dispatch = append(dispatch, searchTool[Deps](index))
 	}
 
 	messages := make([]model.Message, len(req.Messages))
@@ -412,19 +424,25 @@ func execute[Deps any](
 		if turn >= maxIterations {
 			return partialOutcome(messages, usage, counts, lastFinish), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
+		specs := advertisedSpecs(index, req.ToolSpecs, tools, messages)
+		request := model.Request{Messages: messages, ToolSpecs: specs, OutputSchema: req.OutputSchema}
 		if preSend != nil {
-			if err := preSend(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}); err != nil {
+			if err := preSend(ctx, request); err != nil {
 				return partialOutcome(messages, usage, counts, lastFinish), err
 			}
 		}
 
-		response, providerCalls, err := call(ctx, model.Request{Messages: messages, ToolSpecs: req.ToolSpecs, OutputSchema: req.OutputSchema}, turn)
+		response, providerCalls, err := call(ctx, request, turn)
 		if err != nil {
 			counts.modelCalls += providerCalls
 			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 		counts.modelCalls += providerCalls
 		lastFinish = response.FinishReason
+		// priorMessages is the history the model actually answered: a
+		// search in this same response has not been seen yet, so it must
+		// not reveal a tool for calls in the same batch.
+		priorMessages := messages
 		ids.Stamp(&response.Message)
 		messages = append(messages, response.Message)
 		usage.InputTokens += response.Usage.InputTokens
@@ -449,7 +467,11 @@ func execute[Deps any](
 			}
 		}
 
-		toolMessages, pending, err := runToolCalls(ctx, tools, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
+		if err := index.checkAvailable(response.Message.ToolCalls, priorMessages); err != nil {
+			return partialOutcome(messages, usage, counts, lastFinish), err
+		}
+
+		toolMessages, pending, err := runToolCalls(ctx, dispatch, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
 		if err != nil {
 			// A canceled run keeps the batch's recorded results and
 			// synthesized closings as evidence; every other failure
