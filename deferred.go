@@ -92,17 +92,36 @@ func (a *Agent[Deps, Output]) RunWithDeferredResults(ctx context.Context, runCtx
 	}
 	messages := a.resumeMessages(a.resolveInstructions(ctx, runCtx),
 		mergeResolutions(history, resolutions), prompt, runOpts.promptParts, identity)
-	return a.runLoop(ctx, runCtx, messages, nil, identity, a.observerFor(runOpts))
+	result, err := a.runLoop(ctx, runCtx, messages, nil, identity, a.observerFor(runOpts))
+	return a.finishRun(ctx, runOpts, identity, result, err)
 }
 
 // prepareRun applies run options and the history processor, then
 // validates the prompt input: the shared preamble of run variants that
-// start from caller-supplied history.
+// start from caller-supplied history. A session store loads here, when
+// no history was supplied, so a stored conversation flows through the
+// same processor and validation as history the caller passed.
 func (a *Agent[Deps, Output]) prepareRun(ctx context.Context, history []model.Message, opts ...RunOption) (runOptions, []model.Message, error) {
 	var runOpts runOptions
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&runOpts)
+		}
+	}
+	if runOpts.session != nil && history == nil {
+		key := runOpts.conversationID
+		if key == "" {
+			// No pinned identifier: a fresh key finds nothing to load and
+			// starts a new conversation in the store.
+			key = NewID()
+		}
+		loaded, err := runOpts.session.Load(ctx, key)
+		if err != nil {
+			return runOpts, nil, fmt.Errorf("golem: load session %q: %w", key, err)
+		}
+		runOpts.sessionKey = key
+		if len(loaded) > 0 {
+			history = loaded
 		}
 	}
 	if a.historyProcessor != nil {

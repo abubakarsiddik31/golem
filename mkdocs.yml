@@ -62,6 +62,7 @@ nav:
   - Agent delegation: agent-delegation.md
   - Tool timeouts: tool-timeouts.md
   - Conversations and history: conversations-and-history.md
+  - Sessions: sessions.md
   - Multimodal input: multimodal-input.md
   - Structured output: structured-output.md
   - Self-correction: self-correction.md

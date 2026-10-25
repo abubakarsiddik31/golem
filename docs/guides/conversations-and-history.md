@@ -24,8 +24,10 @@ runtime state through a per-run function.
 `model.Message` JSON is a durable, additive-only contract: field names
 and shapes only gain fields, never rename or drop them. Tool messages
 carry their evidence on `parts` and a definitive failure on
-`failed` (see [tools](tools-and-dependencies.md)); storage stays the
-application's job — there is no session object.
+`failed` (see [tools](tools-and-dependencies.md)). Passing history by
+hand always works; when a conversation should live in a store and
+chain without it, `golem.WithSession` loads and saves it around the
+run — see [Sessions](sessions.md).
 
 ### History repair
 
@@ -131,7 +133,8 @@ the history it received:
   new conversation. Because the identifier rides `model.Message` JSON
   (`runId`, `conversationId` — additive fields), `RunWithHistory`
   chains runs into one conversation by construction, and the
-  association survives storage round-trips with no session object.
+  association survives storage round-trips; `WithSession` automates
+  the round-trip (see [Sessions](sessions.md)).
 
 Both come from `golem.NewID()`, a time-ordered UUID version 7. Fork a
 conversation — continue the same history under a new identity — by

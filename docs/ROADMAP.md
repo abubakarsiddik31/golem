@@ -100,6 +100,14 @@ series ends in the freeze, not a date.
   into a span tree, so an application's OTel SDK plugs in behind a
   dozen-line adapter with no dependency on Golem's side (ADR 0038).
 
+- ~~**Sessions.**~~ Shipped as `golem.WithSession(store)` plus the
+  `session.Store` port: a run loads its stored conversation before it
+  runs — through the same history processor as hand-passed history —
+  and saves it after, partial evidence included so failures and pauses
+  resume from the store. `session.Memory` is the offline
+  implementation; file and database backends stay application-side
+  behind two methods (ADR 0039).
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and

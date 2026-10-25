@@ -10,6 +10,7 @@ import (
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
+	"github.com/abubakarsiddik31/golem/session"
 	"github.com/abubakarsiddik31/golem/tokens"
 	"github.com/abubakarsiddik31/golem/tool"
 )
@@ -281,6 +282,11 @@ type runOptions struct {
 	runObserver    func(RunEvent)
 	runID          string
 	conversationID string
+	// session is the store a WithSession option wired, and sessionKey
+	// the conversation ID it loads and saves under — pinned, or minted
+	// at load time when none was. Both are empty on a sessionless run.
+	session    session.Store
+	sessionKey string
 }
 
 // RunOption customizes a single run. Options are evaluated once, at run
@@ -334,6 +340,28 @@ func WithRunID(id string) RunOption {
 func WithConversationID(id string) RunOption {
 	return func(opts *runOptions) {
 		opts.conversationID = id
+	}
+}
+
+// WithSession persists this run's conversation through store: the run
+// loads the stored history under its conversation ID — see
+// WithConversationID, which a sessionful run should pin — continues it
+// with the prompt, and saves the full conversation back, so the next
+// run with the same identifier sees this one's turns without the
+// caller passing history by hand.
+//
+// The saved conversation is Result.Messages after success and
+// RunError.Partial.Messages after a failure, so a cancelled or crashed
+// run is resumable from the store; a failure before any activity saves
+// nothing, leaving the previous conversation intact. A run given
+// history explicitly bypasses loading — the caller's history is the
+// conversation — and is saved back like any other. A load failure fails
+// the run before any model call; a save failure returns the run's
+// result AND the save error, because the model did answer — only the
+// persistence failed.
+func WithSession(store session.Store) RunOption {
+	return func(opts *runOptions) {
+		opts.session = store
 	}
 }
 
@@ -666,14 +694,51 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 	}
 	identity := resolveIdentity(history, runOpts)
 	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity)
-	return a.runLoop(ctx, runCtx, messages, onDelta, identity, a.observerFor(runOpts))
+	result, err := a.runLoop(ctx, runCtx, messages, onDelta, identity, a.observerFor(runOpts))
+	return a.finishRun(ctx, runOpts, identity, result, err)
+}
+
+// finishRun persists the run's conversation when a session store is
+// wired: the canonical conversation after success, the partial evidence
+// after a failure — a cancelled or crashed run stays resumable from the
+// store — and nothing when a failure produced no evidence, which leaves
+// the stored conversation intact. The save runs even when the run
+// context is already done, because evidence survives cancellation by
+// design; it cannot fail the run, but it is reported: a save failure
+// returns the run's result and the save error together.
+func (a *Agent[Deps, Output]) finishRun(ctx context.Context, opts runOptions, identity runner.RunIdentity, result Result[Output], err error) (Result[Output], error) {
+	if opts.session == nil {
+		return result, err
+	}
+	var toSave []model.Message
+	if err == nil {
+		toSave = result.Messages
+	} else {
+		var runErr *RunError
+		if errors.As(err, &runErr) && runErr.Partial != nil {
+			toSave = runErr.Partial.Messages
+		}
+	}
+	if len(toSave) == 0 {
+		return result, err
+	}
+	if saveErr := opts.session.Save(context.WithoutCancel(ctx), identity.ConversationID, toSave); saveErr != nil {
+		if err != nil {
+			// The run already failed; report both causes.
+			return Result[Output]{}, errors.Join(err,
+				fmt.Errorf("golem: save session %q: %w", identity.ConversationID, saveErr))
+		}
+		return result, fmt.Errorf("golem: save session %q: %w", identity.ConversationID, saveErr)
+	}
+	return result, err
 }
 
 // resolveIdentity resolves the run's identity: the run ID minted fresh
 // unless supplied, and the conversation ID pinned by option, else
 // inherited from the most recent identified message of the prepared
 // history — what the caller actually sent, a processor's output
-// included — else minted to start a new conversation.
+// included — else the session's load key when a session opened a fresh
+// conversation, else minted to start a new conversation.
 func resolveIdentity(history []model.Message, opts runOptions) runner.RunIdentity {
 	identity := runner.RunIdentity{RunID: opts.runID, ConversationID: opts.conversationID}
 	if identity.RunID == "" {
@@ -686,6 +751,9 @@ func resolveIdentity(history []model.Message, opts runOptions) runner.RunIdentit
 				break
 			}
 		}
+	}
+	if identity.ConversationID == "" {
+		identity.ConversationID = opts.sessionKey
 	}
 	if identity.ConversationID == "" {
 		identity.ConversationID = NewID()
