@@ -676,39 +676,6 @@ func TestToolResultParts(t *testing.T) {
 	}
 }
 
-func BenchmarkExtract(b *testing.B) {
-	// A representative document containing headings, 2 columns, and a ruled table
-	var content strings.Builder
-	content.WriteString("BT /F1 20 Tf 50 720 Td (Annual Engineering Report) Tj ET\n")
-	// Left column
-	content.WriteString("BT /F1 12 Tf 50 680 Td (Left column paragraph with detailed architecture notes.) Tj ET\n")
-	content.WriteString("BT /F1 12 Tf 50 650 Td (Second line of the left column description.) Tj ET\n")
-	// Right column
-	content.WriteString("BT /F1 12 Tf 350 680 Td (Right column begins here with performance metrics.) Tj ET\n")
-	content.WriteString("BT /F1 12 Tf 350 650 Td (Second line of the right column evaluation.) Tj ET\n")
-	// Ruled Table
-	content.WriteString("50 550 m 300 550 l S\n50 525 m 300 525 l S\n50 500 m 300 500 l S\n")
-	content.WriteString("50 500 m 50 550 l S\n175 500 m 175 550 l S\n300 500 m 300 550 l S\n")
-	content.WriteString("BT /F1 10 Tf 60 535 Td (Metric) Tj ET\n")
-	content.WriteString("BT /F1 10 Tf 185 535 Td (Score) Tj ET\n")
-	content.WriteString("BT /F1 10 Tf 60 510 Td (Latency) Tj ET\n")
-	content.WriteString("BT /F1 10 Tf 185 510 Td (4.2ms) Tj ET\n")
-
-	pdfBytes := buildSimplePDF(content.String())
-	ctx := context.Background()
-	opts := pdfextract.Options{}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		doc, err := pdfextract.ExtractBytes(ctx, pdfBytes, opts)
-		if err != nil || len(doc.Markdown) == 0 {
-			b.Fatal(err)
-		}
-	}
-}
-
 func TestMathAndUnicodeCleaning(t *testing.T) {
 	// PDF with math formula containing sub/superscript and equation tag
 	var content strings.Builder

@@ -445,7 +445,7 @@ The core execution contract is frozen and verified with continuous race-detector
 - **Rich Tool Ecosystem:** First-class Model Context Protocol (MCP) client over stdio and HTTP, layout-aware PDF extraction, multi-format doc parsing, sandboxed shell execution, SSR web fetch, and progressive Agent Skills loading.
 - **Zero Dependencies:** Built exclusively on the Go standard library.
 
-For architecture rationale, read [the foundation brief](docs/foundation.md). For upcoming milestones, read the [development roadmap](docs/ROADMAP.md).
+For architecture rationale, read [the foundation brief](docs/foundation.md). For upcoming milestones, read the [development roadmap](docs/ROADMAP.md). For measured costs and how to run the benchmarks, read [the benchmark baseline](docs/benchmarks.md).
 
 ---
 

@@ -59,7 +59,7 @@ func toolResponse(calls ...model.ToolCall) model.Response {
 	return model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: calls}}
 }
 
-func echoTool(t *testing.T) tool.Tool[deps] {
+func echoTool(t testing.TB) tool.Tool[deps] {
 	t.Helper()
 	return tool.MustNew(tool.Tool[deps]{
 		Name:        "echo",
@@ -71,7 +71,7 @@ func echoTool(t *testing.T) tool.Tool[deps] {
 	})
 }
 
-func specsFor(t *testing.T, tools ...tool.Tool[deps]) []model.ToolSpec {
+func specsFor(t testing.TB, tools ...tool.Tool[deps]) []model.ToolSpec {
 	t.Helper()
 	specs := make([]model.ToolSpec, 0, len(tools))
 	for _, tl := range tools {
