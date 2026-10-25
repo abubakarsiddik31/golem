@@ -178,5 +178,5 @@ type, the type is missing; so far it has not.
   schema-shaped routing, structured output with an enum beats parsing
   prose.
 - The decision that a graph engine stays out — and what would reopen
-  it — is in the [roadmap](../ROADMAP.md) and the foundation brief's
-  non-goals.
+  it — is in the development roadmap and the foundation brief's
+  non-goals, both in the repository's `docs/` directory.
