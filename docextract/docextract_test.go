@@ -495,7 +495,7 @@ func TestConfigValidation(t *testing.T) {
 
 // Helpers to build in-memory sample Office files
 
-func buildSampleDocx(t *testing.T) []byte {
+func buildSampleDocx(t testing.TB) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -582,7 +582,7 @@ func buildSampleDocx(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func buildSampleXlsx(t *testing.T) []byte {
+func buildSampleXlsx(t testing.TB) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -672,7 +672,7 @@ func buildSampleXlsx(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func buildSamplePptx(t *testing.T) []byte {
+func buildSamplePptx(t testing.TB) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

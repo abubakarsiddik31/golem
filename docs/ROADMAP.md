@@ -85,6 +85,13 @@ series ends in the freeze, not a date.
   continuous fuzzing of the message-JSON contract, the opt-in live
   smoke matrix, and CI running the offline examples.
 
+- ~~**Benchmarks.**~~ Shipped as `-benchmem` suites over the runner
+  loop and the two document extractors, `scripts/bench.sh` for
+  before/after `benchstat` comparison, and a recorded baseline in
+  `docs/benchmarks.md` that explains what each number means.
+  Deliberately outside the CI gate: absolute numbers vary by machine,
+  so the gate is a diff on a change that touches one of those paths.
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and

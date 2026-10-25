@@ -41,6 +41,12 @@ not call a live provider either.
    enforces the statement-coverage floor; raise the floor when coverage
    rises rather than lowering it to land a change.
 
+   Benchmarks are not part of the gate — absolute numbers vary by machine.
+   If your change touches the runner loop, PDF extraction, or document
+   extraction, run `scripts/bench.sh` before and after and compare the two
+   with `benchstat`. The recorded baseline and what each number means are in
+   [docs/benchmarks.md](docs/benchmarks.md).
+
 2. Add or extend tests alongside the behavior change. Cover the primary
    failure path with `errors.Is` or `errors.As` so causal errors stay
    inspectable, and avoid assertions that depend on sleeps or scheduling luck.
