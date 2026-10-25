@@ -14,31 +14,31 @@ example, and the README index agree.
 1. [Getting started](getting-started.md) — the smallest agent and where everything lives.
 2. [Providers](providers.md) — connecting OpenAI-compatible and Anthropic APIs.
 3. [Embeddings](embeddings.md) — the text-to-vector port: queries, documents, and usage.
-4. [Token counting](token-counting.md) — pricing a request before it is sent: counters, budgets, pre-send limits.
-5. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
-6. [Web fetch](web-fetch.md) — the webfetch common tool: URLs as agent-readable text.
-7. [File read](file-read.md) — the fileread common tool: workspace files as agent-readable text.
-8. [Command execution](command-execution.md) — the shell common tool: one command, combined output.
-9. [PDF extract](pdf-extract.md) — the pdfextract common tool: PDF documents as structured Markdown with tables and images.
-10. [Document extract](doc-extract.md) — the docextract common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents.
-11. [Agent skills](skills.md) — the skills common tool: standard SKILL.md folders loaded on demand.
-12. [MCP client](mcp-client.md) — bridging Model Context Protocol servers into agent tools.
-13. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
-13. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
-14. [Orchestration](orchestration.md) — multi-agent workflows in plain Go: fan-out, pipeline, router.
-15. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
-16. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
-17. [Sessions](sessions.md) — conversations that persist between runs: the `session.Store` port and `WithSession`.
-18. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
-19. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
-20. [Self-correction](self-correction.md) — rejection budgets for output and tools.
-21. [Retries](retries.md) — surviving transient model failures and falling back to another model.
-22. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-23. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
-24. [Tracing](tracing.md) — spans for runs, provider attempts, and tool calls, through a port an OpenTelemetry SDK implements.
-25. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
-26. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-27. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
-28. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
-29. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
-30. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
+4. [Retrieval](retrieval.md) — the search half: an index port, cosine top-k, and the agent's search_documents tool.
+5. [Token counting](token-counting.md) — pricing a request before it is sent: counters, budgets, pre-send limits.
+6. [Tools and dependencies](tools-and-dependencies.md) — typed tools that receive run dependencies.
+7. [Web fetch](web-fetch.md) — the webfetch common tool: URLs as agent-readable text.
+8. [File read](file-read.md) — the fileread common tool: workspace files as agent-readable text.
+9. [Command execution](command-execution.md) — the shell common tool: one command, combined output.
+10. [PDF extract](pdf-extract.md) — the pdfextract common tool: PDF documents as structured Markdown with tables and images.
+11. [Document extract](doc-extract.md) — the docextract common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents.
+12. [Agent skills](skills.md) — the skills common tool: standard SKILL.md folders loaded on demand.
+13. [MCP client](mcp-client.md) — bridging Model Context Protocol servers into agent tools.
+14. [Agent delegation](agent-delegation.md) — one agent as another agent's tool.
+15. [Orchestration](orchestration.md) — multi-agent workflows in plain Go: fan-out, pipeline, router.
+16. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
+17. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
+18. [Sessions](sessions.md) — conversations that persist between runs: the `session.Store` port and `WithSession`.
+19. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
+20. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
+21. [Self-correction](self-correction.md) — rejection budgets for output and tools.
+22. [Retries](retries.md) — surviving transient model failures and falling back to another model.
+23. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
+24. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
+25. [Tracing](tracing.md) — spans for runs, provider attempts, and tool calls, through a port an OpenTelemetry SDK implements.
+26. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
+27. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+28. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
+29. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+30. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+31. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.

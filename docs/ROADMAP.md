@@ -115,6 +115,13 @@ series ends in the freeze, not a date.
   runs and results are already immutable, so a graph engine would
   re-express the language; it stays out per the foundation non-goals.
 
+- ~~**Retrieval.**~~ Shipped as `package retrieval`: the `Index` port
+  (add embedded documents by ID, search a query vector for top-k by
+  cosine), `retrieval.Memory` as the offline in-process
+  implementation, and the `search_documents` agent tool wired from any
+  `embedding.Embedder`. Chunking and vector-database backends stay
+  application-side behind the two methods (ADR 0040).
+
 After the series: the freeze ADR — the compatibility promise,
 additive-only below v2, deprecations removed only at the next major,
 checked by apidiff between the v1 tag and main on every release — and

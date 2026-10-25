@@ -315,6 +315,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Getting started](docs/guides/getting-started.md) | The smallest agent, result shape, error stages |
 | [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
 | [Embeddings](docs/guides/embeddings.md) | The `embedding.Embedder` port: queries, documents, usage |
+| [Retrieval](docs/guides/retrieval.md) | The `retrieval.Index` port: cosine top-k over embedded documents, and the agent's `search_documents` tool |
 | [Token counting](docs/guides/token-counting.md) | The `tokens.Counter` port: budgets, pre-send limits |
 | [Cost](docs/guides/cost.md) | User-supplied pricing: `Result.Cost` and cost bounds |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
@@ -381,6 +382,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`token-counting`](examples/token-counting/main.go) | Pre-send limits and budget-bounded history over the `tokens.Counter` port |
 | [`cost`](examples/cost/main.go) | User-supplied pricing: `Result.Cost` and cost-bounded runs, offline |
 | [`embeddings`](examples/embeddings/main.go) | Semantic search over the `embedding.Embedder` port |
+| [`retrieval`](examples/retrieval/main.go) | A knowledge base indexed and searched by an agent, offline |
 | [`multimodal-input`](examples/multimodal-input/main.go) | Prompts with images and document attachments |
 | [`thinking`](examples/thinking/main.go) | Adaptive thinking with reasoning blocks and signatures |
 | [`run-cancellation`](examples/run-cancellation/main.go) | A tool ending the run deliberately with `tool.Canceled`, resuming evidence, offline |
