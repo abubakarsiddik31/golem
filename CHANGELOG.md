@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Shell command policy.** `shell.Config` gains opt-in command controls:
+  `AllowedCommands` (allowlist by executable base name), `DeniedCommands`
+  (denylist; `shell.DestructiveCommands` is the exported starting-point
+  list), `DeniedOperators` (chaining/redirect operators;
+  `shell.ChainingOperators`), `BlockInteractive` (blocks TTY-expecting
+  executables), and `DeniedEnvPatterns` (globs dropping credential
+  entries from the merged environment; `shell.CredentialEnvPatterns`).
+  Every denial is a correctable `*model.ModelRetry` raised before any
+  process starts, so the model can pick another command within the tool
+  retry budget. The zero value filters nothing, preserving the v1
+  contract; allow and deny lists are mutually exclusive and validated at
+  `New`. The policy is documented as a guardrail against accidents, not
+  a security boundary.
+
 ## v1.0.0 — 2026-10-25
 
 The first stable release. The compatibility promise is ADR 0041: SemVer
