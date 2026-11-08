@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Guardrails (ADR 0042).** A new `guard` package and four agent
+  options put typed checks at the run's boundaries:
+  `golem.WithInputGuards` screens the prompt before the first model
+  call (a block ends the run without a model call — a synthesized
+  refusal is decoded as the output), `golem.WithToolGuards` screens
+  tool arguments before execution (blocks skip the tool; retries ride
+  the `WithToolRetries` budget), `golem.WithResultGuards` screen
+  successful tool results before the model reads them, and
+  `golem.WithOutputGuards` screen the final answer before decoding (a
+  block fails the run at the new `StagePolicy` stage wrapping
+  `*guard.Blocked`). Chains run in registration order and `Replace`
+  threads the substitution into the guards that follow; an invalid
+  verdict blocks fail-closed. Guardrails are guardrails against
+  accidents, not a security boundary.
 - **Shell command policy.** `shell.Config` gains opt-in command controls:
   `AllowedCommands` (allowlist by executable base name), `DeniedCommands`
   (denylist; `shell.DestructiveCommands` is the exported starting-point

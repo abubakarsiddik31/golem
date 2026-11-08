@@ -324,6 +324,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
 | [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
 | [Command execution](docs/guides/command-execution.md) | The `shell` common tool: one command, combined output |
+| [Guardrails](docs/guides/guardrails.md) | Guards at the run's boundaries: block, replace, or retry prompts, tool calls, results, and output |
 | [PDF extract](docs/guides/pdf-extract.md) | The `pdfextract` common tool: PDF documents as structured Markdown with tables and images |
 | [Document extract](docs/guides/doc-extract.md) | The `docextract` common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents |
 | [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
@@ -374,6 +375,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
 | [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
 | [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
+| [`guardrails`](examples/guardrails/main.go) | Guards redacting a prompt, blocking injected tool output, and blocking a PII answer, offline |
 | [`pdf-extract`](examples/pdf-extract/main.go) | The `pdfextract` common tool extracting tables and reading order, offline |
 | [`doc-extract`](examples/doc-extract/main.go) | The `docextract` common tool extracting Word, Excel, and Markdown, offline |
 | [`ocr-scanned-pdf`](examples/ocr-scanned-pdf/main.go) | The `pdfextract` local Indra OCR engine on a scanned page, offline |
