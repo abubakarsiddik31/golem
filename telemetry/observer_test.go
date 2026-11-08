@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abubakarsiddik31/golem/internal/runner"
@@ -419,6 +420,104 @@ func TestObserverTracesARealRun(t *testing.T) {
 		if !span.ended {
 			t.Errorf("span %q did not end", span.name)
 		}
+	}
+}
+
+func TestContentExclusionDropsToolContent(t *testing.T) {
+	t.Parallel()
+
+	tracer := &fakeTracer{}
+	observe := telemetry.ObserverWithOptions(tracer, telemetry.WithContentExcluded())
+
+	argsErr := errors.New("cannot parse {\"password\":\"hunter2\"}")
+	observe(runner.Event{Kind: runner.EventRunStart, RunID: "run-1"})
+	observe(runner.Event{Kind: runner.EventToolStart, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Args: json.RawMessage(`{"q":"hunter2"}`)})
+	observe(runner.Event{Kind: runner.EventToolEnd, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Result: "the answer is hunter2", Err: argsErr})
+	observe(runner.Event{Kind: runner.EventRunEnd, RunID: "run-1", Err: errors.New("gave up on hunter2")})
+
+	lookup := tracer.spansNamed("tool lookup")[0]
+	if _, ok := attr(lookup, telemetry.AttrToolArgs); ok {
+		t.Error("arguments recorded verbatim under content exclusion")
+	}
+	if _, ok := attr(lookup, telemetry.AttrToolResult); ok {
+		t.Error("result recorded verbatim under content exclusion")
+	}
+	if got := intAttr(t, lookup, telemetry.AttrToolArgsSize); got != len(`{"q":"hunter2"}`) {
+		t.Errorf("args size = %d", got)
+	}
+	if got := intAttr(t, lookup, telemetry.AttrToolResultSize); got != len("the answer is hunter2") {
+		t.Errorf("result size = %d", got)
+	}
+	// Errors keep only their type: error text quotes the content the
+	// exclusion exists for. The chain still reaches the original.
+	if len(lookup.errs) != 1 {
+		t.Fatalf("tool errors = %v, want one", lookup.errs)
+	}
+	if got := lookup.errs[0].Error(); got != "*errors.errorString" {
+		t.Errorf("excluded error text = %q, want the type only", got)
+	}
+	if !errors.Is(lookup.errs[0], argsErr) {
+		t.Error("excluded error lost the original chain")
+	}
+	root := tracer.spansNamed(telemetry.RunSpanName)[0]
+	if len(root.errs) != 1 || strings.Contains(root.errs[0].Error(), "hunter2") {
+		t.Fatalf("run errors = %v, want type-only text", root.errs)
+	}
+}
+
+func TestRedactorScrubsContentAndErrors(t *testing.T) {
+	t.Parallel()
+
+	tracer := &fakeTracer{}
+	observe := telemetry.ObserverWithOptions(tracer, telemetry.WithRedactor(
+		func(content string) string { return strings.ReplaceAll(content, "hunter2", "[redacted]") }))
+
+	observe(runner.Event{Kind: runner.EventRunStart, RunID: "run-1"})
+	observe(runner.Event{Kind: runner.EventToolStart, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Args: json.RawMessage(`{"q":"hunter2"}`)})
+	observe(runner.Event{Kind: runner.EventToolEnd, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Result: "password hunter2", Err: errors.New("failed on hunter2")})
+	observe(runner.Event{Kind: runner.EventRunEnd, RunID: "run-1"})
+
+	lookup := tracer.spansNamed("tool lookup")[0]
+	if got := strAttr(t, lookup, telemetry.AttrToolArgs); got != `{"q":"[redacted]"}` {
+		t.Errorf("args = %q, want scrubbed", got)
+	}
+	if got := strAttr(t, lookup, telemetry.AttrToolResult); got != "password [redacted]" {
+		t.Errorf("result = %q, want scrubbed", got)
+	}
+	if got := lookup.errs[0].Error(); got != "failed on [redacted]" {
+		t.Errorf("error text = %q, want scrubbed", got)
+	}
+}
+
+func TestContentExclusionWinsOverRedactor(t *testing.T) {
+	t.Parallel()
+
+	tracer := &fakeTracer{}
+	observe := telemetry.ObserverWithOptions(tracer,
+		telemetry.WithContentExcluded(),
+		telemetry.WithRedactor(func(content string) string { return "scrubbed" }))
+
+	observe(runner.Event{Kind: runner.EventRunStart, RunID: "run-1"})
+	observe(runner.Event{Kind: runner.EventToolStart, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Args: json.RawMessage(`{"q":"secret"}`)})
+	observe(runner.Event{Kind: runner.EventToolEnd, RunID: "run-1", CallID: "c1",
+		ToolName: "lookup", Result: "secret"})
+	observe(runner.Event{Kind: runner.EventRunEnd, RunID: "run-1", Err: errors.New("boom")})
+
+	lookup := tracer.spansNamed("tool lookup")[0]
+	if _, ok := attr(lookup, telemetry.AttrToolArgs); ok {
+		t.Error("exclusion must win: arguments recorded verbatim")
+	}
+	if _, ok := attr(lookup, telemetry.AttrToolResult); ok {
+		t.Error("exclusion must win: result recorded verbatim")
+	}
+	root := tracer.spansNamed(telemetry.RunSpanName)[0]
+	if got := root.errs[0].Error(); got != "*errors.errorString" {
+		t.Errorf("excluded error text = %q, want the type only", got)
 	}
 }
 

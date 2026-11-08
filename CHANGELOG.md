@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Telemetry content modes.** `telemetry.Observer` takes options
+  constraining what content lands on spans. `WithContentExcluded`
+  replaces the tool argument and result attributes with their byte
+  sizes (`golem.tool.args_size`, `golem.tool.result_size`) and records
+  every error by type only — error messages quote the arguments,
+  results, and refusals they belong to, so an exclusion that forwarded
+  them verbatim would leak; `errors.As` and `errors.Is` still reach the
+  original through the wrapper. `WithRedactor(fn)` scrubs content and
+  error text instead of dropping it. Exclusion wins when both are set;
+  the zero-argument call keeps recording verbatim.
 - **Guardrails (ADR 0042).** A new `guard` package and four agent
   options put typed checks at the run's boundaries:
   `golem.WithInputGuards` screens the prompt before the first model
