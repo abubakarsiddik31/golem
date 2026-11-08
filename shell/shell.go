@@ -75,14 +75,46 @@ type Config struct {
 	// kept output ends with a truncation marker rather than failing.
 	// Zero selects DefaultMaxBytes; negative values fail New.
 	MaxBytes int64
+	// AllowedCommands, when non-empty, turns on allowlist mode: only
+	// commands whose executable matches an entry may run. Entries
+	// without a path separator match the executable's base name
+	// ("ls" matches /bin/ls); entries with one match the executable's
+	// full form. Mutually exclusive with DeniedCommands — New rejects
+	// a configuration that sets both.
+	AllowedCommands []string
+	// DeniedCommands rejects commands whose executable matches an
+	// entry, with the same base-name matching as AllowedCommands. It
+	// is ignored when AllowedCommands is non-empty. The zero value
+	// filters nothing; shell.DestructiveCommands is the exported
+	// starting-point denylist.
+	DeniedCommands []string
+	// DeniedOperators rejects a command whose string contains any
+	// listed operator, so a single call cannot chain or redirect
+	// (shell.ChainingOperators is the starting-point list). Matching
+	// is a conservative substring check: quoting that mentions an
+	// operator in an argument is denied too. The zero value filters
+	// nothing.
+	DeniedOperators []string
+	// BlockInteractive blocks executables that ordinarily expect a
+	// terminal (editors, pagers, ssh, sudo) so a call cannot hang
+	// until the timeout. The zero value leaves them allowed.
+	BlockInteractive bool
+	// DeniedEnvPatterns drops environment entries whose KEY matches a
+	// glob pattern from the merged environment — the process
+	// environment plus Env — so credentials in either place stay out
+	// of spawned commands (shell.CredentialEnvPatterns is the
+	// starting-point list). The zero value filters nothing.
+	DeniedEnvPatterns []string
 }
 
 // runner holds the resolved configuration behind the tool's exec.
 type runner struct {
-	dir      string
-	env      []string
-	timeout  time.Duration
-	maxBytes int64
+	dir         string
+	env         []string
+	timeout     time.Duration
+	maxBytes    int64
+	policy      *policy
+	envPatterns []string
 }
 
 // New validates cfg and returns the run_command tool ready for
@@ -118,11 +150,17 @@ func New[Deps any](cfg Config) (tool.Tool[Deps], error) {
 	if maxBytes == 0 {
 		maxBytes = DefaultMaxBytes
 	}
+	p, err := newPolicy(cfg.AllowedCommands, cfg.DeniedCommands, cfg.DeniedOperators, cfg.BlockInteractive)
+	if err != nil {
+		return tool.Tool[Deps]{}, err
+	}
 	r := &runner{
-		dir:      cfg.Dir,
-		env:      cfg.Env,
-		timeout:  timeout,
-		maxBytes: maxBytes,
+		dir:         cfg.Dir,
+		env:         cfg.Env,
+		timeout:     timeout,
+		maxBytes:    maxBytes,
+		policy:      p,
+		envPatterns: cfg.DeniedEnvPatterns,
 	}
 	return tool.New(tool.Tool[Deps]{
 		Name:        ToolName,
@@ -156,13 +194,16 @@ func (r *runner) run(ctx context.Context, args json.RawMessage) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	if err := r.policy.check(command); err != nil {
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shellPath(), shellFlag(), command)
 	cmd.Dir = r.dir
 	if r.env != nil {
-		cmd.Env = append(os.Environ(), r.env...)
+		cmd.Env = filterEnv(append(os.Environ(), r.env...), r.envPatterns)
 	}
 	output := newCappedBuffer(int(r.maxBytes))
 	cmd.Stdout = output
