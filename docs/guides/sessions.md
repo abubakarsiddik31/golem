@@ -49,6 +49,45 @@ Without a pinned ID the run mints one and reports it on
 `Result.ConversationID`, so a client can start a conversation server-side
 and continue it later by value.
 
+### Server-held history
+
+`golem.WithSessionRequired()` makes the store the only conversation
+source: a run under it rejects caller-supplied history —
+`RunWithHistory`'s or `RunWithDeferredResults`'s history argument —
+before any model call, and fails up front when no store is wired. The
+conversation the model sees is the conversation the server's own runs
+produced and saved.
+
+The security property this buys is on the deferred-resume path. On a
+permissive run, a client that supplies its own history also supplies
+the tool calls an approval re-executes, arguments included: a forged
+history naming a call ID the model never made, carrying arguments of
+the client's choosing, is validated against that same forged history
+and its approval executes the tool. Under `WithSessionRequired` the
+resolutions are validated against the stored conversation instead, so
+an approval can only answer a call the server's own run is actually
+waiting on, and an approved re-run executes with the arguments the
+server stored:
+
+```go
+paused, err := agent.Run(ctx, runCtx, "delete notes.txt",
+    golem.WithSession(store), golem.WithConversationID("conv-1"),
+    golem.WithSessionRequired())
+
+// history is nil: the store supplies the paused conversation, and a
+// client can only resolve the calls it holds.
+result, err := agent.RunWithDeferredResults(ctx, runCtx, nil,
+    golem.DeferredResults{Approvals: map[string]golem.Approval{"call-1": {Approved: true}}},
+    "", golem.WithSession(store), golem.WithConversationID("conv-1"),
+    golem.WithSessionRequired())
+```
+
+Approval itself stays a human-in-the-loop gate, not an authorization
+boundary: it answers "did a human sign this off", not "may this client
+act". Enforce who may act inside the tool, against the run's
+dependencies; server-held history only guarantees the conversation the
+gate answers about is the server's.
+
 ## Example
 
 Run `examples/session` — offline: two runs chain through the in-memory
@@ -60,6 +99,7 @@ shows the resumable transcript surviving in the store.
 - `session.Store` — `Load(ctx, conversationID string) ([]model.Message, error)`, `Save(ctx, conversationID string, messages []model.Message) error`
 - `session.NewMemory() *Memory` — the offline in-process store; snapshots through the durable message JSON
 - `golem.WithSession(store session.Store) RunOption`
+- `golem.WithSessionRequired() RunOption` — server-held history: caller-supplied history is rejected before any model call; see "Server-held history" above
 
 ## Gotchas
 
@@ -70,7 +110,9 @@ shows the resumable transcript surviving in the store.
 - A run given history explicitly — `RunWithHistory`,
   `RunWithDeferredResults` — bypasses loading: the caller's history is
   the conversation. It is still saved back, under the history's
-  inherited identity.
+  inherited identity. `WithSessionRequired` closes that door: the run
+  fails instead, so a caller-supplied history can never silently
+  replace what the server stored.
 - Two concurrent runs continuing one conversation race no matter the
   backend: the second save overwrites the first. Runs of one
   conversation belong to one request path, or to a Store that

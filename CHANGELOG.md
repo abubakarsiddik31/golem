@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Server-held history mode.** `golem.WithSessionRequired()` makes the
+  session store the only conversation source: a run under it rejects
+  caller-supplied history — `RunWithHistory`'s and
+  `RunWithDeferredResults`'s history argument — before any model call,
+  and fails up front when no store is wired. The security property
+  lands on the deferred-resume path: resolutions are validated against
+  the stored conversation instead of a client-supplied one, so an
+  approval can only answer a tool call the server's own run is waiting
+  on, and an approved re-run executes with the arguments the server
+  stored. Approval stays a human-in-the-loop gate, not an authorization
+  boundary; the sessions guide documents the division.
 - **Telemetry content modes.** `telemetry.Observer` takes options
   constraining what content lands on spans. `WithContentExcluded`
   replaces the tool argument and result attributes with their byte

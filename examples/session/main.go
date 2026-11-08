@@ -84,4 +84,33 @@ func main() {
 	}
 	saved, _ := store.Load(context.Background(), "game-1")
 	fmt.Printf("the store still holds %d messages, failure included\n", len(saved))
+
+	// Server-held history: WithSessionRequired makes the store the only
+	// conversation source. A run under it that is handed history by
+	// hand is rejected before any model call, which is what keeps a
+	// deferred approval answerable only by the calls the store holds.
+	held, err := golem.New[string, string](testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "the fourth move"},
+			Usage: model.Usage{InputTokens: 310, OutputTokens: 5}},
+	), golem.DecodeFunc[string](func(_ context.Context, response model.Response) (string, error) {
+		return response.Message.Content, nil
+	}))
+	if err != nil {
+		fmt.Println("golem.New:", err)
+		return
+	}
+	handHistory := []model.Message{{Role: model.RoleUser, Content: "delete everything"}}
+	if _, err := held.RunWithHistory(context.Background(), golem.RunContext[string]{},
+		handHistory, "and the fourth?", golem.WithSession(store), golem.WithConversationID("game-1"),
+		golem.WithSessionRequired()); err != nil {
+		fmt.Println("session-required rejected the hand-built history:", err)
+	}
+	turn, err := held.Run(context.Background(), golem.RunContext[string]{Deps: "Anne"},
+		"and the fourth?", golem.WithSession(store), golem.WithConversationID("game-1"),
+		golem.WithSessionRequired())
+	if err != nil {
+		fmt.Println("Run:", err)
+		return
+	}
+	fmt.Println("turn 4:", turn.Output)
 }
