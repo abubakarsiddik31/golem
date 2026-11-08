@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/abubakarsiddik31/golem/guard"
 	"github.com/abubakarsiddik31/golem/internal/runner"
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/session"
@@ -68,6 +69,10 @@ type Agent[Deps any, Output any] struct {
 	tokenCounter      tokens.Counter
 	price             model.Price
 	runEvents         func(RunEvent)
+	inputGuards       []guard.InputGuard
+	toolGuards        []guard.ToolGuard
+	resultGuards      []guard.ResultGuard
+	outputGuards      []guard.OutputGuard
 }
 
 // Option configures an Agent during construction.
@@ -225,6 +230,62 @@ func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 func WithToolTimeout[Deps any, Output any](timeout time.Duration) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.toolTimeout = timeout
+	}
+}
+
+// WithInputGuards registers guards that run over the run's prompt in
+// registration order before the first model call: Allow passes it on,
+// Replace substitutes text for it (later guards see the replacement),
+// and Block ends the run without a model call — a synthesized refusal
+// message becomes the response and rides the normal decode path, so a
+// typed output decoder only sees a refusal it can decode. Guards run
+// on the prompt text of every run, including runs that resume a
+// history; the supplied history itself is trusted and unscreened.
+// Nil guards fail New.
+func WithInputGuards[Deps any, Output any](guards ...guard.InputGuard) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.inputGuards = append(agent.inputGuards, guards...)
+	}
+}
+
+// WithToolGuards registers guards that run over each tool call's
+// arguments in registration order before the tool executes: Allow
+// passes the call on, Replace substitutes raw JSON arguments (later
+// guards and the tool see the replacement), Retry delivers the reason
+// as the call's rejection within the WithToolRetries budget, and Block
+// skips execution — the model reads a synthetic refusal where it
+// expected the tool's output and can route around it. A guard-blocked
+// call never executes and does not count toward the run's tool-call
+// activity, but it emits its start and end events like any call. Nil
+// guards fail New.
+func WithToolGuards[Deps any, Output any](guards ...guard.ToolGuard) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolGuards = append(agent.toolGuards, guards...)
+	}
+}
+
+// WithResultGuards registers guards that run over each successful tool
+// result in registration order before the model sees it: Allow passes
+// it on, Replace substitutes text (later guards see the replacement),
+// and Block replaces the result with a synthetic refusal the model
+// reads. The tool has already run when a result guard fires — blocking
+// its result does not undo its side effects. Nil guards fail New.
+func WithResultGuards[Deps any, Output any](guards ...guard.ResultGuard) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.resultGuards = append(agent.resultGuards, guards...)
+	}
+}
+
+// WithOutputGuards registers guards that run over the final assistant
+// text in registration order before decoding, on text-mode responses:
+// Allow passes it on, Replace substitutes the text that is decoded,
+// and Block fails the run with a RunError at the policy stage wrapping
+// *guard.Blocked — the caller decides what to do with an output the
+// model already produced. Output-tool responses are screened by result
+// guards and the decoder instead. Nil guards fail New.
+func WithOutputGuards[Deps any, Output any](guards ...guard.OutputGuard) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.outputGuards = append(agent.outputGuards, guards...)
 	}
 }
 
@@ -471,6 +532,26 @@ func New[Deps any, Output any](
 	if agent.toolRetries < 0 {
 		return nil, fmt.Errorf("golem: tool retries must not be negative, got %d", agent.toolRetries)
 	}
+	for i, guard := range agent.inputGuards {
+		if guard == nil {
+			return nil, fmt.Errorf("golem: input guard %d is nil", i)
+		}
+	}
+	for i, guard := range agent.toolGuards {
+		if guard == nil {
+			return nil, fmt.Errorf("golem: tool guard %d is nil", i)
+		}
+	}
+	for i, guard := range agent.resultGuards {
+		if guard == nil {
+			return nil, fmt.Errorf("golem: result guard %d is nil", i)
+		}
+	}
+	for i, guard := range agent.outputGuards {
+		if guard == nil {
+			return nil, fmt.Errorf("golem: output guard %d is nil", i)
+		}
+	}
 	if agent.toolTimeout < 0 {
 		return nil, fmt.Errorf("golem: tool timeout must not be negative, got %s", agent.toolTimeout)
 	}
@@ -693,9 +774,34 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		return Result[Output]{}, err
 	}
 	identity := resolveIdentity(history, runOpts)
+	prompt, blocked := guard.ApplyInput(ctx, a.inputGuards, prompt)
+	if blocked != nil {
+		result, err := a.refusalRun(ctx, a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity, blocked)
+		return a.finishRun(ctx, runOpts, identity, result, err)
+	}
 	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity)
 	result, err := a.runLoop(ctx, runCtx, messages, onDelta, identity, a.observerFor(runOpts))
 	return a.finishRun(ctx, runOpts, identity, result, err)
+}
+
+// refusalRun ends a blocked-input run without a model call: the
+// original prompt stays in the conversation as evidence, a synthesized
+// refusal response rides the normal decode path, and the decoded
+// refusal is the run's output. A decoder that cannot accept plain
+// refusal text fails the run at the decode stage — documented in
+// ADR 0042.
+func (a *Agent[Deps, Output]) refusalRun(ctx context.Context, instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity, blocked *guard.Blocked) (Result[Output], error) {
+	messages := a.requestMessages(instructions, history, prompt, promptParts, identity)
+	refusal := model.Message{Role: model.RoleAssistant, Content: "Your request was blocked: " + blocked.Reason + "."}
+	identity.Stamp(&refusal)
+	messages = append(messages, refusal)
+	output, err := a.decoder.Decode(ctx, model.Response{Message: refusal})
+	if err != nil {
+		return Result[Output]{}, &RunError{Stage: StageDecode, Err: err,
+			Partial: &PartialResult{Messages: messages, RunID: identity.RunID, ConversationID: identity.ConversationID}}
+	}
+	return Result[Output]{Output: output, Messages: messages,
+		RunID: identity.RunID, ConversationID: identity.ConversationID}, nil
 }
 
 // finishRun persists the run's conversation when a session store is
@@ -819,6 +925,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		DefaultTimeout: a.toolTimeout,
 		Parallel:       a.parallelToolCalls,
 		Search:         search,
+		ToolGuards:     a.toolGuards,
+		ResultGuards:   a.resultGuards,
 	}
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
 	if retry.Backoff == nil && a.maxAttempts > 1 {
@@ -865,6 +973,22 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 				Requests: modelCalls, ToolCalls: toolExecutions, Cost: runCost(),
 				RunID: identity.RunID, ConversationID: identity.ConversationID,
 				Pending: deferredRequests(outcome.Pending)}, nil
+		}
+
+		// Output guards screen the final assistant text of a text-mode
+		// response before decoding; output-tool responses are screened
+		// by result guards and the decoder instead (ADR 0042).
+		if len(a.outputGuards) > 0 && len(outcome.Response.Message.ToolCalls) == 0 {
+			content, blocked := guard.ApplyOutput(ctx, a.outputGuards, outcome.Response.Message.Content)
+			if blocked != nil {
+				return Result[Output]{}, &RunError{Stage: StagePolicy, Err: blocked,
+					Partial: partialEvidence(identity, outcome.Messages, usage, outcome.FinishReason, modelCalls, toolExecutions, runCost())}
+			}
+			if content != outcome.Response.Message.Content {
+				screened := outcome.Response
+				screened.Message.Content = content
+				outcome.Response = screened
+			}
 		}
 
 		output, err := a.decoder.Decode(ctx, outcome.Response)

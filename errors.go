@@ -27,6 +27,11 @@ const (
 	// preserves the evidence, including the tool results recorded before
 	// the stop.
 	StageCanceled Stage = "canceled"
+	// StagePolicy means an output guard blocked the run's final output
+	// (ADR 0042): the model produced something the registered policy
+	// refuses to expose. The *guard.Blocked is in the chain through
+	// RunError.Unwrap.
+	StagePolicy Stage = "policy"
 )
 
 // RunError adds an inspectable execution stage while preserving the source

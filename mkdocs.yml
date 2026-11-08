@@ -56,6 +56,7 @@ nav:
   - Web fetch: web-fetch.md
   - File read: file-read.md
   - Command execution: command-execution.md
+  - Guardrails: guardrails.md
   - PDF extract: pdf-extract.md
   - Document extract: doc-extract.md
   - Agent skills: skills.md

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abubakarsiddik31/golem/guard"
 	"github.com/abubakarsiddik31/golem/model"
 	"github.com/abubakarsiddik31/golem/tool"
 )
@@ -122,6 +123,13 @@ type ToolConfig struct {
 	// runner-owned discovery tool and advertises a match from the next
 	// request onward; see SearchConfig.
 	Search *SearchConfig
+	// ToolGuards run over each call's arguments in order before the
+	// tool executes; see guard.ApplyToolCall. A blocked or rejected
+	// call never executes.
+	ToolGuards []guard.ToolGuard
+	// ResultGuards run over each successful tool result in order
+	// before the model sees it; see guard.ApplyToolResult.
+	ResultGuards []guard.ResultGuard
 }
 
 // EventKind identifies one observable point of the execution loop.
@@ -530,6 +538,10 @@ type toolCallResult[Deps any] struct {
 	declared tool.Tool[Deps]
 	result   tool.Result
 	err      error
+	// guarded marks a call a guard resolved without executing the
+	// tool: blocked or rejected before exec, or a result a guard
+	// blocked after exec. It does not count toward tool activity.
+	guarded bool
 }
 
 // runToolCalls validates every requested call, executes them either in
@@ -561,7 +573,7 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 				end++
 			}
 		}
-		runToolGroup(ctx, results[start:end], deps, config.DefaultTimeout, config.Parallel && end-start > 1, counts, turn, emit)
+		runToolGroup(ctx, results[start:end], deps, config, config.DefaultTimeout, config.Parallel && end-start > 1, counts, turn, emit)
 		if groupCanceled(results[start:end]) {
 			// The stop ends the batch: work that had not started never
 			// runs, so the caller's stop gesture cannot launch it.
@@ -683,7 +695,7 @@ func hasResultMessage(messages []model.Message, callID string) bool {
 // group completes, so event order stays deterministic. A call that
 // returns a deferred sentinel reports EventDeferred instead of a tool
 // end and does not count as an execution.
-func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, timeout time.Duration, parallel bool, counts *runCounts, turn int, emit Observer) {
+func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], deps Deps, config ToolConfig, timeout time.Duration, parallel bool, counts *runCounts, turn int, emit Observer) {
 	if !parallel {
 		for i := range group {
 			if err := ctx.Err(); err != nil {
@@ -691,11 +703,13 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 				return
 			}
 			emitEvent(emit, Event{Kind: EventToolStart, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Args: group[i].call.Args})
-			group[i].result, group[i].err = executeTool(ctx, group[i].declared, deps, group[i].call.Args, timeout)
+			resolveCall(ctx, &group[i], deps, config, timeout)
 			if deferredEvent(emit, group[i], turn) {
 				continue
 			}
-			counts.toolExecutions++
+			if !group[i].guarded {
+				counts.toolExecutions++
+			}
 			event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result.Text, Parts: group[i].result.Parts}
 			if group[i].err != nil {
 				event.Err = group[i].err
@@ -712,7 +726,7 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 		wg.Add(1)
 		go func(item *toolCallResult[Deps]) {
 			defer wg.Done()
-			item.result, item.err = executeTool(ctx, item.declared, deps, item.call.Args, timeout)
+			resolveCall(ctx, item, deps, config, timeout)
 		}(&group[i])
 	}
 	wg.Wait()
@@ -720,7 +734,9 @@ func runToolGroup[Deps any](ctx context.Context, group []toolCallResult[Deps], d
 		if deferredEvent(emit, group[i], turn) {
 			continue
 		}
-		counts.toolExecutions++
+		if !group[i].guarded {
+			counts.toolExecutions++
+		}
 		event := Event{Kind: EventToolEnd, Turn: turn, CallID: group[i].call.ID, ToolName: group[i].call.Name, Result: group[i].result.Text, Parts: group[i].result.Parts}
 		if group[i].err != nil {
 			event.Err = group[i].err
