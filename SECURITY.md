@@ -1,5 +1,10 @@
 # Security policy
 
+The framework's security boundaries — what each component controls, what
+stays the application's responsibility, and how a report is evaluated
+against them — are mapped in [THREAT_MODEL.md](THREAT_MODEL.md). Read it
+before deciding whether a behavior is a vulnerability.
+
 ## Supported versions
 
 Only the latest tagged release receives security fixes.

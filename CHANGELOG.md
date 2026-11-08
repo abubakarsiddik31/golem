@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Threat model.** `THREAT_MODEL.md` maps the framework's security
+  boundaries: deployment profiles, assets and adversaries, the data flow,
+  and a boundary-by-boundary account — client-held versus server-held
+  history, tool authorization and approvals, the webfetch address guard
+  and the fileread jail, MCP, persistent state, telemetry content modes,
+  and per-run availability controls — each stating which library control
+  governs a path and which responsibility stays with the application.
+  `SECURITY.md` links it as the evaluation baseline for reports.
 - **Server-held history mode.** `golem.WithSessionRequired()` makes the
   session store the only conversation source: a run under it rejects
   caller-supplied history — `RunWithHistory`'s and
