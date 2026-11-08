@@ -1,8 +1,10 @@
 // Command tracing turns a run's event stream into spans through the
 // telemetry port, the way an OpenTelemetry adapter would — the tracer
 // here is an in-memory recorder that prints the finished tree, so the
-// example runs offline with no SDK and no credentials. The guide shows
-// the same adapter written against go.opentelemetry.io/otel.
+// example runs offline with no SDK and no credentials. It also shows
+// the content modes: a second run goes through a redacting observer,
+// whose scrubbed arguments and result land on its spans. The guide
+// shows the same adapter written against go.opentelemetry.io/otel.
 package main
 
 import (
@@ -61,6 +63,45 @@ func main() {
 	fmt.Println("output:", result.Output)
 	fmt.Println()
 	tracer.print()
+
+	// The same observer with content scrubbed: the redactor is applied
+	// to argument, result, and error attribute values before they land
+	// on a span. WithContentExcluded instead drops the values and
+	// records their sizes.
+	redacted := &printingTracer{}
+	secretTool := tool.MustNew(tool.Tool[string]{
+		Name:        "lookup_password",
+		Description: "Look up a stored password.",
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Exec: func(_ context.Context, owner string, _ json.RawMessage) (tool.Result, error) {
+			return tool.Text(owner + ":'hunter2'"), nil
+		},
+	})
+	secretAgent, err := golem.New[string, string](testmodel.New().Respond(
+		model.Response{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+			{ID: "call-1", Name: "lookup_password", Args: json.RawMessage(`{"owner":"Anne"}`)},
+		}}},
+		model.Response{Message: model.Message{Role: model.RoleAssistant, Content: "found"},
+			Usage: model.Usage{InputTokens: 30, OutputTokens: 2}},
+	),
+		golem.DecodeFunc[string](func(_ context.Context, response model.Response) (string, error) {
+			return response.Message.Content, nil
+		}),
+		golem.WithTools[string, string](secretTool),
+		golem.WithRunEvents[string, string](telemetry.ObserverWithOptions(redacted, telemetry.WithRedactor(
+			func(content string) string { return strings.ReplaceAll(content, "hunter2", "[redacted]") }))),
+	)
+	if err != nil {
+		fmt.Println("golem.New:", err)
+		return
+	}
+	if _, err := secretAgent.Run(context.Background(), golem.RunContext[string]{Deps: "Anne"}, "what is stored"); err != nil {
+		fmt.Println("Run:", err)
+		return
+	}
+	fmt.Println()
+	fmt.Println("the same run with a redactor:")
+	redacted.print()
 }
 
 // printingTracer implements telemetry.Tracer by recording spans in

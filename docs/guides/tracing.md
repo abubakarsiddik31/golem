@@ -56,6 +56,34 @@ consumes it. A shared agent serving many concurrent runs is safe: the
 observer synchronizes, and interleaved runs parent their spans to
 their own roots.
 
+### Keeping content off the spans
+
+Tool arguments, results, and error messages can carry user data, and
+the observer records them verbatim by default. Observer options
+constrain that:
+
+```go
+golem.WithRunEvents[model, string](telemetry.ObserverWithOptions(tracer,
+    telemetry.WithContentExcluded()))
+```
+
+`WithContentExcluded` replaces the argument and result attributes with
+their byte sizes (`golem.tool.args_size`, `golem.tool.result_size`)
+and records every error by type only — `*guard.Blocked`, say, instead
+of a refusal quoting the blocked arguments. `errors.As` and `errors.Is`
+still reach the original through the wrapper. This is the mode for
+backends you do not control.
+
+`WithRedactor(fn)` keeps the content but scrubs it: `fn` is applied to
+the argument and result values and to error messages before they land
+on a span. Use it when the backend may see content but not particular
+secrets. When both options are set the exclusion wins, and the
+redactor does not fire.
+
+Neither option touches identity attributes — run and conversation
+IDs, tool names, usage counters — so span shapes and grouping are
+identical under all three modes.
+
 ## Example
 
 Run `examples/tracing` — offline: the example implements the port with
@@ -127,7 +155,9 @@ agent, _ := golem.New[model, string](client, decoder,
 
 ## API surface
 
-- `telemetry.Observer(tracer Tracer) runner.Observer` — the returned observer is a `func(golem.RunEvent)`; pass it to `golem.WithRunEvents` or `golem.WithRunObserver`
+- `telemetry.Observer(tracer Tracer, opts ...ObserverOption) runner.Observer` — the returned observer is a `func(golem.RunEvent)`; pass it to `golem.WithRunEvents` or `golem.WithRunObserver`
+- `telemetry.WithContentExcluded()`, `telemetry.WithRedactor(fn func(string) string)` — the content-mode observer options
+- `telemetry.AttrToolArgsSize`, `telemetry.AttrToolResultSize` — the size attributes recorded in place of content under exclusion
 - `telemetry.Tracer` — `Start(ctx, name string, opts ...SpanOption) (context.Context, Span)`
 - `telemetry.Span` — `SetAttributes(attrs ...Attribute)`, `RecordError(err error)`, `End()`
 - `telemetry.SpanConfig{Kind, Attributes}` — what an adapter applies options to; the zero value is the default
@@ -138,10 +168,13 @@ agent, _ := golem.New[model, string](client, decoder,
 
 ## Gotchas
 
-- Tool arguments and results are recorded **verbatim** on spans — the
-  same bytes the event stream already exposed. If tools handle secrets
-  or personal data, redact in the adapter (or skip this observer for
-  those runs); a tracing backend is not a secret store.
+- Tool arguments and results are recorded **verbatim** on spans by
+  default — the same bytes the event stream already exposed. A tracing
+  backend is not a secret store: use `WithContentExcluded` for backends
+  you do not control, `WithRedactor` to scrub specific values. The
+  options also cover error messages, which quote the arguments,
+  results, and refusals they belong to — a content mode that dropped
+  the attributes but forwarded errors verbatim would leak through them.
 - Two root spans for one logical run means correction happened. Group
   by `golem.run.id` for run counts; the roots' usage figures do not
   overlap — each pass reports its own.
