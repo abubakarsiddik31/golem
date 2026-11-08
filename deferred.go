@@ -108,6 +108,14 @@ func (a *Agent[Deps, Output]) prepareRun(ctx context.Context, history []model.Me
 			opt(&runOpts)
 		}
 	}
+	if runOpts.sessionRequired {
+		if history != nil {
+			return runOpts, nil, fmt.Errorf("golem: a session-required run rejects caller-supplied history: the conversation must come from the store")
+		}
+		if runOpts.session == nil {
+			return runOpts, nil, fmt.Errorf("golem: a session-required run has no session store to load the conversation from")
+		}
+	}
 	if runOpts.session != nil && history == nil {
 		key := runOpts.conversationID
 		if key == "" {

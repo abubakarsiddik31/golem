@@ -348,6 +348,9 @@ type runOptions struct {
 	// at load time when none was. Both are empty on a sessionless run.
 	session    session.Store
 	sessionKey string
+	// sessionRequired marks a server-held history run: the store is the
+	// only conversation source, and caller-supplied history is rejected.
+	sessionRequired bool
 }
 
 // RunOption customizes a single run. Options are evaluated once, at run
@@ -423,6 +426,27 @@ func WithConversationID(id string) RunOption {
 func WithSession(store session.Store) RunOption {
 	return func(opts *runOptions) {
 		opts.session = store
+	}
+}
+
+// WithSessionRequired turns the run's history server-held: the session
+// store becomes the only conversation source, and caller-supplied
+// history is rejected before any model call. The run must carry
+// WithSession; a sessionless run fails up front. Combine with
+// WithConversationID to pin which stored conversation continues.
+//
+// The security property this buys is on the deferred-resume path: a
+// resolution — an approval, a denial, an externally supplied result —
+// can only answer a tool call the stored conversation is waiting on,
+// because the stored conversation is the only one validation ever
+// sees. On a permissive run, a client that supplies its own history
+// also supplies the tool calls an approval re-executes, arguments
+// included. Approval itself stays a human-in-the-loop gate, not an
+// authorization boundary: enforce who may act inside the tool, against
+// the run's dependencies. See docs/guides/sessions.md.
+func WithSessionRequired() RunOption {
+	return func(opts *runOptions) {
+		opts.sessionRequired = true
 	}
 }
 
