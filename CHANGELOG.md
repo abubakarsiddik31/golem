@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
+  gains `ReplayReasoning`: each assistant message's captured reasoning is
+  sent back on later requests, as both `reasoning_content` and
+  `reasoning`. It is off by default because endpoints disagree on replay.
+  Turn it on for servers whose chat template keeps prior thoughts across
+  tool-call steps, such as vLLM serving Gemma 4. On a 30-task coding-agent
+  ablation with Gemma 4 12B it halved generated tokens at equal accuracy.
+  Responses and stream deltas also read the `reasoning` field that newer
+  vLLM and Ollama use when `reasoning_content` is absent.
 - **Threat model.** `THREAT_MODEL.md` maps the framework's security
   boundaries: deployment profiles, assets and adversaries, the data flow,
   and a boundary-by-boundary account — client-held versus server-held
