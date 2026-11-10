@@ -702,3 +702,41 @@ func TestGenerateCapturesReasoningContent(t *testing.T) {
 		t.Fatalf("default config put reasoning_effort on the wire: %s", recorder.lastBody(t))
 	}
 }
+
+// TestReplayReasoningSendsPriorThoughts verifies the opt-in replay: vLLM's
+// Gemma 4 chat template keeps prior thoughts across tool-call steps only
+// when assistant messages carry them, under either field name. The newer
+// "reasoning" response field is captured as thinking too.
+func TestReplayReasoningSendsPriorThoughts(t *testing.T) {
+	t.Parallel()
+
+	recorder := newRecordedServer(http.StatusOK, `{"choices":[{"message":{
+		"role":"assistant",
+		"content":null,
+		"reasoning":"read utils.py first",
+		"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]
+	}}],"usage":{"prompt_tokens":8,"completion_tokens":4}}`)
+	for _, replay := range []bool{false, true} {
+		client, err := openai.New(openai.Config{APIKey: "k", BaseURL: recorder.server.URL, Model: "gemma", ReplayReasoning: replay})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		first, err := client.Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Content: "fix it"}}})
+		if err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+		if len(first.Message.Thinking) != 1 || first.Message.Thinking[0].Text != "read utils.py first" {
+			t.Fatalf("the reasoning field must be captured as thinking: %#v", first.Message.Thinking)
+		}
+		history := []model.Message{{Role: model.RoleUser, Content: "fix it"}, first.Message,
+			{Role: model.RoleTool, ToolCallID: "c1", ToolName: "read_file", Content: "def f(): ..."}}
+		if _, err := client.Generate(context.Background(), model.Request{Messages: history}); err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+		body := recorder.lastBody(t)
+		sent := strings.Contains(body, `"reasoning_content":"read utils.py first"`) && strings.Contains(body, `"reasoning":"read utils.py first"`)
+		if sent != replay {
+			t.Fatalf("ReplayReasoning=%v: replayed=%v, body=%s", replay, sent, body)
+		}
+	}
+}

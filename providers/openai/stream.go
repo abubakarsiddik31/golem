@@ -146,9 +146,13 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 			delta.Content = text
 		}
 	}
-	if message.ReasoningContent != "" {
-		a.thinking.WriteString(message.ReasoningContent)
-		delta.Thinking = append(delta.Thinking, model.ThinkingDelta{Index: 0, Text: message.ReasoningContent})
+	reasoning := message.ReasoningContent
+	if reasoning == "" {
+		reasoning = message.Reasoning // newer vLLM / Ollama name
+	}
+	if reasoning != "" {
+		a.thinking.WriteString(reasoning)
+		delta.Thinking = append(delta.Thinking, model.ThinkingDelta{Index: 0, Text: reasoning})
 	}
 	for _, call := range message.ToolCalls {
 		delta.ToolCalls = append(delta.ToolCalls, a.toolCallFragment(call))

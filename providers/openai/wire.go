@@ -59,9 +59,14 @@ type chatMessage struct {
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	// ReasoningContent is the non-standard reasoning field some
 	// OpenAI-compatible endpoints return on assistant messages. It is
-	// captured into the message's thinking and never sent back: endpoints
-	// disagree on replay, from ignoring it to rejecting it.
+	// captured into the message's thinking and sent back only when
+	// Config.ReplayReasoning is set: endpoints disagree on replay, from
+	// ignoring it to rejecting it.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Reasoning is the same field under the name newer vLLM and Ollama
+	// use. It is read as a fallback and, on replay, written alongside
+	// ReasoningContent because chat templates read one or the other.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // chatContentPart is one entry of a multimodal content array: the text
@@ -192,6 +197,8 @@ type chatDeltaMessage struct {
 	// ReasoningContent carries a fragment of the model's reasoning on
 	// endpoints that stream it.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Reasoning is the same fragment under the newer vLLM/Ollama name.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 type chatToolCallDelta struct {
@@ -215,7 +222,23 @@ type chatErrorBody struct {
 	Message string `json:"message"`
 }
 
-func toWireMessages(messages []model.Message) ([]chatMessage, error) {
+// replayedReasoning joins an assistant message's visible thinking for
+// replay. Redacted blocks are provider-encrypted payloads this API has no
+// field for, so they are left out.
+func replayedReasoning(message model.Message) string {
+	if message.Role != model.RoleAssistant {
+		return ""
+	}
+	var parts []string
+	for _, block := range message.Thinking {
+		if text := strings.TrimSpace(block.Text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func toWireMessages(messages []model.Message, replayReasoning bool) ([]chatMessage, error) {
 	wire := make([]chatMessage, 0, len(messages))
 	for i := 0; i < len(messages); i++ {
 		message := messages[i]
@@ -252,12 +275,18 @@ func toWireMessages(messages []model.Message) ([]chatMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		wire = append(wire, chatMessage{
+		out := chatMessage{
 			Role:       toWireRole(message.Role),
 			Content:    content,
 			ToolCalls:  toWireToolCalls(message.ToolCalls),
 			ToolCallID: message.ToolCallID,
-		})
+		}
+		if replayReasoning {
+			if reasoning := replayedReasoning(message); reasoning != "" {
+				out.ReasoningContent, out.Reasoning = reasoning, reasoning
+			}
+		}
+		wire = append(wire, out)
 	}
 	return wire, nil
 }
@@ -468,8 +497,12 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 		})
 	}
 	var thinking []model.ThinkingBlock
-	if choice.ReasoningContent != "" {
-		thinking = append(thinking, model.ThinkingText(choice.ReasoningContent))
+	reasoning := choice.ReasoningContent
+	if reasoning == "" {
+		reasoning = choice.Reasoning
+	}
+	if reasoning != "" {
+		thinking = append(thinking, model.ThinkingText(reasoning))
 	}
 	// A think block inlined at the start of the content — DeepSeek R1
 	// through generic completion runtimes — is reasoning too.

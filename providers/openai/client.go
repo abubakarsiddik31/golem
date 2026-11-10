@@ -57,11 +57,18 @@ type Config struct {
 	// ReasoningEffort asks reasoning models how much to think before
 	// answering, e.g. "low", "medium", or "high"; empty leaves the
 	// provider default. Reasoning content itself is captured when an
-	// endpoint returns it and never replayed. Note that OpenAI's own
-	// chat-completions surface rejects reasoning models combined with
-	// tools; use an endpoint that accepts the combination or leave
-	// reasoning off.
+	// endpoint returns it and replayed only with ReplayReasoning. Note
+	// that OpenAI's own chat-completions surface rejects reasoning models
+	// combined with tools; use an endpoint that accepts the combination
+	// or leave reasoning off.
 	ReasoningEffort string
+	// ReplayReasoning sends each assistant message's captured reasoning
+	// back on later requests, as both reasoning_content and reasoning.
+	// Off by default because endpoints disagree on replay. Turn it on for
+	// servers whose chat template keeps prior thoughts across tool-call
+	// steps, such as vLLM serving Gemma 4: without it the model re-plans
+	// from scratch after every tool result.
+	ReplayReasoning bool
 	// HTTPClient performs requests; defaults to a client with a 5-minute
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
@@ -147,7 +154,7 @@ func (c *Client) newChatHTTPRequest(ctx context.Context, request model.Request, 
 			JSONSchema: &chatJSONSchema{Name: "output", Strict: true, Schema: request.OutputSchema},
 		}
 	}
-	wireMessages, err := toWireMessages(request.Messages)
+	wireMessages, err := toWireMessages(request.Messages, c.cfg.ReplayReasoning)
 	if err != nil {
 		return nil, err
 	}
