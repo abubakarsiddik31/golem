@@ -130,6 +130,12 @@ type ToolConfig struct {
 	// ResultGuards run over each successful tool result in order
 	// before the model sees it; see guard.ApplyToolResult.
 	ResultGuards []guard.ResultGuard
+	// Prepare, when non-nil, filters or rewrites the advertised tool
+	// specs before every model request. Returned specs must name tools
+	// that were already declared this turn — it cannot add callable
+	// tools — and must keep the configured output tool when one is
+	// active. A non-nil error ends the run before the request is sent.
+	Prepare func(ctx context.Context, specs []model.ToolSpec) ([]model.ToolSpec, error)
 }
 
 // EventKind identifies one observable point of the execution loop.
@@ -453,6 +459,16 @@ func execute[Deps any](
 			return partialOutcome(messages, usage, counts, lastFinish), fmt.Errorf("%w after %d turns", ErrLoopLimit, maxIterations)
 		}
 		specs := advertisedSpecs(index, req.ToolSpecs, tools, messages)
+		if toolConfig.Prepare != nil {
+			prepared, err := toolConfig.Prepare(ctx, append([]model.ToolSpec(nil), specs...))
+			if err != nil {
+				return partialOutcome(messages, usage, counts, lastFinish), err
+			}
+			if err := validatePreparedSpecs(specs, prepared, outputTool); err != nil {
+				return partialOutcome(messages, usage, counts, lastFinish), err
+			}
+			specs = prepared
+		}
 		request := model.Request{Messages: messages, ToolSpecs: specs, OutputSchema: req.OutputSchema}
 		if preSend != nil {
 			if err := preSend(ctx, request); err != nil {
@@ -523,6 +539,40 @@ func execute[Deps any](
 				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
 		}
 	}
+}
+
+// validatePreparedSpecs enforces the contract of ToolConfig.Prepare:
+// preparation may filter or rewrite the specs advertised this turn, but
+// it cannot invent a callable tool or remove the output tool the run
+// needs to finish. Duplicate names and malformed schemas fail before the
+// request, so a bad prepare function cannot send an unrunnable request.
+func validatePreparedSpecs(declared, prepared []model.ToolSpec, outputTool string) error {
+	allowed := make(map[string]struct{}, len(declared))
+	for _, spec := range declared {
+		allowed[spec.Name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(prepared))
+	for _, spec := range prepared {
+		if spec.Name == "" {
+			return fmt.Errorf("runner: prepared tool spec has an empty name")
+		}
+		if _, ok := allowed[spec.Name]; !ok {
+			return fmt.Errorf("runner: prepared tools added %q, which is not declared this turn", spec.Name)
+		}
+		if _, duplicate := seen[spec.Name]; duplicate {
+			return fmt.Errorf("runner: prepared tools contain %q more than once", spec.Name)
+		}
+		if len(spec.Schema) == 0 || !json.Valid(spec.Schema) {
+			return fmt.Errorf("runner: prepared tool %q has no valid schema", spec.Name)
+		}
+		seen[spec.Name] = struct{}{}
+	}
+	if outputTool != "" {
+		if _, ok := seen[outputTool]; !ok {
+			return fmt.Errorf("runner: prepared tools removed the output tool %q", outputTool)
+		}
+	}
+	return nil
 }
 
 // partialOutcome packages the evidence a failed loop accumulated, so a

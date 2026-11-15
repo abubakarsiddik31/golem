@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Per-step tool preparation.** `golem.WithPrepareTools` installs a
+  `golem.PrepareToolsFunc[Deps]` that filters or rewrites the tool specs
+  advertised before every model request, after deferred-tool discovery
+  and before the pre-send usage check. Prepared specs must name tools
+  already advertised this turn, keep unique names, carry valid schemas,
+  and preserve an active output tool; violations fail the run before the
+  request is sent (ADR 0045).
 - **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
   gains `ReplayReasoning`: each assistant message's captured reasoning is
   sent back on later requests, as both `reasoning_content` and

@@ -360,6 +360,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
 | [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
+| [`tool-preparation`](examples/tool-preparation/main.go) | Per-step tool filtering from typed deps, offline |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
