@@ -266,6 +266,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 | **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI, with explicit per-page routing and provenance. |
 | **`docextract`** | Multi-Format Document Extraction | Extracts text and structure from Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), CSV, and Markdown. |
 | **`webfetch`** | Web Extraction | Fetches URLs and returns clean, agent-readable text without browser overhead. |
+| **`websearch`** | Web Search | Ranked titles, URLs, and snippets through a backend port; DuckDuckGo needs no API key. |
 | **`fileread`** | File Reader | Safe workspace file reading with path boundaries and clean formatting. |
 | **`shell`** | Command Execution | Isolated command execution with timeout handling and combined stdout/stderr output. |
 | **`skills`** | Agent Skills Loader | Discovers and loads standard `SKILL.md` skill folders on demand for progressive prompt enrichment. |
@@ -322,6 +323,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Cost](docs/guides/cost.md) | User-supplied pricing: `Result.Cost` and cost bounds |
 | [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
 | [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
+| [Web search](docs/guides/web-search.md) | The `websearch` common tool: keyless DuckDuckGo by default, any backend behind the port |
 | [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
 | [Command execution](docs/guides/command-execution.md) | The `shell` common tool: one command, combined output |
 | [Guardrails](docs/guides/guardrails.md) | Guards at the run's boundaries: block, replace, or retry prompts, tool calls, results, and output |
@@ -358,6 +360,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | Example | Shows |
 | --- | --- |
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
+| [`web-search`](examples/web-search/main.go) | The `web_search` tool against a fake backend, offline |
 | [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |

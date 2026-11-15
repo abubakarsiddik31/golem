@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Web search tool.** `package websearch` adds `web_search`, returning
+  ranked title/URL/snippet results. The zero `Config` uses DuckDuckGo's
+  HTML endpoint with no API key; `Config.Backend` swaps in any
+  application implementation behind the one-method `websearch.Backend`
+  port. Input validation, result limits, context cancellation, and
+  response bounds are enforced by the tool; fixture tests keep the
+  parser and transport offline (ADR 0046, closes #56).
 - **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
   gains `ReplayReasoning`: each assistant message's captured reasoning is
   sent back on later requests, as both `reasoning_content` and

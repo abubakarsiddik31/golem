@@ -42,3 +42,4 @@ example, and the README index agree.
 29. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
 30. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
 31. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
+32. [Web search](web-search.md) — the `websearch` common tool: a backend port and a keyless DuckDuckGo default.
