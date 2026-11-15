@@ -8,12 +8,12 @@
 # The floor is a ratchet: raise it when coverage rises, never lower it to
 # land a change.
 #
-# Usage: scripts/coverage.sh [minimum-percent]   # default: 80.9
+# Usage: scripts/coverage.sh [minimum-percent]   # default: 81.1
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-minimum="${1:-80.9}"
+minimum="${1:-81.1}"
 module=$(go list -m)
 profile=$(mktemp)
 trap 'rm -f "$profile" "$profile.lib"' EXIT
