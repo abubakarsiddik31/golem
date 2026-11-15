@@ -333,6 +333,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
+| [Compaction](docs/guides/compaction.md) | Bounding history: trimming, token budgets, and summarization |
 | [Sessions](docs/guides/sessions.md) | The `session.Store` port and `WithSession`: conversations that persist between runs, failures included |
 | [Multimodal input](docs/guides/multimodal-input.md) | Images, documents, audio, and video in prompts, per-provider mapping |
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |

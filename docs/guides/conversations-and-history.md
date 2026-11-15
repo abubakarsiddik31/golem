@@ -194,7 +194,10 @@ drop. The processor applies to the history only; the fresh prompt and
 resolved instructions always join in full. When a message count is the
 wrong unit, `golem.BudgetHistory(counter, maxTokens)` bounds the history
 by token budget under the same boundary rule — see
-[Token counting](token-counting.md).
+[Token counting](token-counting.md). When dropping old turns would lose
+context the conversation still needs,
+`golem.SummarizeHistory(summarize, keepRecent)` replaces them with one
+summary; see [Compaction](compaction.md).
 
 ## Example
 
@@ -243,6 +246,7 @@ fork, _ := agent.RunWithHistory(ctx, runCtx, first.Messages, "fork this",
 - `golem.WithInstructionsFunc[Deps, Output](InstructionsFunc[Deps])`
 - `golem.WithHistoryProcessor[Deps, Output](HistoryProcessor)`
 - `golem.TrimHistory(maxMessages int) HistoryProcessor`
+- `golem.SummarizeHistory(summarize SummaryFunc, keepRecent int) HistoryProcessor` — see [Compaction](compaction.md)
 - `golem.NormalizeHistory(history []model.Message) ([]model.Message, HistoryRepair)` — see [Normalizing history explicitly](#normalizing-history-explicitly)
 - `golem.SanitizeHistory(history []model.Message) ([]model.Message, SanitizeReport)` and `golem.UnsafePart{MessageIndex, Kind, Scheme}` — see [Sanitizing untrusted history](#sanitizing-untrusted-history)
 - `golem.NewID() string`

@@ -447,3 +447,141 @@ func TestRunWithHistoryRejectsMisplacedThinking(t *testing.T) {
 		t.Fatalf("model received %d requests; validation must fail before any model call", len(client.request.Messages))
 	}
 }
+
+func TestSummarizeHistoryReplacesOlderTurns(t *testing.T) {
+	t.Parallel()
+
+	var got []model.Message
+	summarize := func(_ context.Context, messages []model.Message) (string, error) {
+		got = messages
+		return "the party met Ada and agreed to head north", nil
+	}
+
+	history := trimHistoryFixture()
+	condensed, err := golem.SummarizeHistory(summarize, 2)(context.Background(), history)
+	if err != nil {
+		t.Fatalf("SummarizeHistory() error = %v", err)
+	}
+
+	if len(got) != 4 || got[0].Content != "oldest" || got[3].Content != "middle" {
+		t.Fatalf("summarizer received %#v, want the prefix before the newest two messages", got)
+	}
+	if len(condensed) != 3 {
+		t.Fatalf("condensed history = %#v", condensed)
+	}
+	if condensed[0].Role != model.RoleUser || !strings.Contains(condensed[0].Content, "the party met Ada") {
+		t.Fatalf("summary message = %#v", condensed[0])
+	}
+	if condensed[1].Content != "middle answer" || condensed[2].Content != "newest" {
+		t.Fatalf("kept messages = %#v", condensed[1:])
+	}
+}
+
+func TestSummarizeHistoryCutsAtTurnBoundaries(t *testing.T) {
+	t.Parallel()
+
+	var got []model.Message
+	condensed, err := golem.SummarizeHistory(func(_ context.Context, messages []model.Message) (string, error) {
+		got = messages
+		return "summary", nil
+	}, 4)(context.Background(), trimHistoryFixture())
+	if err != nil {
+		t.Fatalf("SummarizeHistory() error = %v", err)
+	}
+
+	// A budget of four would cut at the tool result whose call is outside
+	// the kept window; the boundary advances to the user turn that can
+	// open a request, so the call and its result summarize together.
+	if len(got) != 3 || got[1].ToolCalls[0].ID != "call-1" || got[2].ToolCallID != "call-1" {
+		t.Fatalf("summarizer received %#v, want the call/result pair", got)
+	}
+	if len(condensed) != 4 || condensed[1].Content != "middle" || condensed[3].Content != "newest" {
+		t.Fatalf("condensed history = %#v", condensed)
+	}
+}
+
+func TestSummarizeHistorySkipsShortHistory(t *testing.T) {
+	t.Parallel()
+
+	history := trimHistoryFixture()
+	condensed, err := golem.SummarizeHistory(func(_ context.Context, _ []model.Message) (string, error) {
+		t.Fatal("summarizer called for a history that already fits")
+		return "", nil
+	}, len(history))(context.Background(), history)
+	if err != nil {
+		t.Fatalf("SummarizeHistory() error = %v", err)
+	}
+	if len(condensed) != len(history) {
+		t.Fatalf("condensed history = %#v", condensed)
+	}
+}
+
+func TestSummarizeHistoryOmitsSystemMessagesFromSummary(t *testing.T) {
+	t.Parallel()
+
+	var got []model.Message
+	history := []model.Message{
+		{Role: model.RoleSystem, Content: "stale instructions"},
+		{Role: model.RoleUser, Content: "question"},
+		{Role: model.RoleAssistant, Content: "answer"},
+		{Role: model.RoleUser, Content: "latest"},
+	}
+	condensed, err := golem.SummarizeHistory(func(_ context.Context, messages []model.Message) (string, error) {
+		got = messages
+		return "summary", nil
+	}, 1)(context.Background(), history)
+	if err != nil {
+		t.Fatalf("SummarizeHistory() error = %v", err)
+	}
+	if len(got) != 2 || got[0].Role == model.RoleSystem || got[0].Content != "question" {
+		t.Fatalf("summarizer received %#v, want system messages omitted", got)
+	}
+	if len(condensed) != 2 || condensed[1].Content != "latest" {
+		t.Fatalf("condensed history = %#v", condensed)
+	}
+}
+
+func TestSummarizeHistoryRejectsDegenerateInput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	history := trimHistoryFixture()
+	if _, err := golem.SummarizeHistory(nil, 1)(ctx, history); err == nil {
+		t.Fatal("nil summarizer accepted")
+	}
+	if _, err := golem.SummarizeHistory(func(context.Context, []model.Message) (string, error) {
+		return "summary", nil
+	}, -1)(ctx, history); err == nil {
+		t.Fatal("negative keepRecent accepted")
+	}
+	if _, err := golem.SummarizeHistory(func(context.Context, []model.Message) (string, error) {
+		return "  ", nil
+	}, 1)(ctx, history); err == nil {
+		t.Fatal("empty summary accepted")
+	}
+}
+
+func TestSummarizeHistoryErrorStopsTheRunBeforeTheModel(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeModel{}
+	agent, err := golem.New[struct{}, string](
+		client,
+		decoderOf(),
+		golem.WithHistoryProcessor[struct{}, string](golem.SummarizeHistory(
+			func(context.Context, []model.Message) (string, error) {
+				return "", errors.New("summarizer unavailable")
+			}, 1)),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = agent.RunWithHistory(context.Background(), golem.RunContext[struct{}]{}, trimHistoryFixture(), "next")
+	if err == nil || !strings.Contains(err.Error(), "summarizer unavailable") {
+		t.Fatalf("RunWithHistory() error = %v, want the summarizer failure", err)
+	}
+	if client.request.Messages != nil {
+		t.Fatal("model was called despite the summarizer failing")
+	}
+}
