@@ -96,10 +96,38 @@ agent, _ := golem.New[struct{}, string](client, decoder,
 
 A tool can set `tool.Tool.MaxOutputBytes` to override the agent cap;
 zero inherits it, and an unset agent cap disables truncation. The cap is
-bytes, determined once, and cuts on UTF-8 boundaries. It is truncation,
-not spill-to-storage or summarization: a caller that needs the full
-payload should keep it inside the tool or write it somewhere the model
-can request intentionally.
+bytes, determined once, and cuts on UTF-8 boundaries.
+
+When truncation loses too much, spill the full payload instead:
+
+```go
+store := tool.NewMemorySpill() // or an application SpillStore
+agent, _ := golem.New[struct{}, string](client, decoder,
+    golem.WithTools[struct{}, string](readLog),
+    golem.WithToolOutputSpill[struct{}, string](store, 4_000),
+)
+```
+
+`WithToolOutputSpill(store, threshold)` stores text at or above the
+threshold and replaces it with a marker naming the handle, total size,
+and a short preview. The agent registers a `read_tool_result` tool so the
+model can page the payload back with `offset` and `limit`; reads are
+capped at `tool.MaxSpillReadLimit`. The read tool is exempt from the
+policy, so reading a spill cannot spill again. A store write failure
+falls back to `WithToolOutputLimit`.
+
+To condense rather than preserve, use an application summarizer:
+
+```go
+agent, _ := golem.New[struct{}, string](client, decoder,
+    golem.WithTools[struct{}, string](readLog),
+    golem.WithToolOutputSummary[struct{}, string](summarizeLog, 4_000),
+)
+```
+
+`WithToolOutputSummary(fn, threshold)` calls `fn` synchronously with the
+tool name and text; a nil or empty summary, or an error, falls back to
+`WithToolOutputLimit`. Spill and summary modes are mutually exclusive.
 
 ## Example
 
@@ -133,6 +161,13 @@ its head and tail:
 golem.WithToolOutputLimit[struct{}, string](400)
 ```
 
+`examples/tool-output-spill` runs offline, spills a 28 KB log, and reads
+it back through `read_tool_result`:
+
+```go
+golem.WithToolOutputSpill[struct{}, string](tool.NewMemorySpill(), 200)
+```
+
 `examples/tool-preparation` runs offline and hides a destructive tool from
 a non-admin caller:
 
@@ -154,6 +189,10 @@ agent, _ := golem.New[actor, string](client, decoder,
 - `golem.WithTools[Deps, Output](tools ...tool.Tool[Deps])`
 - `golem.PrepareToolsFunc[Deps]` and `golem.WithPrepareTools[Deps, Output](fn)` — filter or rewrite the advertised specs per request
 - `golem.WithToolOutputLimit[Deps, Output](maxBytes int)` — cap tool result text; `tool.Tool.MaxOutputBytes` overrides it
+- `golem.WithToolOutputSpill[Deps, Output](store tool.SpillStore, threshold int)` — store full text and register `read_tool_result`
+- `golem.WithToolOutputSummary[Deps, Output](fn golem.ToolOutputSummaryFunc, threshold int)` — condense oversized text
+- `golem.SpillReadToolName`, `golem.ToolOutputSummaryFunc`
+- `tool.SpillStore`, `tool.MemorySpill`, `tool.NewMemorySpill()` — the lossless store port and offline implementation
 - `golem.WithParallelToolCalls[Deps, Output]()` enables concurrent calls in
   one model response; `tool.Tool.Sequential` makes one tool a barrier.
 - `golem.WithToolChoice[Deps, Output](name)` advertises only the selected
@@ -184,6 +223,12 @@ agent, _ := golem.New[actor, string](client, decoder,
 - The output cap keeps only text; a tool that returns an image or
   document part keeps the full part even when its text is truncated. See
   `docs/adr/0050-tool-output-limits.md`.
+- Spill takes precedence over truncation when the store accepts the
+  write; the marker is not itself truncated. Summaries run synchronously
+  inside the tool loop, so a slow summarizer delays the run.
+- `read_tool_result` is reserved while spill is enabled. A registered
+  tool with that name fails `New`. See
+  `docs/adr/0054-tool-output-spill.md`.
 - Preparation runs after deferred-tool discovery, so removing the
   runner-owned `search_tools` spec disables discovery for that request;
   the deferred tools stay declared but unreachable.

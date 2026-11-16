@@ -133,6 +133,18 @@ type RetryConfig struct {
 	Backoff func(attempt int) time.Duration
 }
 
+// SpillConfig configures lossless spill of oversized tool results.
+type SpillConfig struct {
+	Threshold int
+	Put       func(ctx context.Context, text string) (handle string, err error)
+}
+
+// SummaryConfig configures summarization of oversized tool results.
+type SummaryConfig struct {
+	Threshold int
+	Summarize func(ctx context.Context, toolName, text string) (string, error)
+}
+
 // ToolConfig controls execution of declared tools. Zero values preserve the
 // original sequential behavior: no default timeout and no parallel calls.
 type ToolConfig struct {
@@ -159,6 +171,14 @@ type ToolConfig struct {
 	// disables the check; the call that would exceed the bound fails the
 	// run before it executes.
 	LoopThreshold int
+	// Spill, when non-nil, stores result text at or above its threshold
+	// and replaces it with a marker. Put failures fall back to
+	// OutputLimit.
+	Spill *SpillConfig
+	// Summary, when non-nil, condenses result text at or above its
+	// threshold. A summary error or empty result falls back to
+	// OutputLimit.
+	Summary *SummaryConfig
 	// Prepare, when non-nil, filters or rewrites the advertised tool
 	// specs before every model request. Returned specs must name tools
 	// that were already declared this turn — it cannot add callable
