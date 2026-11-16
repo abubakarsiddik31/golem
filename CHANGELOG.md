@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Per-run prompt context and memory snapshots.**
+  `golem.WithPromptContext` installs a deps-aware function that returns
+  user-role messages, inserted after history and before the new prompt
+  on every run (deferred resumes included), validated as user turns and
+  stamped with run identity. `memory.Snapshot` builds a bounded notebook
+  summary for that seam, framing stored text as data rather than
+  instructions and returning `ok=false` for an empty notebook. Without
+  it, memory stays tools-only (ADR 0049).
 - **Memory tools.** `package memory` gives an agent a persistent,
   namespaced Markdown notebook: `list_memory`, `read_memory`,
   `write_memory` (append, replace, or unique-fragment edit),

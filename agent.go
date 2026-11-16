@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abubakarsiddik31/golem/guard"
@@ -50,6 +51,7 @@ type Agent[Deps any, Output any] struct {
 	decoder            OutputDecoder[Output]
 	instructions       string
 	instructionsFunc   func(ctx context.Context, runCtx RunContext[Deps]) string
+	promptContext      PromptContextFunc[Deps]
 	prepareTools       PrepareToolsFunc[Deps]
 	historyProcessor   HistoryProcessor
 	tools              []tool.Tool[Deps]
@@ -92,6 +94,17 @@ func WithInstructions[Deps any, Output any](instructions string) Option[Deps, Ou
 // honor cancellation.
 type InstructionsFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps]) string
 
+// PromptContextFunc supplies user-role messages for one run, appended to
+// the request after history and before the new prompt. It is the seam
+// for per-run context an application derives from dependencies — a
+// memory snapshot, retrieved passages, a tenant-specific reminder — that
+// should read as user-provided data rather than system instructions.
+// Every returned message must have RoleUser, non-empty content or parts,
+// and no tool calls, thinking, or tool-result fields; the run stamps its
+// identity on the messages it adds. It runs once per run, before the
+// first model request; an error fails the run before any model call.
+type PromptContextFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps]) ([]model.Message, error)
+
 // WithInstructionsFunc configures instructions evaluated at the start of
 // every run, so guidance can depend on runtime state such as the run's
 // dependency value. The result joins static instructions — static text
@@ -125,6 +138,19 @@ type PrepareToolsFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps
 func WithPrepareTools[Deps any, Output any](fn PrepareToolsFunc[Deps]) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.prepareTools = fn
+	}
+}
+
+// WithPromptContext installs a function that supplies user-role messages
+// for every run, appended after history and before the new prompt. It is
+// evaluated once per run, after the history processor and before input
+// guards and the request are built; an error fails the run before any
+// model call. Messages must be well-formed user turns (see
+// PromptContextFunc); the run stamps them with its identity and keeps
+// them in the result evidence. A nil function is a no-op.
+func WithPromptContext[Deps any, Output any](fn PromptContextFunc[Deps]) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.promptContext = fn
 	}
 }
 
@@ -838,12 +864,16 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 		return Result[Output]{}, err
 	}
 	identity := resolveIdentity(history, runOpts)
+	contextMessages, err := a.resolvePromptContext(ctx, runCtx, identity)
+	if err != nil {
+		return Result[Output]{}, err
+	}
 	prompt, blocked := guard.ApplyInput(ctx, a.inputGuards, prompt)
 	if blocked != nil {
-		result, err := a.refusalRun(ctx, a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity, blocked)
+		result, err := a.refusalRun(ctx, a.resolveInstructions(ctx, runCtx), history, contextMessages, prompt, runOpts.promptParts, identity, blocked)
 		return a.finishRun(ctx, runOpts, identity, result, err)
 	}
-	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, prompt, runOpts.promptParts, identity)
+	messages := a.requestMessages(a.resolveInstructions(ctx, runCtx), history, contextMessages, prompt, runOpts.promptParts, identity)
 	result, err := a.runLoop(ctx, runCtx, messages, onDelta, identity, a.observerFor(runOpts))
 	return a.finishRun(ctx, runOpts, identity, result, err)
 }
@@ -854,8 +884,8 @@ func (a *Agent[Deps, Output]) execute(ctx context.Context, runCtx RunContext[Dep
 // refusal is the run's output. A decoder that cannot accept plain
 // refusal text fails the run at the decode stage — documented in
 // ADR 0042.
-func (a *Agent[Deps, Output]) refusalRun(ctx context.Context, instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity, blocked *guard.Blocked) (Result[Output], error) {
-	messages := a.requestMessages(instructions, history, prompt, promptParts, identity)
+func (a *Agent[Deps, Output]) refusalRun(ctx context.Context, instructions string, history, contextMessages []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity, blocked *guard.Blocked) (Result[Output], error) {
+	messages := a.requestMessages(instructions, history, contextMessages, prompt, promptParts, identity)
 	refusal := model.Message{Role: model.RoleAssistant, Content: "Your request was blocked: " + blocked.Reason + "."}
 	identity.Stamp(&refusal)
 	messages = append(messages, refusal)
@@ -1198,15 +1228,60 @@ func (a *Agent[Deps, Output]) resolveInstructions(ctx context.Context, runCtx Ru
 	}
 }
 
+// resolvePromptContext evaluates the run's prompt-context function once,
+// validates its user-role messages, and stamps them with the run's
+// identity. A nil function contributes nothing. Validation happens before
+// any model call, so an application-authored malformed turn fails the run
+// instead of reaching an adapter.
+func (a *Agent[Deps, Output]) resolvePromptContext(ctx context.Context, runCtx RunContext[Deps], identity runner.RunIdentity) ([]model.Message, error) {
+	if a.promptContext == nil {
+		return nil, nil
+	}
+	contextMessages, err := a.promptContext(ctx, runCtx)
+	if err != nil {
+		return nil, fmt.Errorf("golem: prompt context: %w", err)
+	}
+	out := make([]model.Message, len(contextMessages))
+	for i, message := range contextMessages {
+		if err := validatePromptContextMessage(message); err != nil {
+			return nil, fmt.Errorf("golem: prompt context message %d: %w", i, err)
+		}
+		identity.Stamp(&message)
+		out[i] = message
+	}
+	return out, nil
+}
+
+func validatePromptContextMessage(message model.Message) error {
+	if message.Role != model.RoleUser {
+		return fmt.Errorf("role %q is not %q; prompt context is user-role data", message.Role, model.RoleUser)
+	}
+	if len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.ToolName != "" || message.Failed {
+		return fmt.Errorf("prompt context cannot carry tool-call or tool-result fields")
+	}
+	if len(message.Thinking) > 0 {
+		return fmt.Errorf("prompt context cannot carry thinking blocks")
+	}
+	if strings.TrimSpace(message.Content) == "" && len(message.Parts) == 0 {
+		return fmt.Errorf("prompt context message has no content or parts")
+	}
+	for i, part := range message.Parts {
+		if err := part.Validate(); err != nil {
+			return fmt.Errorf("part %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 // requestMessages builds the ordered request conversation: the run's
 // resolved instructions when set, the repaired history with system messages
-// removed (instructions govern every run), and the new user prompt with
-// its attached parts. The user prompt is the run's first addition to the
-// conversation, so it carries the run's identity; history passes through
-// with the identity it already had.
-func (a *Agent[Deps, Output]) requestMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
+// removed (instructions govern every run), the run's prompt context, and
+// the new user prompt with its attached parts. The prompt context and the
+// prompt are the run's additions, so they carry the run's identity;
+// history passes through with the identity it already had.
+func (a *Agent[Deps, Output]) requestMessages(instructions string, history, contextMessages []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
 	repaired := runner.RepairHistory(history)
-	messages := make([]model.Message, 0, len(repaired)+2)
+	messages := make([]model.Message, 0, len(repaired)+len(contextMessages)+2)
 	if instructions != "" {
 		messages = append(messages, model.Message{
 			Role:    model.RoleSystem,
@@ -1219,6 +1294,7 @@ func (a *Agent[Deps, Output]) requestMessages(instructions string, history []mod
 		}
 		messages = append(messages, message)
 	}
+	messages = append(messages, contextMessages...)
 	promptMessage := model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts}
 	identity.Stamp(&promptMessage)
 	return append(messages, promptMessage)

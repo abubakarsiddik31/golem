@@ -86,12 +86,16 @@ func (a *Agent[Deps, Output]) RunWithDeferredResults(ctx context.Context, runCtx
 		return Result[Output]{}, err
 	}
 	identity := resolveIdentity(history, runOpts)
+	contextMessages, err := a.resolvePromptContext(ctx, runCtx, identity)
+	if err != nil {
+		return Result[Output]{}, err
+	}
 	for id, resolution := range resolutions {
 		identity.Stamp(&resolution)
 		resolutions[id] = resolution
 	}
 	messages := a.resumeMessages(a.resolveInstructions(ctx, runCtx),
-		mergeResolutions(history, resolutions), prompt, runOpts.promptParts, identity)
+		mergeResolutions(history, resolutions), contextMessages, prompt, runOpts.promptParts, identity)
 	result, err := a.runLoop(ctx, runCtx, messages, nil, identity, a.observerFor(runOpts))
 	return a.finishRun(ctx, runOpts, identity, result, err)
 }
@@ -365,9 +369,9 @@ func sortedKeys(resolutions map[string]model.Message) []string {
 // user message: the resolutions alone re-open the conversation. The
 // optional prompt, like the resolutions, is the resuming run's addition
 // to the conversation and carries its identity.
-func (a *Agent[Deps, Output]) resumeMessages(instructions string, history []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
+func (a *Agent[Deps, Output]) resumeMessages(instructions string, history, contextMessages []model.Message, prompt string, promptParts []model.Part, identity runner.RunIdentity) []model.Message {
 	repaired := runner.RepairHistory(history)
-	messages := make([]model.Message, 0, len(repaired)+2)
+	messages := make([]model.Message, 0, len(repaired)+len(contextMessages)+2)
 	if instructions != "" {
 		messages = append(messages, model.Message{
 			Role:    model.RoleSystem,
@@ -380,6 +384,7 @@ func (a *Agent[Deps, Output]) resumeMessages(instructions string, history []mode
 		}
 		messages = append(messages, message)
 	}
+	messages = append(messages, contextMessages...)
 	if prompt != "" || len(promptParts) > 0 {
 		promptMessage := model.Message{Role: model.RoleUser, Content: prompt, Parts: promptParts}
 		identity.Stamp(&promptMessage)

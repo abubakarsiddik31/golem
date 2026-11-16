@@ -47,3 +47,4 @@ example, and the README index agree.
 34. [Web search](web-search.md) — the `websearch` common tool: a backend port and a keyless DuckDuckGo default.
 35. [Content filter](content-filter.md) — provider safety stops: the default signal and the opt-in typed failure.
 36. [Memory](memory.md) — a persistent, namespaced Markdown notebook behind a store port.
+37. [Prompt context](prompt-context.md) — per-run user-role context from typed deps.
