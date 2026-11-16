@@ -28,18 +28,19 @@ example, and the README index agree.
 15. [Orchestration](orchestration.md) — multi-agent workflows in plain Go: fan-out, pipeline, router.
 16. [Tool timeouts](tool-timeouts.md) — context-aware deadlines for individual tool calls.
 17. [Conversations and history](conversations-and-history.md) — multi-turn runs, durable message JSON, and history trimming.
-18. [Sessions](sessions.md) — conversations that persist between runs: the `session.Store` port and `WithSession`.
-19. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
-20. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
-21. [Self-correction](self-correction.md) — rejection budgets for output and tools.
-22. [Retries](retries.md) — surviving transient model failures and falling back to another model.
-23. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
-24. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
-25. [Tracing](tracing.md) — spans for runs, provider attempts, and tool calls, through a port an OpenTelemetry SDK implements.
-26. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
-27. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
-28. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
-29. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
-30. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
-31. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
-32. [Planning](planning.md) — a model-owned task plan behind a small store port.
+18. [Compaction](compaction.md) — keeping long conversations bounded: trimming, token budgets, and summarization.
+19. [Sessions](sessions.md) — conversations that persist between runs: the `session.Store` port and `WithSession`.
+20. [Multimodal input](multimodal-input.md) — images in prompts, per-provider mapping.
+21. [Structured output](structured-output.md) — declaring the answer shape and decoding it.
+22. [Self-correction](self-correction.md) — rejection budgets for output and tools.
+23. [Retries](retries.md) — surviving transient model failures and falling back to another model.
+24. [Streaming](streaming.md) — fragments as they arrive, same canonical result.
+25. [Run events](run-events.md) — observing attempts, tool calls, and corrections as they happen.
+26. [Tracing](tracing.md) — spans for runs, provider attempts, and tool calls, through a port an OpenTelemetry SDK implements.
+27. [Thinking](thinking.md) — reasoning models: requesting thinking, keeping signatures, replay.
+28. [Usage limits](usage-limits.md) — bounding tokens, requests, and tool calls.
+29. [Cost](cost.md) — user-supplied pricing: Result.Cost and cost bounds.
+30. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
+31. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
+32. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
+33. [Planning](planning.md) — a model-owned task plan behind a small store port.

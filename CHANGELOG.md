@@ -12,6 +12,14 @@
   offline use and `Config.Key` scoping plans per tenant or conversation.
   Bad model input returns `&tool.Failed`; store failures abort the run
   (ADR 0044).
+- **Summarizing history compaction.** `golem.SummarizeHistory(summarize,
+  keepRecent)` replaces turns older than the newest `keepRecent` with one
+  user-role summary produced by an application-supplied `golem.SummaryFunc`,
+  so a long conversation keeps its context instead of dropping it. The cut
+  follows `TrimHistory`'s turn-boundary rule, summarizing a tool call and
+  its result together and omitting stale system messages from the prefix.
+  A nil summarizer, negative window, summarizer error, or empty summary
+  fails the run before any model request (ADR 0043).
 - **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
   gains `ReplayReasoning`: each assistant message's captured reasoning is
   sent back on later requests, as both `reasoning_content` and
