@@ -22,6 +22,12 @@ import (
 // StageLoop.
 var ErrLoopLimit = errors.New("runner: model turn limit exceeded")
 
+// ErrContentFilter reports that the provider's safety filter stopped a
+// response and the caller asked the loop to treat that as an error. The
+// filtered response is returned on Outcome.Response and Outcome.Messages
+// so the caller can classify it with evidence.
+var ErrContentFilter = errors.New("runner: model response stopped by content filter")
+
 // ToolError reports a tool execution failure or a model request for a tool
 // that was not declared. The core maps it to StageTool and callers can
 // reach the cause with errors.Is and errors.As. A tool rejection whose
@@ -136,6 +142,11 @@ type ToolConfig struct {
 	// tools — and must keep the configured output tool when one is
 	// active. A non-nil error ends the run before the request is sent.
 	Prepare func(ctx context.Context, specs []model.ToolSpec) ([]model.ToolSpec, error)
+	// RejectContentFilter stops the run when a model response carries
+	// FinishContentFilter, before tool calls in that response execute.
+	// The loop returns ErrContentFilter with the response preserved on
+	// the outcome.
+	RejectContentFilter bool
 }
 
 // EventKind identifies one observable point of the execution loop.
@@ -494,6 +505,12 @@ func execute[Deps any](
 		usage.CacheReadTokens += response.Usage.CacheReadTokens
 		usage.CacheWriteTokens += response.Usage.CacheWriteTokens
 		usage.ReasoningTokens += response.Usage.ReasoningTokens
+
+		if toolConfig.RejectContentFilter && response.FinishReason == model.FinishContentFilter {
+			return Outcome{Response: response, Messages: messages, Usage: usage,
+				FinishReason: response.FinishReason,
+				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions}, ErrContentFilter
+		}
 
 		if len(response.Message.ToolCalls) == 0 {
 			return Outcome{Response: response, Messages: messages, Usage: usage,

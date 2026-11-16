@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Opt-in content-filter failure.** `golem.WithContentFilterError()`
+  makes any response whose provider finish reason is
+  `FinishContentFilter` fail at the new `StageContentFilter` stage with
+  a typed `*golem.ContentFilterError`, even when refusal or partial text
+  is present. The filtered message stays inspectable on the error and on
+  `RunError.Partial`, and a filtered response never executes its tool
+  calls. The default remains v1 behavior: the response is ordinary
+  output and `Result.FinishReason` reports the cause (ADR 0047).
 - **Web search tool.** `package websearch` adds `web_search`, returning
   ranked title/URL/snippet results. The zero `Config` uses DuckDuckGo's
   HTML endpoint with no API key; `Config.Backend` swaps in any
