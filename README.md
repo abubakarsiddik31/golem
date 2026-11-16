@@ -383,6 +383,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
 | [`memory`](examples/memory/main.go) | A persistent namespaced notebook and opt-in snapshot recall, offline |
+| [`memory-files`](examples/memory-files/main.go) | File-backed memory with compare-and-swap writes, offline |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |

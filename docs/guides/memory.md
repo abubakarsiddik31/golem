@@ -35,6 +35,17 @@ without the model selecting a namespace in a tool call. A nil
 `Namespace` uses one empty namespace. `memory.Memory` is the in-process
 implementation; durable stores stay application-side behind the port.
 
+`memory.FileStore` is the file-backed implementation: one Markdown tree
+per namespace under a root directory, atomic writes, and a SHA-256
+content version. It also implements `memory.VersionedStore`, so the
+tools compare the version they read against the current file before a
+write or delete; a concurrent edit becomes a correctable
+`tool.Failed` ("changed concurrently") rather than a lost update. An
+empty expected version is create-only. `FileStore` skips symlinks in
+listings and rejects reads or writes that resolve outside its root. Its
+lock is per instance: concurrent processes sharing one directory still
+need application-level serialization.
+
 Paths and namespaces are validated before they reach the store:
 relative, `/`-separated segments of letters, digits, `.`, `_`, and `-`,
 with no `.` or `..` segments. The default file bound is 64 KiB, search
@@ -76,7 +87,8 @@ the run or proceed without memory.
 ## Example
 
 `examples/memory` runs offline against a scripted model and the
-in-process store:
+in-process store. `examples/memory-files` uses the file store and shows a
+stale edit being rejected:
 
 ```go
 tools, err := memory.Tools(memory.Config[user]{
@@ -94,9 +106,11 @@ agent, err := golem.New[user, string](client, decoder,
 - `memory.Tools[Deps](memory.Config[Deps]) ([]tool.Tool[Deps], error)`
 - `memory.Config[Deps]{Store, Namespace func(Deps) string, MaxFileBytes, MaxResults, MaxResultChars, MaxSearchFiles, MaxSnapshotChars, MaxSnapshotLines}`
 - `memory.Store` — `List`, `Read`, `Write`, `Delete`
+- `memory.VersionedStore` — optional `WriteVersioned`/`DeleteVersioned` compare-and-swap
 - `memory.Memory`, `memory.NewMemory()`
-- `memory.File{Path, Content}`
-- `memory.ErrNotFound`
+- `memory.FileStore`, `memory.NewFileStore(root)`
+- `memory.File{Path, Content, Version}`
+- `memory.ErrNotFound`, `memory.ErrVersionConflict`
 - `memory.Snapshot[Deps](ctx, cfg, deps) (model.Message, bool, error)`
 - `memory.MainFile`, `memory.Instructions`
 - `golem.WithPromptContext[Deps, Output]` — the per-run user-role seam
@@ -116,10 +130,16 @@ agent, err := golem.New[user, string](client, decoder,
 - Namespaces select records; they are not authorization. Authenticate
   the caller in application dependencies and scope the store's
   credentials.
-- Writes are read-modify-write through the toolset's lock, but two
-  toolsets sharing one store can race. There is no compare-and-swap or
-  idempotency key in v1, so a resumed write may apply twice; scope one
-  notebook writer per namespace or serialize in the store.
+- Writes are read-modify-write through the toolset's lock. A
+  `VersionedStore` adds compare-and-swap, but two toolsets sharing a
+  non-versioned store can still race. There is no idempotency key in the
+  tool contract, so a resumed write may apply twice; scope one notebook
+  writer per namespace or serialize in the store.
+- `FileStore` locks per instance, not across processes. Use one instance
+  per root, or a database store for concurrent writers.
+- `FileStore` does not store write metadata; a sidecar could not change
+  atomically with the Markdown. Metadata and artifact scanning remain
+  backend or application concerns.
 - `write_memory` refuses to append to or edit a file already over the
   file bound, because it would build from a partial view. Replace or
   delete and rewrite it instead.

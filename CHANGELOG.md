@@ -4,6 +4,12 @@
 
 ### Added
 
+- **File-backed memory and compare-and-swap.** `memory.FileStore` keeps
+  each namespace as a Markdown tree under a root, writes atomically,
+  skips escaping symlinks, and versions content with SHA-256.
+  `memory.VersionedStore` lets the memory tools reject stale writes and
+  deletes as correctable failures instead of losing concurrent edits;
+  `Memory` implements it too (ADR 0057).
 - **Loop detection breadth.** `golem.WithLoopPolicy` adds repeated-result,
   alternating-call, and repeated-text checks with a configurable window,
   and a `LoopNudge` action that feeds a course-correction back to the
