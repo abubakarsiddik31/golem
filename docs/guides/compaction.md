@@ -50,7 +50,7 @@ before any model request.
 
 ## Example
 
-[`examples/compaction`](../../examples/compaction/main.go) runs offline
+`examples/compaction` runs offline
 against a scripted model and a deterministic summarizer, then prints
 the request the agent sent:
 
@@ -85,4 +85,4 @@ result, err := agent.RunWithHistory(ctx, golem.RunContext[struct{}]{}, history, 
 - `TrimHistory` and `SummarizeHistory` fail the run when no message can
   open a request; `BudgetHistory` fails when the newest openable turn
   alone exceeds the budget.
-- The deciding design record is [ADR 0043](../adr/0043-history-compaction.md).
+- The deciding design record is `docs/adr/0043-history-compaction.md`.
