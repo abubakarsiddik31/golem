@@ -71,6 +71,12 @@ type Config struct {
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+	// Citations enables document citations: every document block sent to
+	// the provider asks for citations, and the provider's citation
+	// metadata joins the assistant message on model.Message.Citations.
+	// It is off by default because it changes request shape and only
+	// applies to providers and models that support document citations.
+	Citations bool
 }
 
 // CacheControl configures automatic prompt caching. Cache entries
@@ -200,7 +206,7 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 // endpoint. stream selects streaming mode. A request carrying an output
 // schema maps to the json_schema output format.
 func (c *Client) newMessagesHTTPRequest(ctx context.Context, request model.Request, stream bool) (*http.Request, error) {
-	system, turns, err := toWireTurns(request.Messages)
+	system, turns, err := toWireTurns(request.Messages, c.cfg.Citations)
 	if err != nil {
 		return nil, err
 	}

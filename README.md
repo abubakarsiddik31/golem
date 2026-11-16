@@ -369,6 +369,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | --- | --- |
 | [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
 | [`web-search`](examples/web-search/main.go) | The `web_search` tool against a fake backend, offline |
+| [`citations`](examples/citations/main.go) | Anthropic document citations on the final message |
 | [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`tool-preparation`](examples/tool-preparation/main.go) | Per-step tool filtering from typed deps, offline |

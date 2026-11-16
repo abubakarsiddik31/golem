@@ -126,6 +126,8 @@ type streamEventDelta struct {
 	Text string `json:"text,omitempty"`
 	// StopReason terminates the stream on the message_delta event.
 	StopReason string `json:"stop_reason,omitempty"`
+	// Citation carries the provider citation on a citations_delta event.
+	Citation *wireCitation `json:"citation"`
 	// Thinking is a fragment of the block's reasoning text on
 	// thinking_delta events.
 	Thinking string `json:"thinking,omitempty"`
@@ -156,6 +158,7 @@ type streamAssembler struct {
 	thinkingOrdinals map[int]int
 	thinking         []model.ThinkingBlock
 	thinkingText     []strings.Builder
+	citations        []model.Citation
 	usage            model.Usage
 }
 
@@ -177,6 +180,13 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 	case "content_block_start":
 		if event.ContentBlock == nil {
 			return false, nil
+		}
+		if len(event.ContentBlock.Citations) > 0 {
+			citations, err := parseCitations(event.ContentBlock.Citations)
+			if err != nil {
+				return false, err
+			}
+			a.citations = append(a.citations, citations...)
 		}
 		switch event.ContentBlock.Type {
 		case "tool_use":
@@ -225,6 +235,10 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 				Text:  event.Delta.Thinking,
 			}}}); err != nil {
 				return false, err
+			}
+		case "citations_delta":
+			if event.Delta.Citation != nil {
+				a.citations = append(a.citations, citationFromWire(*event.Delta.Citation))
 			}
 		case "signature_delta":
 			ordinal, ok := a.thinkingOrdinals[event.Index]
@@ -336,6 +350,7 @@ func (a *streamAssembler) response() (model.Response, error) {
 			Content:   a.content.String(),
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: a.citations,
 		},
 		Usage:        a.usage,
 		FinishReason: a.finish,
