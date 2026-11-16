@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 — 2026-11-16
+
+The first additive post-v1 minor. No existing exported API changed
+incompatibly: `apidiff` passes against v1.0.0, and every addition below
+is opt-in. The release adds model-agnostic history compaction, a
+planning toolset, per-step tool preparation, keyless web search,
+opt-in content-filter failures, a namespaced memory notebook with
+opt-in snapshot recall, and a deps-aware per-run prompt-context seam.
+It also carries the post-v1 hardening series: guardrails, shell command
+policy, server-held history mode, telemetry content modes, the threat
+model, and OpenAI reasoning replay. Documentation is complete at 38
+guides, every example runs offline, and statement coverage is 81.5%.
 
 ### Added
 

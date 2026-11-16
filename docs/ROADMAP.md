@@ -7,7 +7,7 @@ and contract tests, per the contributor rules in
 
 ## Where we are
 
-v1.0.0 is released: the compatibility promise is ADR 0041 — SemVer,
+v1.1.0 is released: the compatibility promise is ADR 0041 — SemVer,
 additive-only below v2 — and
 every pre-freeze and parity item has landed. In-tool run cancellation
 cleanly stops a
@@ -150,19 +150,35 @@ The series is closed and the freeze is written: ADR 0041 records the
 compatibility promise — SemVer, additive-only below v2, deprecations
 documented and removed only at v2, `apidiff` between the last v1 tag
 and every release — and the v1 criteria are met: documentation
-complete (31 guides), no known provider gaps, MCP shipped, and the
-public surface reviewed through the parity series itself. The next
-release is v1.0.0.
+complete (38 guides), no known provider gaps, MCP shipped, and the
+public surface reviewed through the parity series itself. v1.0.0
+shipped on 2026-10-25; v1.1.0 is the first additive minor.
 
-## After v1 — additive minors
+## Shipped in v1.1.0
+
+- **Summarizing compaction.** `golem.SummarizeHistory` (ADR 0043).
+- **Planning tools.** `package planning` (ADR 0044).
+- **Per-step tool preparation.** `golem.WithPrepareTools` (ADR 0045).
+- **Web search.** `package websearch` with a backend port and a keyless
+  DuckDuckGo default (ADR 0046).
+- **Content-filter failure.** Opt-in typed `*golem.ContentFilterError`
+  (ADR 0047).
+- **Memory.** `package memory`, a namespaced notebook behind
+  `memory.Store` (ADR 0048).
+- **Prompt context.** `golem.WithPromptContext` plus `memory.Snapshot`
+  for opt-in recall (ADR 0049).
+- **Hardening.** Guardrails, shell command policy, server-held history
+  mode, telemetry content modes, the threat model, and OpenAI reasoning
+  replay.
+
+## After v1.1 — additive minors
 
 - **Stream retry beyond the first fragment**, only if usage demands a
   replay-safe design; today streamed turns are single-attempt by
   design.
 - **Toolset grouping**, only if MCP usage demands a grouping concept.
-- **Per-step tool preparation** (filter or rewrite the tool list per
-  request) and **native provider-executed tools** (server-side search,
-  code execution), demand-gated.
+- **Native provider-executed tools** (server-side search, code
+  execution), demand-gated.
 - **MCP server mode**, exposing a Golem agent as an MCP server.
 - **Agent2Agent (A2A) protocol**, an agent-serving surface like MCP
   server mode and deferred for the same reason: no requester yet, and
