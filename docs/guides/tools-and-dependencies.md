@@ -62,6 +62,23 @@ cannot be force-stopped once running — the group it runs in finishes,
 and only work that had not started is prevented. A delegated sub-agent
 that cancels cancels the delegating run the same way.
 
+### Per-step tool preparation
+
+`WithPrepareTools` filters or rewrites the tool specs advertised to the
+model before every request, including correction rounds. It is the
+per-step counterpart to `WithTools`: registration stays static, while
+advertisement can follow the caller's role, the step reached, or state
+the tool calls left behind.
+
+Preparation sees the specs *after* deferred-tool discovery has revealed
+tools from history, so it can hide a revealed tool on a later step
+without unregistering it. It may drop specs and rewrite a spec's
+description or schema, but it cannot add a callable tool: every returned
+name must already be advertised this turn, duplicate names are rejected,
+and every schema must be valid JSON. When tool-mode output is active the
+output tool must remain. A prepare error, or an invalid result, fails
+the run before the request is sent.
+
 ## Example
 
 Run `examples/tools`:
@@ -87,10 +104,26 @@ agent, _ := golem.New[roster, string](client, decoder,
 result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "Anne"}}, "who wins?")
 ```
 
+`examples/tool-preparation` runs offline and hides a destructive tool from
+a non-admin caller:
+
+```go
+agent, _ := golem.New[actor, string](client, decoder,
+    golem.WithTools[actor, string](readFile, deleteFile),
+    golem.WithPrepareTools[actor, string](func(_ context.Context, runCtx golem.RunContext[actor], specs []model.ToolSpec) ([]model.ToolSpec, error) {
+        if runCtx.Deps.Role == "admin" {
+            return specs, nil
+        }
+        return keep(specs, "read_file"), nil
+    }),
+)
+```
+
 ## API surface
 
 - `tool.New(tool.Tool[Deps]) (Tool[Deps], error)` and `tool.MustNew` — reject missing names, invalid schema JSON, nil Exec, and duplicate names at registration.
 - `golem.WithTools[Deps, Output](tools ...tool.Tool[Deps])`
+- `golem.PrepareToolsFunc[Deps]` and `golem.WithPrepareTools[Deps, Output](fn)` — filter or rewrite the advertised specs per request
 - `golem.WithParallelToolCalls[Deps, Output]()` enables concurrent calls in
   one model response; `tool.Tool.Sequential` makes one tool a barrier.
 - `golem.WithToolChoice[Deps, Output](name)` advertises only the selected
@@ -114,5 +147,12 @@ result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "A
   `*tool.Canceled` (deliberate stop; ends the run at the `canceled`
   stage).
 - Tool metadata must be inspectable without executing the tool.
+- Prepared specs cannot add a callable tool, duplicate a name, or drop the
+  active output tool; the run fails before the request instead of sending
+  a request the loop cannot dispatch. See
+  `docs/adr/0045-per-step-tool-preparation.md`.
+- Preparation runs after deferred-tool discovery, so removing the
+  runner-owned `search_tools` spec disables discovery for that request;
+  the deferred tools stay declared but unreachable.
 - Any tool that can return `*tool.Canceled` holds the authority to end
   the run; read a tool returning it as part of that tool's contract.

@@ -50,6 +50,7 @@ type Agent[Deps any, Output any] struct {
 	decoder            OutputDecoder[Output]
 	instructions       string
 	instructionsFunc   func(ctx context.Context, runCtx RunContext[Deps]) string
+	prepareTools       PrepareToolsFunc[Deps]
 	historyProcessor   HistoryProcessor
 	tools              []tool.Tool[Deps]
 	deferredTools      []tool.Tool[Deps]
@@ -101,6 +102,29 @@ type InstructionsFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps
 func WithInstructionsFunc[Deps any, Output any](fn InstructionsFunc[Deps]) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.instructionsFunc = fn
+	}
+}
+
+// PrepareToolsFunc filters or rewrites the tool specs advertised on one
+// model request. It sees the specs after deferred-tool discovery has
+// revealed tools from history, so it can hide a tool on a later step
+// without unregistering it. The returned specs must name tools that were
+// already advertised; preparation cannot add a callable tool, and it
+// must keep the configured output tool. The dependencies and run context
+// let it decide from application state, such as the caller's role.
+type PrepareToolsFunc[Deps any] func(ctx context.Context, runCtx RunContext[Deps], specs []model.ToolSpec) ([]model.ToolSpec, error)
+
+// WithPrepareTools installs a function that filters or rewrites the
+// tools advertised to the model before every request, including
+// correction rounds. Returned specs may drop tools or change their
+// description and schema; a spec naming an undeclared tool, a duplicate
+// name, a malformed schema, or a missing output tool fails the run before
+// the request is sent. A nil function is a no-op. This is the per-step
+// counterpart to WithTools: registration stays static, advertisement can
+// change.
+func WithPrepareTools[Deps any, Output any](fn PrepareToolsFunc[Deps]) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.prepareTools = fn
 	}
 }
 
@@ -960,6 +984,12 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		}
 		search = &runner.SearchConfig{Deferred: names, Limit: a.toolSearchLimit}
 	}
+	var prepare func(ctx context.Context, specs []model.ToolSpec) ([]model.ToolSpec, error)
+	if a.prepareTools != nil {
+		prepare = func(ctx context.Context, specs []model.ToolSpec) ([]model.ToolSpec, error) {
+			return a.prepareTools(ctx, runCtx, specs)
+		}
+	}
 	toolConfig := runner.ToolConfig{
 		DefaultRetries:      a.toolRetries,
 		DefaultTimeout:      a.toolTimeout,
@@ -967,6 +997,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		Search:              search,
 		ToolGuards:          a.toolGuards,
 		ResultGuards:        a.resultGuards,
+		Prepare:             prepare,
 		RejectContentFilter: a.contentFilterError,
 	}
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}

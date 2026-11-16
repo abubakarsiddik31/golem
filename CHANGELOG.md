@@ -12,6 +12,36 @@
   `RunError.Partial`, and a filtered response never executes its tool
   calls. The default remains v1 behavior: the response is ordinary
   output and `Result.FinishReason` reports the cause (ADR 0047).
+- **Web search tool.** `package websearch` adds `web_search`, returning
+  ranked title/URL/snippet results. The zero `Config` uses DuckDuckGo's
+  HTML endpoint with no API key; `Config.Backend` swaps in any
+  application implementation behind the one-method `websearch.Backend`
+  port. Input validation, result limits, context cancellation, and
+  response bounds are enforced by the tool; fixture tests keep the
+  parser and transport offline (ADR 0046, closes #56).
+- **Per-step tool preparation.** `golem.WithPrepareTools` installs a
+  `golem.PrepareToolsFunc[Deps]` that filters or rewrites the tool specs
+  advertised before every model request, after deferred-tool discovery
+  and before the pre-send usage check. Prepared specs must name tools
+  already advertised this turn, keep unique names, carry valid schemas,
+  and preserve an active output tool; violations fail the run before the
+  request is sent (ADR 0045).
+- **Planning tools.** `planning.Tools` gives an agent a task plan it
+  owns: `write_plan`, `read_plan`, `add_task`, `update_task_status`, and
+  `remove_task`. Every mutation returns the full checklist on the
+  tool-result channel, so editing the plan stays cache-safe. State lives
+  behind the two-method `planning.Store` port, with `planning.Memory` for
+  offline use and `Config.Key` scoping plans per tenant or conversation.
+  Bad model input returns `&tool.Failed`; store failures abort the run
+  (ADR 0044).
+- **Summarizing history compaction.** `golem.SummarizeHistory(summarize,
+  keepRecent)` replaces turns older than the newest `keepRecent` with one
+  user-role summary produced by an application-supplied `golem.SummaryFunc`,
+  so a long conversation keeps its context instead of dropping it. The cut
+  follows `TrimHistory`'s turn-boundary rule, summarizing a tool call and
+  its result together and omitting stale system messages from the prefix.
+  A nil summarizer, negative window, summarizer error, or empty summary
+  fails the run before any model request (ADR 0043).
 - **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
   gains `ReplayReasoning`: each assistant message's captured reasoning is
   sent back on later requests, as both `reasoning_content` and
