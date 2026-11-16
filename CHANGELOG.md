@@ -15,6 +15,12 @@ guides, every example runs offline, and statement coverage is 81.5%.
 
 ### Added
 
+- **Loop detection.** `golem.WithLoopDetection` bounds how many times one
+  tool call — same name and canonically equal arguments — may be
+  requested in a run. The call that would exceed the bound fails before
+  it executes at the new `StageLoopDetected` stage with a typed
+  `*golem.LoopDetectedError`, preserving partial evidence. Zero disables
+  the check (ADR 0051).
 - **Tool output limits.** `golem.WithToolOutputLimit` caps tool result
   text once, when the tool returns, keeping the head and tail plus a
   marker and persisting the reduced form. `tool.Tool.MaxOutputBytes`

@@ -64,6 +64,7 @@ type Agent[Deps any, Output any] struct {
 	toolRetries        int
 	toolTimeout        time.Duration
 	toolOutputLimit    int
+	loopThreshold      int
 	parallelToolCalls  bool
 	toolChoice         string
 	contentFilterError bool
@@ -296,6 +297,19 @@ func WithToolTimeout[Deps any, Output any](timeout time.Duration) Option[Deps, O
 func WithToolOutputLimit[Deps any, Output any](maxBytes int) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.toolOutputLimit = maxBytes
+	}
+}
+
+// WithLoopDetection bounds how many times one tool call — same tool and
+// canonically equal arguments — may be requested in a run. When a call
+// would exceed the bound, the run fails before that call executes with
+// RunError{Stage: StageLoopDetected} wrapping *LoopDetectedError, so
+// repeated polling cannot duplicate side effects. The count spans the
+// whole run, not a sliding window; different arguments are different
+// calls. Zero disables the check. Negative values fail New.
+func WithLoopDetection[Deps any, Output any](maxRepeats int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.loopThreshold = maxRepeats
 	}
 }
 
@@ -662,6 +676,9 @@ func New[Deps any, Output any](
 	}
 	if agent.toolOutputLimit < 0 {
 		return nil, fmt.Errorf("golem: tool output limit must not be negative, got %d", agent.toolOutputLimit)
+	}
+	if agent.loopThreshold < 0 {
+		return nil, fmt.Errorf("golem: loop threshold must not be negative, got %d", agent.loopThreshold)
 	}
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
@@ -1046,6 +1063,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		ToolGuards:          a.toolGuards,
 		ResultGuards:        a.resultGuards,
 		OutputLimit:         a.toolOutputLimit,
+		LoopThreshold:       a.loopThreshold,
 		Prepare:             prepare,
 		RejectContentFilter: a.contentFilterError,
 	}
@@ -1084,6 +1102,15 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			if errors.Is(err, runner.ErrContentFilter) {
 				return Result[Output]{}, &RunError{Stage: StageContentFilter,
 					Err: &ContentFilterError{Message: outcome.Response.Message}, Partial: partial}
+			}
+			var loopErr *runner.LoopError
+			if errors.As(err, &loopErr) {
+				return Result[Output]{}, &RunError{Stage: StageLoopDetected, Err: &LoopDetectedError{
+					ToolName:  loopErr.ToolName,
+					Args:      append(json.RawMessage(nil), loopErr.Args...),
+					Count:     loopErr.Count,
+					Threshold: loopErr.Threshold,
+				}, Partial: partial}
 			}
 			return Result[Output]{}, classifyRunError(err, partial)
 		}

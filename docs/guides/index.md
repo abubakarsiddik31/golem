@@ -48,3 +48,4 @@ example, and the README index agree.
 35. [Content filter](content-filter.md) — provider safety stops: the default signal and the opt-in typed failure.
 36. [Memory](memory.md) — a persistent, namespaced Markdown notebook behind a store port.
 37. [Prompt context](prompt-context.md) — per-run user-role context from typed deps.
+38. [Loop detection](loop-detection.md) — bounding repeated identical tool calls in one run.

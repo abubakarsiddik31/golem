@@ -347,6 +347,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
 | [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
 | [Content filter](docs/guides/content-filter.md) | Opt-in typed failure for provider safety stops |
+| [Loop detection](docs/guides/loop-detection.md) | Bounding repeated identical tool calls in one run |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
 | [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
 | [Tracing](docs/guides/tracing.md) | Spans through the `telemetry` port: an OpenTelemetry adapter without an SDK dependency |
@@ -372,6 +373,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`tool-preparation`](examples/tool-preparation/main.go) | Per-step tool filtering from typed deps, offline |
 | [`tool-output-limit`](examples/tool-output-limit/main.go) | Bounding an oversized tool result before it enters history, offline |
+| [`loop-detection`](examples/loop-detection/main.go) | Stopping a repeated identical tool call before it executes, offline |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`content-filter`](examples/content-filter/main.go) | Provider safety stops: default output vs typed failure, offline |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
