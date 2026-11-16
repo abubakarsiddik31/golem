@@ -16,6 +16,8 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,14 +77,23 @@ const (
 // model can correct.
 var ErrNotFound = errors.New("memory: file not found")
 
-// File is one notebook file.
+// File is one notebook file. Version is the store's opaque token for
+// compare-and-swap writes; it is empty for stores that do not version
+// content.
 type File struct {
 	// Path is the file's scope-relative path, such as MEMORY.md or
 	// notes/auth.md.
 	Path string
 	// Content is the file's full text.
 	Content string
+	// Version identifies the current content for a VersionedStore.
+	Version string
 }
+
+// ErrVersionConflict reports a compare-and-swap write or delete based on
+// content that changed before the mutation. Tools turn it into a
+// correctable failure, so the model can read the file again.
+var ErrVersionConflict = errors.New("memory: file changed concurrently")
 
 // Store persists notebook files per namespace. Paths and namespaces are
 // validated by the package before they reach a Store; an implementation
@@ -94,6 +105,16 @@ type Store interface {
 	Read(ctx context.Context, namespace, path string) (File, error)
 	Write(ctx context.Context, namespace, path, content string) error
 	Delete(ctx context.Context, namespace, path string) error
+}
+
+// VersionedStore is an optional Store capability: writes and deletes
+// validate the version a caller read, rejecting a stale mutation instead
+// of overwriting a concurrent edit. An empty expectedVersion means the
+// caller expects the file not to exist (create-only).
+type VersionedStore interface {
+	Store
+	WriteVersioned(ctx context.Context, namespace, path, content, expectedVersion string) error
+	DeleteVersioned(ctx context.Context, namespace, path, expectedVersion string) error
 }
 
 // Memory is an in-process Store. It is safe for concurrent use. Contents
@@ -133,7 +154,7 @@ func (m *Memory) Read(_ context.Context, namespace, path string) (File, error) {
 	if !ok {
 		return File{}, ErrNotFound
 	}
-	return File{Path: path, Content: content}, nil
+	return File{Path: path, Content: content, Version: contentVersion(content)}, nil
 }
 
 // Write stores or replaces one file.
@@ -156,6 +177,43 @@ func (m *Memory) Delete(_ context.Context, namespace, path string) error {
 	defer m.mu.Unlock()
 	if _, ok := m.files[namespace][path]; !ok {
 		return ErrNotFound
+	}
+	delete(m.files[namespace], path)
+	if len(m.files[namespace]) == 0 {
+		delete(m.files, namespace)
+	}
+	return nil
+}
+
+// WriteVersioned stores content when the current version matches.
+func (m *Memory) WriteVersioned(_ context.Context, namespace, path, content, expectedVersion string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.files[namespace][path]
+	if expectedVersion == "" {
+		if ok {
+			return ErrVersionConflict
+		}
+	} else if !ok || contentVersion(current) != expectedVersion {
+		return ErrVersionConflict
+	}
+	if m.files == nil {
+		m.files = make(map[string]map[string]string)
+	}
+	if m.files[namespace] == nil {
+		m.files[namespace] = make(map[string]string)
+	}
+	m.files[namespace][path] = content
+	return nil
+}
+
+// DeleteVersioned removes a file when the current version matches.
+func (m *Memory) DeleteVersioned(_ context.Context, namespace, path, expectedVersion string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.files[namespace][path]
+	if !ok || contentVersion(current) != expectedVersion {
+		return ErrVersionConflict
 	}
 	delete(m.files[namespace], path)
 	if len(m.files[namespace]) == 0 {
@@ -410,6 +468,24 @@ func (t *toolset[Deps]) namespace(deps Deps) (string, error) {
 	return namespaceFor(t.cfg, deps)
 }
 
+func (t *toolset[Deps]) writeContent(ctx context.Context, namespace, path, content string, existing File, exists bool) error {
+	if store, ok := t.cfg.Store.(VersionedStore); ok {
+		expected := ""
+		if exists {
+			expected = existing.Version
+		}
+		return store.WriteVersioned(ctx, namespace, path, content, expected)
+	}
+	return t.cfg.Store.Write(ctx, namespace, path, content)
+}
+
+func (t *toolset[Deps]) deleteContent(ctx context.Context, namespace, path, version string) error {
+	if store, ok := t.cfg.Store.(VersionedStore); ok {
+		return store.DeleteVersioned(ctx, namespace, path, version)
+	}
+	return t.cfg.Store.Delete(ctx, namespace, path)
+}
+
 func (t *toolset[Deps]) list(ctx context.Context, deps Deps, _ json.RawMessage) (tool.Result, error) {
 	namespace, err := t.namespace(deps)
 	if err != nil {
@@ -520,7 +596,10 @@ func (t *toolset[Deps]) write(ctx context.Context, deps Deps, args json.RawMessa
 	if len(content) > t.cfg.MaxFileBytes {
 		return fail(fmt.Errorf("%s would be %d bytes, over the %d-byte bound", input.Path, len(content), t.cfg.MaxFileBytes))
 	}
-	if err := t.cfg.Store.Write(ctx, namespace, input.Path, content); err != nil {
+	if err := t.writeContent(ctx, namespace, input.Path, content, existing, exists); err != nil {
+		if errors.Is(err, ErrVersionConflict) {
+			return fail(fmt.Errorf("%s changed concurrently; read it again and retry", input.Path))
+		}
 		return tool.Result{}, fmt.Errorf("memory: write %s: %w", input.Path, err)
 	}
 	return tool.Text(fmt.Sprintf("Wrote %s (%d bytes).", input.Path, len(content))), nil
@@ -612,7 +691,16 @@ func (t *toolset[Deps]) delete(ctx context.Context, deps Deps, args json.RawMess
 	if err != nil {
 		return tool.Result{}, err
 	}
-	if err := t.cfg.Store.Delete(ctx, namespace, input.Path); errors.Is(err, ErrNotFound) {
+	existing, err := t.cfg.Store.Read(ctx, namespace, input.Path)
+	if errors.Is(err, ErrNotFound) {
+		return fail(err)
+	}
+	if err != nil {
+		return tool.Result{}, fmt.Errorf("memory: read %s: %w", input.Path, err)
+	}
+	if err := t.deleteContent(ctx, namespace, input.Path, existing.Version); errors.Is(err, ErrVersionConflict) {
+		return fail(fmt.Errorf("%s changed concurrently; read it again and retry", input.Path))
+	} else if errors.Is(err, ErrNotFound) {
 		return fail(err)
 	} else if err != nil {
 		return tool.Result{}, fmt.Errorf("memory: delete %s: %w", input.Path, err)
@@ -721,6 +809,11 @@ func searchTerms(query string) []string {
 		}
 	}
 	return terms
+}
+
+func contentVersion(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 func decode(args json.RawMessage, target any) error {
