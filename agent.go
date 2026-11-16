@@ -65,6 +65,7 @@ type Agent[Deps any, Output any] struct {
 	toolTimeout        time.Duration
 	toolOutputLimit    int
 	loopThreshold      int
+	loopPolicy         *LoopPolicy
 	spillStore         tool.SpillStore
 	spillThreshold     int
 	spillSet           bool
@@ -316,6 +317,21 @@ func WithToolOutputLimit[Deps any, Output any](maxBytes int) Option[Deps, Output
 func WithLoopDetection[Deps any, Output any](maxRepeats int) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.loopThreshold = maxRepeats
+	}
+}
+
+// WithLoopPolicy configures the broader loop checks: repeated identical
+// calls, repeated call results, alternating A-B call patterns, and
+// repeated final text. Each threshold is the number of repetitions
+// allowed before the check fires; zero disables it. Window bounds how
+// many recent calls the call-based checks inspect (zero uses 10).
+// LoopStop fails the run with *LoopDetectedError; LoopNudge feeds a
+// course-correction back to the model and continues, bounded by the
+// run's iteration and usage limits. WithLoopPolicy and WithLoopDetection
+// are mutually exclusive.
+func WithLoopPolicy[Deps any, Output any](policy LoopPolicy) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.loopPolicy = &policy
 	}
 }
 
@@ -685,6 +701,29 @@ func New[Deps any, Output any](
 	}
 	if agent.loopThreshold < 0 {
 		return nil, fmt.Errorf("golem: loop threshold must not be negative, got %d", agent.loopThreshold)
+	}
+	if agent.loopThreshold > 0 && agent.loopPolicy != nil {
+		return nil, fmt.Errorf("golem: WithLoopDetection and WithLoopPolicy are mutually exclusive")
+	}
+	if agent.loopPolicy != nil {
+		policy := agent.loopPolicy
+		if policy.Window < 0 {
+			return nil, fmt.Errorf("golem: loop window must not be negative, got %d", policy.Window)
+		}
+		for name, threshold := range map[string]int{
+			"repeated call": policy.RepeatedCall, "repeated result": policy.RepeatedResult,
+			"alternating calls": policy.AlternatingCalls, "repeated text": policy.RepeatedText,
+		} {
+			if threshold < 0 {
+				return nil, fmt.Errorf("golem: loop %s threshold must not be negative, got %d", name, threshold)
+			}
+			if threshold == 1 {
+				return nil, fmt.Errorf("golem: loop %s threshold must be at least 2, got 1", name)
+			}
+		}
+		if policy.Action != LoopStop && policy.Action != LoopNudge {
+			return nil, fmt.Errorf("golem: unknown loop action %d", policy.Action)
+		}
 	}
 	if agent.spillSet && agent.summarySet {
 		return nil, fmt.Errorf("golem: tool output spill and summary modes are mutually exclusive")
@@ -1083,6 +1122,17 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			return a.prepareTools(ctx, runCtx, specs)
 		}
 	}
+	var loop *runner.LoopConfig
+	switch {
+	case a.loopPolicy != nil:
+		loop = &runner.LoopConfig{
+			Window: a.loopPolicy.Window, RepeatedCall: a.loopPolicy.RepeatedCall,
+			RepeatedResult: a.loopPolicy.RepeatedResult, Alternating: a.loopPolicy.AlternatingCalls,
+			RepeatedText: a.loopPolicy.RepeatedText, Action: runner.LoopAction(a.loopPolicy.Action),
+		}
+	case a.loopThreshold > 0:
+		loop = &runner.LoopConfig{RepeatedCall: a.loopThreshold, Action: runner.LoopStop}
+	}
 	var spill *runner.SpillConfig
 	if a.spillStore != nil {
 		spill = &runner.SpillConfig{Threshold: a.spillThreshold, Put: a.spillStore.Put}
@@ -1100,6 +1150,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		ResultGuards:        a.resultGuards,
 		OutputLimit:         a.toolOutputLimit,
 		LoopThreshold:       a.loopThreshold,
+		Loop:                loop,
 		Spill:               spill,
 		Summary:             summary,
 		Prepare:             prepare,
@@ -1144,6 +1195,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			var loopErr *runner.LoopError
 			if errors.As(err, &loopErr) {
 				return Result[Output]{}, &RunError{Stage: StageLoopDetected, Err: &LoopDetectedError{
+					Pattern:   LoopPattern(loopErr.Pattern),
+					ToolNames: append([]string(nil), loopErr.ToolNames...),
 					ToolName:  loopErr.ToolName,
 					Args:      append(json.RawMessage(nil), loopErr.Args...),
 					Count:     loopErr.Count,

@@ -32,14 +32,20 @@ var ErrContentFilter = errors.New("runner: model response stopped by content fil
 // carries the call that would have exceeded it so the core can expose a
 // typed error with evidence.
 type LoopError struct {
+	Pattern   string
+	ToolNames []string
 	ToolName  string
 	Args      json.RawMessage
 	Count     int
 	Threshold int
+	Message   string
 }
 
 func (e *LoopError) Error() string {
-	return fmt.Sprintf("runner: tool call %q repeated %d times (limit %d)", e.ToolName, e.Count, e.Threshold)
+	if e.ToolName != "" {
+		return fmt.Sprintf("runner: %s loop on tool %q (%d, limit %d)", e.Pattern, e.ToolName, e.Count, e.Threshold)
+	}
+	return fmt.Sprintf("runner: %s loop (%d, limit %d)", e.Pattern, e.Count, e.Threshold)
 }
 
 // ToolError reports a tool execution failure or a model request for a tool
@@ -171,6 +177,9 @@ type ToolConfig struct {
 	// disables the check; the call that would exceed the bound fails the
 	// run before it executes.
 	LoopThreshold int
+	// Loop configures the broader loop checks; LoopThreshold is the
+	// legacy repeated-call shorthand.
+	Loop *LoopConfig
 	// Spill, when non-nil, stores result text at or above its threshold
 	// and replaces it with a marker. Put failures fall back to
 	// OutputLimit.
@@ -505,6 +514,10 @@ func execute[Deps any](
 	var lastFinish model.FinishReason
 	feedbacks := make(map[string]int)
 	repeats := make(map[string]int)
+	var loopState *loopState
+	if toolConfig.Loop != nil {
+		loopState = newLoopState(*toolConfig.Loop)
+	}
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -557,9 +570,20 @@ func execute[Deps any](
 		}
 
 		if len(response.Message.ToolCalls) == 0 {
-			return Outcome{Response: response, Messages: messages, Usage: usage,
+			outcome := Outcome{Response: response, Messages: messages, Usage: usage,
 				FinishReason: response.FinishReason,
-				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions}, nil
+				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions}
+			if loopState != nil {
+				if loopErr := loopState.checkText(response.Message.Content); loopErr != nil {
+					if loopState.cfg.Action == LoopNudge {
+						messages = append(messages, nudgeMessage(loopErr))
+						loopState.reset()
+						continue
+					}
+					return outcome, loopErr
+				}
+			}
+			return outcome, nil
 		}
 
 		if outputTool != "" {
@@ -574,6 +598,17 @@ func execute[Deps any](
 
 		if err := index.checkAvailable(response.Message.ToolCalls, priorMessages); err != nil {
 			return partialOutcome(messages, usage, counts, lastFinish), err
+		}
+		if loopState != nil {
+			if loopErr := loopState.checkPre(response.Message.ToolCalls); loopErr != nil {
+				if loopState.cfg.Action == LoopNudge {
+					messages = append(messages, nudgeToolResults(response.Message.ToolCalls, loopErr.Message)...)
+					messages = append(messages, nudgeMessage(loopErr))
+					loopState.reset()
+					continue
+				}
+				return partialOutcome(messages, usage, counts, lastFinish), loopErr
+			}
 		}
 
 		toolMessages, pending, err := runToolCalls(ctx, dispatch, deps, response.Message.ToolCalls, toolConfig, feedbacks, repeats, &counts, turn, emit)
@@ -598,6 +633,17 @@ func execute[Deps any](
 			return Outcome{Response: response, Messages: messages, Usage: usage,
 				FinishReason: response.FinishReason,
 				ModelCalls:   counts.modelCalls, ToolExecutions: counts.toolExecutions, Pending: pending}, nil
+		}
+		if loopState != nil {
+			loopState.commitCalls(response.Message.ToolCalls)
+			if loopErr := loopState.commitResults(response.Message.ToolCalls, toolMessages); loopErr != nil {
+				if loopState.cfg.Action == LoopNudge {
+					messages = append(messages, nudgeMessage(loopErr))
+					loopState.reset()
+					continue
+				}
+				return partialOutcome(messages, usage, counts, lastFinish), loopErr
+			}
 		}
 	}
 }
@@ -683,6 +729,8 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 			repeats[fingerprint]++
 			if repeats[fingerprint] > config.LoopThreshold {
 				return nil, nil, &LoopError{
+					Pattern:   "repeated_call",
+					ToolNames: []string{item.call.Name},
 					ToolName:  item.call.Name,
 					Args:      append(json.RawMessage(nil), item.call.Args...),
 					Count:     repeats[fingerprint],
