@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/abubakarsiddik31/golem/guard"
 	"github.com/abubakarsiddik31/golem/model"
@@ -40,5 +42,58 @@ func resolveCall[Deps any](ctx context.Context, item *toolCallResult[Deps], deps
 			result = guarded
 		}
 	}
+	if err == nil {
+		limit := config.OutputLimit
+		if item.declared.MaxOutputBytes > 0 {
+			limit = item.declared.MaxOutputBytes
+		}
+		if limit > 0 {
+			result.Text = truncateOutput(result.Text, limit)
+		}
+	}
 	item.result, item.err = result, err
+}
+
+// truncateOutput keeps the head and tail of an oversized tool result and
+// marks the cut. The marker names the original size, so the model knows
+// how much it is missing; the result never exceeds limit bytes and never
+// splits a UTF-8 rune.
+func truncateOutput(text string, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	marker := fmt.Sprintf("\n\n[tool output truncated; original size %d bytes]", len(text))
+	budget := limit - len(marker)
+	if budget <= 0 {
+		return truncateRunes(text, limit)
+	}
+	head := budget * 2 / 3
+	tail := budget - head
+	headEnd := retreatRune(text, head)
+	tailStart := advanceRune(text, len(text)-tail)
+	return text[:headEnd] + marker + text[tailStart:]
+}
+
+func truncateRunes(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(text) <= limit {
+		return text
+	}
+	return text[:retreatRune(text, limit)]
+}
+
+func retreatRune(text string, index int) int {
+	for index > 0 && index < len(text) && !utf8.RuneStart(text[index]) {
+		index--
+	}
+	return index
+}
+
+func advanceRune(text string, index int) int {
+	for index > 0 && index < len(text) && !utf8.RuneStart(text[index]) {
+		index++
+	}
+	return index
 }

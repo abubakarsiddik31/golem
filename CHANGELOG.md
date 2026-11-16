@@ -15,6 +15,12 @@ guides, every example runs offline, and statement coverage is 81.5%.
 
 ### Added
 
+- **Tool output limits.** `golem.WithToolOutputLimit` caps tool result
+  text once, when the tool returns, keeping the head and tail plus a
+  marker and persisting the reduced form. `tool.Tool.MaxOutputBytes`
+  overrides the agent cap; zero inherits, and an unset agent cap
+  disables it. Result parts pass through. This is deterministic
+  truncation, not spill-to-storage or summarization (ADR 0050).
 - **Per-run prompt context and memory snapshots.**
   `golem.WithPromptContext` installs a deps-aware function that returns
   user-role messages, inserted after history and before the new prompt

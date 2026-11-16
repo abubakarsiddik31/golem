@@ -136,6 +136,10 @@ type ToolConfig struct {
 	// ResultGuards run over each successful tool result in order
 	// before the model sees it; see guard.ApplyToolResult.
 	ResultGuards []guard.ResultGuard
+	// OutputLimit caps each tool result's text before it enters history,
+	// in bytes; zero disables the cap. A tool's MaxOutputBytes overrides
+	// it. The reduced text is what the model sees and what persists.
+	OutputLimit int
 	// Prepare, when non-nil, filters or rewrites the advertised tool
 	// specs before every model request. Returned specs must name tools
 	// that were already declared this turn — it cannot add callable

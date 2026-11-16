@@ -371,6 +371,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`tool-preparation`](examples/tool-preparation/main.go) | Per-step tool filtering from typed deps, offline |
+| [`tool-output-limit`](examples/tool-output-limit/main.go) | Bounding an oversized tool result before it enters history, offline |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
 | [`content-filter`](examples/content-filter/main.go) | Provider safety stops: default output vs typed failure, offline |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
