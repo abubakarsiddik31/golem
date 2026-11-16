@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 — 2026-11-16
+
+The second additive post-v1 minor. `apidiff` passes against v1.1.0; no
+existing exported API changed incompatibly. This release bounds the two
+ways an agent loop most often overruns — oversized tool results and
+repeated identical tool calls — and adds provider-reported citations to
+the durable message contract, starting with Anthropic document
+citations. Documentation is complete at 39 guides, every example runs
+offline, and statement coverage is 81.6%.
 
 ### Added
 
