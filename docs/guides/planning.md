@@ -49,7 +49,7 @@ an infrastructure error and aborts the run at the tool stage.
 
 ## Example
 
-[`examples/planning`](../../examples/planning/main.go) runs offline
+`examples/planning` runs offline
 against a scripted model and prints each plan tool result:
 
 ```go
@@ -83,4 +83,4 @@ agent, err := golem.New[struct{}, string](client, decoder,
 - A plan is prompt content, not a security boundary. Do not store
   secrets in step text, and re-check high-stakes actions in the tool
   that performs them.
-- The deciding design record is [ADR 0044](../adr/0044-planning-tools.md).
+- The deciding design record is `docs/adr/0044-planning-tools.md`.
