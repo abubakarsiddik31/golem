@@ -49,3 +49,4 @@ example, and the README index agree.
 36. [Memory](memory.md) — a persistent, namespaced Markdown notebook behind a store port.
 37. [Prompt context](prompt-context.md) — per-run user-role context from typed deps.
 38. [Loop detection](loop-detection.md) — bounding repeated identical tool calls in one run.
+39. [MCP server](mcp-server.md) — exposing one Golem agent as an MCP tool over stdio or stateless HTTP.

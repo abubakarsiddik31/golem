@@ -42,7 +42,7 @@ Golem bridges that gap by offering idiomatic, enterprise-ready agent abstraction
 - 🛡️ **Compile-Time Type Safety & Generics**: Agents are declared as `Agent[Deps, Output]`. Tools access strongly-typed dependencies (databases, auth contexts, HTTP clients) via `RunContext[Deps]`. No `map[string]any` spaghetti or unexpected runtime reflection errors.
 - 📦 **Zero External Dependencies**: Built exclusively on Go's standard library. Instant compilation, tiny container images, and a clean security profile free of supply-chain vulnerabilities.
 - 🌐 **Provider Agnostic**: Native adapters for **OpenAI**, **Anthropic** (with prompt caching and thinking signatures), **Google Gemini**, **AWS Bedrock** (Converse API with SigV4), **Azure OpenAI**, and local offline models with **Ollama** and **LM Studio**.
-- 🔌 **Native Model Context Protocol (MCP)**: Full-featured MCP client supporting both `stdio` and streaming HTTP transports, effortlessly turning external MCP servers into typed agent tools.
+- 🔌 **Native Model Context Protocol (MCP)**: Full-featured client supporting `stdio` and streaming HTTP, plus server mode that exposes a Golem agent as an MCP tool.
 - 🔄 **Production Resilience & Self-Correction**: In-loop model self-correction (`ModelRetry`), automated multi-model fallbacks, exponential backoff, per-tool deadlines, and clean in-tool cancellation (`tool.Canceled`).
 - 📊 **Auditable & Observable Evidence**: Every run produces normalized messages, durable additive JSON, live streamable run events, reasoning/thinking token capture, and `RunError.Partial`—preserving all intermediate tool results even when a run fails or gets cancelled.
 - ⏸️ **Human-in-the-Loop & Deferred Execution**: Pause agent runs cleanly when tools require human sign-off or external async triggers, and resume deterministically with full preserved state.
@@ -262,7 +262,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 
 | Package | Capability | Features |
 | --- | --- | --- |
-| **`mcp`** | Model Context Protocol Client | Connects to any MCP tool server over `stdio` or streaming HTTP (SSE). |
+| **`mcp` / `mcpserver`** | Model Context Protocol | Connects to MCP tool servers over `stdio` or streaming HTTP (SSE), and exposes one Golem agent as an MCP tool over stdio or stateless HTTP. |
 | **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI, with explicit per-page routing and provenance. |
 | **`docextract`** | Multi-Format Document Extraction | Extracts text and structure from Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), CSV, and Markdown. |
 | **`webfetch`** | Web Extraction | Fetches URLs and returns clean, agent-readable text without browser overhead. |
@@ -336,6 +336,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Memory](docs/guides/memory.md) | The `memory` toolset: a persistent Markdown notebook behind a store port |
 | [Prompt context](docs/guides/prompt-context.md) | Per-run user-role context from typed deps: memory snapshots and retrieval |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
+| [MCP server](docs/guides/mcp-server.md) | Exposing one Golem agent as an MCP tool over stdio or stateless HTTP |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
@@ -386,6 +387,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
 | [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
 | [`mcp-auth`](examples/mcp-auth/main.go) | MCP bearer-token credentials and 401/403 challenge handling, offline |
+| [`mcp-server`](examples/mcp-server/main.go) | Exposing a scripted agent as an MCP tool over the HTTP handler, offline |
 | [`mcp-elicitation`](examples/mcp-elicitation/main.go) | MCP elicitation through multi round-trip requests, offline |
 | [`mcp-http`](examples/mcp-http/main.go) | MCP server bridged over streamable HTTP |
 | [`skills`](examples/skills/main.go) | The `skills` common tool loading a standard SKILL.md folder |
