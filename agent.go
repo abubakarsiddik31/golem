@@ -63,6 +63,7 @@ type Agent[Deps any, Output any] struct {
 	outputRetries      int
 	toolRetries        int
 	toolTimeout        time.Duration
+	toolOutputLimit    int
 	parallelToolCalls  bool
 	toolChoice         string
 	contentFilterError bool
@@ -281,6 +282,20 @@ func WithToolRetries[Deps any, Output any](retries int) Option[Deps, Output] {
 func WithToolTimeout[Deps any, Output any](timeout time.Duration) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.toolTimeout = timeout
+	}
+}
+
+// WithToolOutputLimit caps every tool result's text before it enters the
+// conversation, in bytes. The reduction keeps the head and tail of an
+// oversized result and appends a marker naming the original size, so the
+// model sees a bounded result and the reduced form is what persists on
+// later requests. Only text is capped; result parts pass through. A
+// tool's MaxOutputBytes overrides the agent default, and zero disables
+// the cap. Negative values fail New. This is a truncation policy, not a
+// spill-to-storage or summarization feature.
+func WithToolOutputLimit[Deps any, Output any](maxBytes int) Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.toolOutputLimit = maxBytes
 	}
 }
 
@@ -644,6 +659,9 @@ func New[Deps any, Output any](
 	}
 	if agent.toolTimeout < 0 {
 		return nil, fmt.Errorf("golem: tool timeout must not be negative, got %s", agent.toolTimeout)
+	}
+	if agent.toolOutputLimit < 0 {
+		return nil, fmt.Errorf("golem: tool output limit must not be negative, got %d", agent.toolOutputLimit)
 	}
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
@@ -1027,6 +1045,7 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		Search:              search,
 		ToolGuards:          a.toolGuards,
 		ResultGuards:        a.resultGuards,
+		OutputLimit:         a.toolOutputLimit,
 		Prepare:             prepare,
 		RejectContentFilter: a.contentFilterError,
 	}

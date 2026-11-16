@@ -97,6 +97,10 @@ type Tool[Deps any] struct {
 	// Sequential makes this tool a barrier when parallel tool calls are enabled.
 	// Calls before it finish first; it runs alone; later calls start afterward.
 	Sequential bool
+	// MaxOutputBytes caps this tool's result text, independently of the
+	// agent's WithToolOutputLimit; zero inherits the agent setting. Negative
+	// values fail New. Only text is capped; result parts pass through.
+	MaxOutputBytes int
 }
 
 // New validates t and returns it ready for registration with an agent.
@@ -120,6 +124,9 @@ func New[Deps any](t Tool[Deps]) (Tool[Deps], error) {
 	}
 	if t.Timeout < 0 {
 		return Tool[Deps]{}, fmt.Errorf("tool %q: timeout must not be negative, got %s", t.Name, t.Timeout)
+	}
+	if t.MaxOutputBytes < 0 {
+		return Tool[Deps]{}, fmt.Errorf("tool %q: max output bytes must not be negative, got %d", t.Name, t.MaxOutputBytes)
 	}
 	return t, nil
 }

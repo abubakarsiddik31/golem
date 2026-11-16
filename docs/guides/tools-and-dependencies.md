@@ -79,6 +79,28 @@ and every schema must be valid JSON. When tool-mode output is active the
 output tool must remain. A prepare error, or an invalid result, fails
 the run before the request is sent.
 
+### Output limits
+
+Tool results persist in history, so an oversized result is re-sent on
+every later request. `WithToolOutputLimit(maxBytes)` caps result text
+once, when the tool returns: the model sees the head and tail plus a
+marker naming the original size, and that reduced form is what persists
+and what later requests re-send. Result parts are untouched.
+
+```go
+agent, _ := golem.New[struct{}, string](client, decoder,
+    golem.WithTools[struct{}, string](readLog),
+    golem.WithToolOutputLimit[struct{}, string](400),
+)
+```
+
+A tool can set `tool.Tool.MaxOutputBytes` to override the agent cap;
+zero inherits it, and an unset agent cap disables truncation. The cap is
+bytes, determined once, and cuts on UTF-8 boundaries. It is truncation,
+not spill-to-storage or summarization: a caller that needs the full
+payload should keep it inside the tool or write it somewhere the model
+can request intentionally.
+
 ## Example
 
 Run `examples/tools`:
@@ -104,6 +126,13 @@ agent, _ := golem.New[roster, string](client, decoder,
 result, _ := agent.Run(ctx, golem.RunContext[roster]{Deps: roster{PlayerName: "Anne"}}, "who wins?")
 ```
 
+`examples/tool-output-limit` runs offline and shows a 9 KB log reduced to
+its head and tail:
+
+```go
+golem.WithToolOutputLimit[struct{}, string](400)
+```
+
 `examples/tool-preparation` runs offline and hides a destructive tool from
 a non-admin caller:
 
@@ -124,6 +153,7 @@ agent, _ := golem.New[actor, string](client, decoder,
 - `tool.New(tool.Tool[Deps]) (Tool[Deps], error)` and `tool.MustNew` — reject missing names, invalid schema JSON, nil Exec, and duplicate names at registration.
 - `golem.WithTools[Deps, Output](tools ...tool.Tool[Deps])`
 - `golem.PrepareToolsFunc[Deps]` and `golem.WithPrepareTools[Deps, Output](fn)` — filter or rewrite the advertised specs per request
+- `golem.WithToolOutputLimit[Deps, Output](maxBytes int)` — cap tool result text; `tool.Tool.MaxOutputBytes` overrides it
 - `golem.WithParallelToolCalls[Deps, Output]()` enables concurrent calls in
   one model response; `tool.Tool.Sequential` makes one tool a barrier.
 - `golem.WithToolChoice[Deps, Output](name)` advertises only the selected
@@ -151,6 +181,9 @@ agent, _ := golem.New[actor, string](client, decoder,
   active output tool; the run fails before the request instead of sending
   a request the loop cannot dispatch. See
   `docs/adr/0045-per-step-tool-preparation.md`.
+- The output cap keeps only text; a tool that returns an image or
+  document part keeps the full part even when its text is truncated. See
+  `docs/adr/0050-tool-output-limits.md`.
 - Preparation runs after deferred-tool discovery, so removing the
   runner-owned `search_tools` spec disables discovery for that request;
   the deferred tools stay declared but unreachable.
