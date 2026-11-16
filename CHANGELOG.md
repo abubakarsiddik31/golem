@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **MCP server mode.** `package mcpserver` exposes one Golem agent as a
+  Model Context Protocol tool: `initialize`, `tools/list`, and
+  `tools/call` over stdio or the stateless HTTP POST shape, with typed
+  dependency resolution, configurable schema/prompt/format, and agent
+  failures returned as `isError` tool results. Authentication and
+  concurrency remain application concerns (ADR 0053, closes #60).
+
 ## v1.2.0 — 2026-11-16
 
 The second additive post-v1 minor. `apidiff` passes against v1.1.0; no
