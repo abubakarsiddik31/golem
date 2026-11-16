@@ -117,16 +117,31 @@ type VersionedStore interface {
 	DeleteVersioned(ctx context.Context, namespace, path, expectedVersion string) error
 }
 
+// MetadataStore is an optional VersionedStore capability: writes can
+// record application-supplied provenance with the content in one atomic
+// step. FileStore does not implement it because a sidecar could not change
+// atomically with the Markdown.
+type MetadataStore interface {
+	VersionedStore
+	ReadMetadata(ctx context.Context, namespace, path string) (map[string]string, error)
+	WriteVersionedWithMetadata(ctx context.Context, namespace, path, content, expectedVersion string, metadata map[string]string) error
+}
+
+type memoryEntry struct {
+	content  string
+	metadata map[string]string
+}
+
 // Memory is an in-process Store. It is safe for concurrent use. Contents
 // live until discarded and persist nothing across processes.
 type Memory struct {
 	mu    sync.Mutex
-	files map[string]map[string]string
+	files map[string]map[string]memoryEntry
 }
 
 // NewMemory returns an empty in-process store.
 func NewMemory() *Memory {
-	return &Memory{files: make(map[string]map[string]string)}
+	return &Memory{files: make(map[string]map[string]memoryEntry)}
 }
 
 // List returns the namespace's paths sorted ascending, or nil for an
@@ -150,11 +165,22 @@ func (m *Memory) List(_ context.Context, namespace string) ([]string, error) {
 func (m *Memory) Read(_ context.Context, namespace, path string) (File, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	content, ok := m.files[namespace][path]
+	entry, ok := m.files[namespace][path]
 	if !ok {
 		return File{}, ErrNotFound
 	}
-	return File{Path: path, Content: content, Version: contentVersion(content)}, nil
+	return File{Path: path, Content: entry.content, Version: contentVersion(entry.content)}, nil
+}
+
+// ReadMetadata returns the provenance recorded with the current version.
+func (m *Memory) ReadMetadata(_ context.Context, namespace, path string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.files[namespace][path]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return cloneMetadata(entry.metadata), nil
 }
 
 // Write stores or replaces one file.
@@ -162,12 +188,12 @@ func (m *Memory) Write(_ context.Context, namespace, path, content string) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.files == nil {
-		m.files = make(map[string]map[string]string)
+		m.files = make(map[string]map[string]memoryEntry)
 	}
 	if m.files[namespace] == nil {
-		m.files[namespace] = make(map[string]string)
+		m.files[namespace] = make(map[string]memoryEntry)
 	}
-	m.files[namespace][path] = content
+	m.files[namespace][path] = memoryEntry{content: content}
 	return nil
 }
 
@@ -194,16 +220,38 @@ func (m *Memory) WriteVersioned(_ context.Context, namespace, path, content, exp
 		if ok {
 			return ErrVersionConflict
 		}
-	} else if !ok || contentVersion(current) != expectedVersion {
+	} else if !ok || contentVersion(current.content) != expectedVersion {
 		return ErrVersionConflict
 	}
 	if m.files == nil {
-		m.files = make(map[string]map[string]string)
+		m.files = make(map[string]map[string]memoryEntry)
 	}
 	if m.files[namespace] == nil {
-		m.files[namespace] = make(map[string]string)
+		m.files[namespace] = make(map[string]memoryEntry)
 	}
-	m.files[namespace][path] = content
+	m.files[namespace][path] = memoryEntry{content: content}
+	return nil
+}
+
+// WriteVersionedWithMetadata stores content and provenance atomically.
+func (m *Memory) WriteVersionedWithMetadata(_ context.Context, namespace, path, content, expectedVersion string, metadata map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.files[namespace][path]
+	if expectedVersion == "" {
+		if ok {
+			return ErrVersionConflict
+		}
+	} else if !ok || contentVersion(current.content) != expectedVersion {
+		return ErrVersionConflict
+	}
+	if m.files == nil {
+		m.files = make(map[string]map[string]memoryEntry)
+	}
+	if m.files[namespace] == nil {
+		m.files[namespace] = make(map[string]memoryEntry)
+	}
+	m.files[namespace][path] = memoryEntry{content: content, metadata: cloneMetadata(metadata)}
 	return nil
 }
 
@@ -212,7 +260,7 @@ func (m *Memory) DeleteVersioned(_ context.Context, namespace, path, expectedVer
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.files[namespace][path]
-	if !ok || contentVersion(current) != expectedVersion {
+	if !ok || contentVersion(current.content) != expectedVersion {
 		return ErrVersionConflict
 	}
 	delete(m.files[namespace], path)
@@ -247,6 +295,13 @@ type Config[Deps any] struct {
 	// MaxSnapshotLines bounds the MEMORY.md lines shown by Snapshot;
 	// zero selects DefaultMaxSnapshotLines.
 	MaxSnapshotLines int
+	// WriteMetadata supplies provenance recorded with each write, when
+	// the Store implements MetadataStore. The model cannot choose it.
+	WriteMetadata func(deps Deps) map[string]string
+	// Scanner checks content before it is stored or loaded. Nil disables
+	// scanning. A flagged write is refused, a flagged read is withheld,
+	// and a flagged search result carries a notice instead of a snippet.
+	Scanner ArtifactScanner
 }
 
 // Tools returns the memory toolset: list_memory, read_memory,
@@ -309,6 +364,11 @@ func normalize[Deps any](cfg Config[Deps]) (Config[Deps], error) {
 	}
 	if cfg.MaxSnapshotLines < 0 {
 		return Config[Deps]{}, fmt.Errorf("memory: MaxSnapshotLines must not be negative, got %d", cfg.MaxSnapshotLines)
+	}
+	if cfg.WriteMetadata != nil {
+		if _, ok := cfg.Store.(MetadataStore); !ok {
+			return Config[Deps]{}, fmt.Errorf("memory: WriteMetadata requires a MetadataStore")
+		}
 	}
 	if cfg.MaxFileBytes == 0 {
 		cfg.MaxFileBytes = DefaultMaxFileBytes
@@ -382,6 +442,10 @@ func Snapshot[Deps any](ctx context.Context, cfg Config[Deps], deps Deps) (model
 		}
 		if err != nil {
 			return model.Message{}, false, fmt.Errorf("memory: snapshot read %s: %w", path, err)
+		}
+		if findings := scanWith(cfg.Scanner, file.Content); len(findings) > 0 {
+			main, mainExists = "[withheld: artifact scanner flagged "+findingSummary(findings)+"]", true
+			break
 		}
 		main, mainExists = file.Content, true
 		break
@@ -468,12 +532,15 @@ func (t *toolset[Deps]) namespace(deps Deps) (string, error) {
 	return namespaceFor(t.cfg, deps)
 }
 
-func (t *toolset[Deps]) writeContent(ctx context.Context, namespace, path, content string, existing File, exists bool) error {
+func (t *toolset[Deps]) writeContent(ctx context.Context, deps Deps, namespace, path, content string, existing File, exists bool) error {
+	expected := ""
+	if exists {
+		expected = existing.Version
+	}
+	if store, ok := t.cfg.Store.(MetadataStore); ok && t.cfg.WriteMetadata != nil {
+		return store.WriteVersionedWithMetadata(ctx, namespace, path, content, expected, t.cfg.WriteMetadata(deps))
+	}
 	if store, ok := t.cfg.Store.(VersionedStore); ok {
-		expected := ""
-		if exists {
-			expected = existing.Version
-		}
 		return store.WriteVersioned(ctx, namespace, path, content, expected)
 	}
 	return t.cfg.Store.Write(ctx, namespace, path, content)
@@ -528,6 +595,9 @@ func (t *toolset[Deps]) read(ctx context.Context, deps Deps, args json.RawMessag
 		return tool.Result{}, fmt.Errorf("memory: read %s: %w", input.Path, err)
 	}
 	content := file.Content
+	if findings := t.scan(content); len(findings) > 0 {
+		return fail(fmt.Errorf("%s was withheld: artifact scanner flagged %s", input.Path, findingSummary(findings)))
+	}
 	if len(content) > t.cfg.MaxFileBytes {
 		content = truncateUTF8(content, t.cfg.MaxFileBytes) + "\n\n[truncated at the read bound]"
 	}
@@ -596,7 +666,10 @@ func (t *toolset[Deps]) write(ctx context.Context, deps Deps, args json.RawMessa
 	if len(content) > t.cfg.MaxFileBytes {
 		return fail(fmt.Errorf("%s would be %d bytes, over the %d-byte bound", input.Path, len(content), t.cfg.MaxFileBytes))
 	}
-	if err := t.writeContent(ctx, namespace, input.Path, content, existing, exists); err != nil {
+	if findings := t.scan(content); len(findings) > 0 {
+		return fail(fmt.Errorf("%s was not stored: artifact scanner flagged %s", input.Path, findingSummary(findings)))
+	}
+	if err := t.writeContent(ctx, deps, namespace, input.Path, content, existing, exists); err != nil {
 		if errors.Is(err, ErrVersionConflict) {
 			return fail(fmt.Errorf("%s changed concurrently; read it again and retry", input.Path))
 		}
@@ -654,6 +727,10 @@ func (t *toolset[Deps]) search(ctx context.Context, deps Deps, args json.RawMess
 		content := file.Content
 		if len(content) > t.cfg.MaxFileBytes {
 			content = truncateUTF8(content, t.cfg.MaxFileBytes)
+		}
+		if findings := t.scan(content); len(findings) > 0 {
+			matches = append(matches, match{path: path, score: 1, snippet: "[withheld: artifact scanner flagged " + findingSummary(findings) + "]"})
+			continue
 		}
 		if score, snippet, ok := scoreFile(path, content, terms); ok {
 			matches = append(matches, match{path: path, score: score, snippet: snippet})
@@ -809,6 +886,28 @@ func searchTerms(query string) []string {
 		}
 	}
 	return terms
+}
+
+func (t *toolset[Deps]) scan(text string) []Finding {
+	return scanWith(t.cfg.Scanner, text)
+}
+
+func scanWith(scanner ArtifactScanner, text string) []Finding {
+	if scanner == nil {
+		return nil
+	}
+	return scanner.Scan(text)
+}
+
+func cloneMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		out[key] = value
+	}
+	return out
 }
 
 func contentVersion(content string) string {
