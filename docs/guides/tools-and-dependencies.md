@@ -150,7 +150,7 @@ agent, _ := golem.New[actor, string](client, decoder,
 - Prepared specs cannot add a callable tool, duplicate a name, or drop the
   active output tool; the run fails before the request instead of sending
   a request the loop cannot dispatch. See
-  [ADR 0045](../adr/0045-per-step-tool-preparation.md).
+  `docs/adr/0045-per-step-tool-preparation.md`.
 - Preparation runs after deferred-tool discovery, so removing the
   runner-owned `search_tools` spec disables discovery for that request;
   the deferred tools stay declared but unreachable.
