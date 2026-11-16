@@ -71,6 +71,12 @@ type Message struct {
 	// reasoning. Ignored on other roles, and rejected by the agent's
 	// history validation there.
 	Thinking []ThinkingBlock `json:"thinking,omitempty"`
+	// Citations carries source references the provider returned with
+	// this assistant message. It is provider-reported metadata, not
+	// model output: adapters populate it when the provider supports
+	// citations, and it rides the durable JSON contract. Providers that
+	// do not cite leave it empty. See Citation.
+	Citations []Citation `json:"citations,omitempty"`
 	// RunID identifies the run that added this message to the
 	// conversation, and is empty on messages a caller supplied as
 	// history — a run never rewrites the identity of what it received.
@@ -131,6 +137,30 @@ func (b ThinkingBlock) Validate() error {
 		return fmt.Errorf("model: redacted thinking cannot carry a signature")
 	}
 	return nil
+}
+
+// Citation is one provider-reported source reference for an assistant
+// answer. Providers describe sources differently — a character span in a
+// document, a page range, a web page — so fields are filled only when
+// the provider supplies them; Type names the provider's location kind.
+// The answer text is never rewritten.
+type Citation struct {
+	// Type is the provider's citation location type, such as
+	// "char_location" or "page_location". It is provider-owned and may
+	// change; match known values, do not parse meaning from unknown ones.
+	Type string `json:"type,omitempty"`
+	// Text is the excerpt the provider cites as evidence.
+	Text string `json:"text,omitempty"`
+	// Title is the source title, when the provider supplies one.
+	Title string `json:"title,omitempty"`
+	// URL is the source page for a web citation; empty for documents.
+	URL string `json:"url,omitempty"`
+	// StartCharIndex and EndCharIndex are the provider's character
+	// offsets into the cited source, when it reports them.
+	StartCharIndex int `json:"startCharIndex,omitempty"`
+	EndCharIndex   int `json:"endCharIndex,omitempty"`
+	// PageNumber is the provider's cited page, when it reports one.
+	PageNumber int `json:"pageNumber,omitempty"`
 }
 
 // PartKind identifies the kind of non-text content a Part carries.

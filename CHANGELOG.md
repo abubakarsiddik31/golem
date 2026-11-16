@@ -15,6 +15,13 @@ guides, every example runs offline, and statement coverage is 81.5%.
 
 ### Added
 
+- **Provider citations.** `model.Message.Citations` carries
+  provider-reported source references as a durable, additive field, and
+  `anthropic.Config.Citations` opts into document citations on the
+  Anthropic Messages API. Plain and streamed responses parse excerpts,
+  titles, URLs, character offsets, and page numbers into
+  `model.Citation`; the answer text is unchanged. Other adapters leave
+  citations empty for now (ADR 0052).
 - **Loop detection.** `golem.WithLoopDetection` bounds how many times one
   tool call — same name and canonically equal arguments — may be
   requested in a run. The call that would exceed the bound fails before

@@ -118,6 +118,11 @@ type wireBlock struct {
 	// Source carries an "image" or "document" block's payload: a
 	// provider-fetched URL or base64 inline data with its media type.
 	Source *wireSource `json:"source,omitempty"`
+	// Citations is the request's citation configuration on a document
+	// block ({"enabled":true}), or the response's citation array on a
+	// text block. The field is raw because the two directions use
+	// different shapes.
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // wireSource is an image or document block source: a URL the provider
@@ -127,6 +132,25 @@ type wireSource struct {
 	URL       string `json:"url,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
+}
+
+// wireCitation is one provider citation attached to a text block. The
+// provider fills the fields its location type defines; the rest stay
+// zero.
+type wireCitation struct {
+	Type            string `json:"type"`
+	CitedText       string `json:"cited_text"`
+	DocumentIndex   int    `json:"document_index"`
+	DocumentTitle   string `json:"document_title"`
+	StartCharIndex  int    `json:"start_char_index"`
+	EndCharIndex    int    `json:"end_char_index"`
+	StartPageNumber int    `json:"start_page_number"`
+	EndPageNumber   int    `json:"end_page_number"`
+	StartBlockIndex int    `json:"start_block_index"`
+	EndBlockIndex   int    `json:"end_block_index"`
+	URL             string `json:"url"`
+	Title           string `json:"title"`
+	Source          string `json:"source"`
 }
 
 // wireTool advertises one tool to the model.
@@ -144,6 +168,41 @@ type messagesResponse struct {
 	// stop_sequence, tool_use, pause_turn, refusal, or
 	// model_context_window_exceeded.
 	StopReason string `json:"stop_reason"`
+}
+
+func parseCitations(raw json.RawMessage) ([]model.Citation, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var wire []wireCitation
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, &DecodeError{Stage: "decode response citations", Err: err}
+	}
+	citations := make([]model.Citation, 0, len(wire))
+	for _, citation := range wire {
+		citations = append(citations, citationFromWire(citation))
+	}
+	return citations, nil
+}
+
+func citationFromWire(citation wireCitation) model.Citation {
+	title := citation.DocumentTitle
+	if title == "" {
+		title = citation.Title
+	}
+	url := citation.URL
+	if url == "" {
+		url = citation.Source
+	}
+	return model.Citation{
+		Type:           citation.Type,
+		Text:           citation.CitedText,
+		Title:          title,
+		URL:            url,
+		StartCharIndex: citation.StartCharIndex,
+		EndCharIndex:   citation.EndCharIndex,
+		PageNumber:     citation.StartPageNumber,
+	}
 }
 
 // finishReason translates the Messages API stop_reason vocabulary onto
@@ -180,7 +239,7 @@ type wireUsage struct {
 // of the same role — tool results after an assistant turn, or a user
 // prompt after tool results — merge into one turn, because the API expects
 // alternating roles with tool results as user-turn blocks.
-func toWireTurns(messages []model.Message) (system string, turns []wireMessage, err error) {
+func toWireTurns(messages []model.Message, citations bool) (system string, turns []wireMessage, err error) {
 	var systemParts []string
 	for _, message := range messages {
 		var role string
@@ -194,13 +253,13 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage, 
 			blocks = assistantBlocks(message)
 		case model.RoleTool:
 			role = "user"
-			blocks, err = toolResultBlocks(message)
+			blocks, err = toolResultBlocks(message, citations)
 			if err != nil {
 				return "", nil, err
 			}
 		default:
 			role = "user"
-			blocks, err = userBlocks(message)
+			blocks, err = userBlocks(message, citations)
 			if err != nil {
 				return "", nil, err
 			}
@@ -219,7 +278,7 @@ func toWireTurns(messages []model.Message) (system string, turns []wireMessage, 
 // tool produced. The Messages API takes images and PDF documents inside a
 // tool result; other part kinds fail before any request. A definitive
 // failure sets is_error so the provider surfaces the outcome as failed.
-func toolResultBlocks(message model.Message) ([]wireBlock, error) {
+func toolResultBlocks(message model.Message, citations bool) ([]wireBlock, error) {
 	content := make([]wireBlock, 0, 1+len(message.Parts))
 	if message.Content != "" {
 		content = append(content, wireBlock{Type: "text", Text: message.Content})
@@ -229,7 +288,7 @@ func toolResultBlocks(message model.Message) ([]wireBlock, error) {
 		case model.PartImage:
 			content = append(content, imageBlock(part))
 		case model.PartDocument:
-			block, err := documentBlock(i, part)
+			block, err := documentBlock(i, part, citations)
 			if err != nil {
 				return nil, err
 			}
@@ -282,7 +341,7 @@ func assistantBlocks(message model.Message) []wireBlock {
 // URL parts send a provider-fetched source; inline data sends base64.
 // Documents are application/pdf only, and audio or video parts fail
 // before any request — the Messages API accepts neither.
-func userBlocks(message model.Message) ([]wireBlock, error) {
+func userBlocks(message model.Message, citations bool) ([]wireBlock, error) {
 	var blocks []wireBlock
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Type: "text", Text: message.Content})
@@ -292,7 +351,7 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 		case model.PartImage:
 			blocks = append(blocks, imageBlock(part))
 		case model.PartDocument:
-			block, err := documentBlock(i, part)
+			block, err := documentBlock(i, part, citations)
 			if err != nil {
 				return nil, err
 			}
@@ -311,25 +370,25 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 // documentBlock renders one document part: a provider-fetched URL
 // source, or base64 inline data with its media type. The Messages API
 // accepts application/pdf documents only.
-func documentBlock(i int, part model.Part) (wireBlock, error) {
+func documentBlock(i int, part model.Part, citations bool) (wireBlock, error) {
 	if part.URL == "" && part.MediaType != "application/pdf" {
 		return wireBlock{}, &DecodeError{Stage: "encode request", Err: fmt.Errorf(
 			"document part %d media type %q; the Messages API accepts application/pdf documents", i, part.MediaType)}
 	}
-	if part.URL != "" {
-		return wireBlock{
-			Type:   "document",
-			Source: &wireSource{Type: "url", URL: part.URL},
-		}, nil
+	block := wireBlock{Type: "document"}
+	if citations {
+		block.Citations = json.RawMessage(`{"enabled":true}`)
 	}
-	return wireBlock{
-		Type: "document",
-		Source: &wireSource{
-			Type:      "base64",
-			MediaType: part.MediaType,
-			Data:      base64.StdEncoding.EncodeToString(part.Data),
-		},
-	}, nil
+	if part.URL != "" {
+		block.Source = &wireSource{Type: "url", URL: part.URL}
+		return block, nil
+	}
+	block.Source = &wireSource{
+		Type:      "base64",
+		MediaType: part.MediaType,
+		Data:      base64.StdEncoding.EncodeToString(part.Data),
+	}
+	return block, nil
 }
 
 // imageBlock renders one image part: a provider-fetched URL source, or
@@ -407,6 +466,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 	var texts []string
 	var calls []model.ToolCall
 	var thinking []model.ThinkingBlock
+	var citations []model.Citation
 	for _, block := range wire.Content {
 		switch block.Type {
 		case "text":
@@ -422,6 +482,11 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 				Args: normalizeInput(block.Input),
 			})
 		}
+		parsed, err := parseCitations(block.Citations)
+		if err != nil {
+			return model.Response{}, err
+		}
+		citations = append(citations, parsed...)
 	}
 
 	return model.Response{
@@ -430,6 +495,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: citations,
 		},
 		Usage: model.Usage{
 			InputTokens:      wire.Usage.InputTokens,

@@ -115,6 +115,42 @@ last completed turn's when a run failed: a `length` cause on a decode
 failure means the provider truncated the output, not that the model
 wrote bad JSON.
 
+## Citations
+
+`model.Message.Citations` carries provider-reported source references on
+an assistant message. The answer text is never rewritten; each
+`model.Citation` names the provider's location type and the fields it
+supplied — excerpt, title, URL, character offsets, or page number.
+
+Anthropic document citations are opt-in:
+
+```go
+client, err := anthropic.New(anthropic.Config{
+    APIKey:    key,
+    Model:     "claude-sonnet-4-5",
+    Citations: true,
+})
+```
+
+With `Citations` enabled, every document block in the request asks the
+provider for citations. Responses — plain and streamed — parse the
+provider's citations onto the assistant message:
+
+```go
+result, err := agent.Run(ctx, runCtx, "Summarize this policy.",
+    golem.WithPromptParts(model.DocumentURL(pdfURL)))
+last := result.Messages[len(result.Messages)-1]
+for _, citation := range last.Citations {
+    fmt.Println(citation.Title, citation.URL, citation.Text)
+}
+```
+
+Only the Anthropic Messages API adapter implements citations today.
+Bedrock and the other adapters leave `Citations` empty; the durable
+message contract is provider-neutral so they can add it additively.
+Citation metadata comes from the provider and may quote document text;
+treat it as untrusted data.
+
 ## Pricing
 
 Each generation adapter ships a `Price` struct implementing
@@ -224,7 +260,7 @@ focusedClient, _ := openai.New(openai.Config{
 
 - `openai.New(openai.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
 - `groq.New(openai.Config{APIKey, Model, ...})` — the Groq preset: base URL filled, key required; `groq.DefaultBaseURL`, `groq.ModelLlama3370B`, `groq.ModelDeepSeekR1DistillLlama`
-- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, Effort, CacheControl, HTTPClient})`
+- `anthropic.New(anthropic.Config{APIKey, BaseURL, Model, MaxTokens, Temperature, TopP, Effort, CacheControl, Citations, HTTPClient})`
 - `anthropic.CacheControl{TTL}` — automatic prompt caching; `anthropic.CacheOneHour`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
@@ -233,6 +269,9 @@ focusedClient, _ := openai.New(openai.Config{
 - `model.FinishReason` — `FinishStop | FinishLength | FinishToolCall |
   FinishContentFilter | FinishOther`; on `model.Response`,
   `golem.Result`, and `golem.PartialResult` (decision in ADR 0020).
+- `model.Citation` and `model.Message.Citations` — provider-reported
+  source references; Anthropic enables them with `Config.Citations`
+  (decision in ADR 0052).
 - `openai.Embedder` / `azure.Embedder` / `gemini.Embedder` — text
   embeddings beside generation; see the [Embeddings](embeddings.md)
   API surface (decision in ADR 0021).
@@ -306,6 +345,10 @@ focusedClient, _ := openai.New(openai.Config{
   `finishReason`: a stream that ends at EOF without one is a decode
   failure, not a silent partial response — mirroring the
   OpenAI-compatible (`[DONE]`) and Anthropic (`message_stop`) sentinels.
+- Citations are provider-reported metadata, not model output. Enabling
+  them changes the Anthropic request shape; other adapters leave
+  `Message.Citations` empty. See [Citations](#citations) and
+  `docs/adr/0052-citations.md`.
 - Structured output maps to OpenAI `response_format`, Anthropic
   `output_config`, and Gemini `generationConfig`; OpenAI and Anthropic
   require strict-conformant schemas (see
