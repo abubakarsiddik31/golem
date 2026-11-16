@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Memory tools.** `package memory` gives an agent a persistent,
+  namespaced Markdown notebook: `list_memory`, `read_memory`,
+  `write_memory` (append, replace, or unique-fragment edit),
+  `search_memory`, and `delete_memory`, with `MEMORY.md` protected from
+  deletion. Storage lives behind the four-method `memory.Store` port,
+  with `memory.Memory` offline and `Config.Namespace` resolving the
+  notebook from typed dependencies. Paths are validated and file, scan,
+  result, and character bounds are enforced; bad model input is
+  recoverable and store failures abort (ADR 0048).
 - **Opt-in content-filter failure.** `golem.WithContentFilterError()`
   makes any response whose provider finish reason is
   `FinishContentFilter` fail at the new `StageContentFilter` stage with

@@ -46,7 +46,7 @@ Golem bridges that gap by offering idiomatic, enterprise-ready agent abstraction
 - 🔄 **Production Resilience & Self-Correction**: In-loop model self-correction (`ModelRetry`), automated multi-model fallbacks, exponential backoff, per-tool deadlines, and clean in-tool cancellation (`tool.Canceled`).
 - 📊 **Auditable & Observable Evidence**: Every run produces normalized messages, durable additive JSON, live streamable run events, reasoning/thinking token capture, and `RunError.Partial`—preserving all intermediate tool results even when a run fails or gets cancelled.
 - ⏸️ **Human-in-the-Loop & Deferred Execution**: Pause agent runs cleanly when tools require human sign-off or external async triggers, and resume deterministically with full preserved state.
-- 🛠️ **Batteries-Included Tooling**: Layout-aware PDF extraction (`pdfextract`), multi-format document extraction (`docextract`: Word, Excel, PowerPoint, Markdown, CSV), SSR web reader (`webfetch`), workspace file accessor (`fileread`), shell command execution (`shell`), Agent Skills progressive loading (`skills`), and model-owned task plans (`planning`).
+- 🛠️ **Batteries-Included Tooling**: Layout-aware PDF extraction (`pdfextract`), multi-format document extraction (`docextract`: Word, Excel, PowerPoint, Markdown, CSV), SSR web reader (`webfetch`), workspace file accessor (`fileread`), shell command execution (`shell`), Agent Skills progressive loading (`skills`), model-owned task plans (`planning`), and a persistent namespaced notebook (`memory`).
 - 💰 **Budget & Cost Guards**: Pre-send token estimation, token-budgeted history truncation, client-side untrusted history sanitization (`SanitizeHistory`), and user-defined price tables to calculate and cap dollar costs per run.
 
 ---
@@ -271,6 +271,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 | **`shell`** | Command Execution | Isolated command execution with timeout handling and combined stdout/stderr output. |
 | **`skills`** | Agent Skills Loader | Discovers and loads standard `SKILL.md` skill folders on demand for progressive prompt enrichment. |
 | **`planning`** | Task Plan Tools | Gives the model a task list it owns and updates — write, add, move, and remove steps — behind a small store port. |
+| **`memory`** | Persistent Notebook | Gives the model a namespaced Markdown notebook — list, read, write, search, and delete — behind a small store port. |
 
 ---
 
@@ -332,6 +333,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Document extract](docs/guides/doc-extract.md) | The `docextract` common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents |
 | [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
 | [Planning](docs/guides/planning.md) | The `planning` toolset: a model-owned task plan behind a store port |
+| [Memory](docs/guides/memory.md) | The `memory` toolset: a persistent Markdown notebook behind a store port |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
@@ -373,6 +375,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
+| [`memory`](examples/memory/main.go) | A persistent namespaced notebook through the `memory.Store` port, offline |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
