@@ -46,7 +46,7 @@ Golem bridges that gap by offering idiomatic, enterprise-ready agent abstraction
 - 🔄 **Production Resilience & Self-Correction**: In-loop model self-correction (`ModelRetry`), automated multi-model fallbacks, exponential backoff, per-tool deadlines, and clean in-tool cancellation (`tool.Canceled`).
 - 📊 **Auditable & Observable Evidence**: Every run produces normalized messages, durable additive JSON, live streamable run events, reasoning/thinking token capture, and `RunError.Partial`—preserving all intermediate tool results even when a run fails or gets cancelled.
 - ⏸️ **Human-in-the-Loop & Deferred Execution**: Pause agent runs cleanly when tools require human sign-off or external async triggers, and resume deterministically with full preserved state.
-- 🛠️ **Batteries-Included Tooling**: Layout-aware PDF extraction (`pdfextract`), multi-format document extraction (`docextract`: Word, Excel, PowerPoint, Markdown, CSV), SSR web reader (`webfetch`), workspace file accessor (`fileread`), shell command execution (`shell`), and Agent Skills progressive loading (`skills`).
+- 🛠️ **Batteries-Included Tooling**: Layout-aware PDF extraction (`pdfextract`), multi-format document extraction (`docextract`: Word, Excel, PowerPoint, Markdown, CSV), SSR web reader (`webfetch`), workspace file accessor (`fileread`), shell command execution (`shell`), Agent Skills progressive loading (`skills`), and model-owned task plans (`planning`).
 - 💰 **Budget & Cost Guards**: Pre-send token estimation, token-budgeted history truncation, client-side untrusted history sanitization (`SanitizeHistory`), and user-defined price tables to calculate and cap dollar costs per run.
 
 ---
@@ -269,6 +269,7 @@ Golem includes pre-built common tools written entirely in pure Go:
 | **`fileread`** | File Reader | Safe workspace file reading with path boundaries and clean formatting. |
 | **`shell`** | Command Execution | Isolated command execution with timeout handling and combined stdout/stderr output. |
 | **`skills`** | Agent Skills Loader | Discovers and loads standard `SKILL.md` skill folders on demand for progressive prompt enrichment. |
+| **`planning`** | Task Plan Tools | Gives the model a task list it owns and updates — write, add, move, and remove steps — behind a small store port. |
 
 ---
 
@@ -328,11 +329,13 @@ The feature guides provide complete references for each capability and mirror th
 | [PDF extract](docs/guides/pdf-extract.md) | The `pdfextract` common tool: PDF documents as structured Markdown with tables and images |
 | [Document extract](docs/guides/doc-extract.md) | The `docextract` common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents |
 | [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
+| [Planning](docs/guides/planning.md) | The `planning` toolset: a model-owned task plan behind a store port |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
 | [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
 | [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
+| [Compaction](docs/guides/compaction.md) | Bounding history: trimming, token budgets, and summarization |
 | [Sessions](docs/guides/sessions.md) | The `session.Store` port and `WithSession`: conversations that persist between runs, failures included |
 | [Multimodal input](docs/guides/multimodal-input.md) | Images, documents, audio, and video in prompts, per-provider mapping |
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
@@ -456,7 +459,7 @@ The core execution contract is frozen and verified with continuous race-detector
 - **Comprehensive Multimodal:** Text, images, PDF documents, audio, and video inputs mapped natively across all model adapters.
 - **Observability & Durability:** Normalized conversation messages, durable additive JSON serialization, reasoning/thinking token capture with provider signatures, and streamable run events.
 - **Production Guardrails:** Pre-send token estimation, token-budgeted history truncation, client-side untrusted history sanitization (`SanitizeHistory`), history repair (`NormalizeHistory`), and user-configurable cost/token bounding.
-- **Rich Tool Ecosystem:** First-class Model Context Protocol (MCP) client over stdio and HTTP, layout-aware PDF extraction, multi-format doc parsing, sandboxed shell execution, SSR web fetch, and progressive Agent Skills loading.
+- **Rich Tool Ecosystem:** First-class Model Context Protocol (MCP) client over stdio and HTTP, layout-aware PDF extraction, multi-format doc parsing, sandboxed shell execution, SSR web fetch, progressive Agent Skills loading, and model-owned task plans.
 - **Zero Dependencies:** Built exclusively on the Go standard library.
 
 For architecture rationale, read [the foundation brief](docs/foundation.md). For upcoming milestones, read the [development roadmap](docs/ROADMAP.md). For measured costs and how to run the benchmarks, read [the benchmark baseline](docs/benchmarks.md).
