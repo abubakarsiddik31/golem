@@ -67,6 +67,21 @@ type chatMessage struct {
 	// use. It is read as a fallback and, on replay, written alongside
 	// ReasoningContent because chat templates read one or the other.
 	Reasoning string `json:"reasoning,omitempty"`
+	// Annotations carries provider source references, such as URL
+	// citations from web search on compatible endpoints.
+	Annotations []chatAnnotation `json:"annotations,omitempty"`
+}
+
+type chatAnnotation struct {
+	Type        string           `json:"type"`
+	URLCitation *chatURLCitation `json:"url_citation,omitempty"`
+}
+
+type chatURLCitation struct {
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
 }
 
 // chatContentPart is one entry of a multimodal content array: the text
@@ -194,6 +209,9 @@ type chatDeltaMessage struct {
 	Role      string              `json:"role,omitempty"`
 	Content   string              `json:"content,omitempty"`
 	ToolCalls []chatToolCallDelta `json:"tool_calls,omitempty"`
+	// Annotations carries source references from compatible endpoints,
+	// such as URL citations from web search.
+	Annotations []chatAnnotation `json:"annotations,omitempty"`
 	// ReasoningContent carries a fragment of the model's reasoning on
 	// endpoints that stream it.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
@@ -496,6 +514,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Args: normalizeArguments(call.Function.Arguments),
 		})
 	}
+	citations := openAICitations(choice.Annotations)
 	var thinking []model.ThinkingBlock
 	reasoning := choice.ReasoningContent
 	if reasoning == "" {
@@ -518,10 +537,29 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Content:   content,
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: citations,
 		},
 		Usage:        usageWithDetails(wire.Usage),
 		FinishReason: finishReason(wire.Choices[0].FinishReason),
 	}, nil
+}
+
+func openAICitations(annotations []chatAnnotation) []model.Citation {
+	var citations []model.Citation
+	for _, annotation := range annotations {
+		if annotation.URLCitation == nil {
+			continue
+		}
+		citation := annotation.URLCitation
+		citations = append(citations, model.Citation{
+			Type:           annotation.Type,
+			Title:          citation.Title,
+			URL:            citation.URL,
+			StartCharIndex: citation.StartIndex,
+			EndCharIndex:   citation.EndIndex,
+		})
+	}
+	return citations
 }
 
 // usageWithDetails translates the totals plus their optional detail

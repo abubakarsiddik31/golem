@@ -108,7 +108,8 @@ type streamAssembler struct {
 	finish model.FinishReason
 	// thinking accumulates reasoning fragments from endpoints that return
 	// a reasoning_content field on deltas.
-	thinking strings.Builder
+	thinking  strings.Builder
+	citations []model.Citation
 	// filter routes content fragments, extracting a leading <think>
 	// block into tagThinking; see think.go.
 	filter      thinkFilter
@@ -135,6 +136,7 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 
 	var delta model.Delta
 	message := chunk.Choices[0].Delta
+	a.citations = append(a.citations, openAICitations(message.Annotations)...)
 	if message.Content != "" {
 		text, thinkFragment := a.filter.feed(message.Content)
 		if thinkFragment != "" {
@@ -219,6 +221,7 @@ func (a *streamAssembler) response() model.Response {
 			Content:   content,
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: a.citations,
 		},
 		Usage:        a.usage,
 		FinishReason: a.finish,

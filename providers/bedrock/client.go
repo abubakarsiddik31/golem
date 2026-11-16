@@ -73,6 +73,11 @@ type Config struct {
 	// timeout. Callers wanting different timeout behavior supply their
 	// own; cancellation always flows through ctx.
 	HTTPClient *http.Client
+	// Citations enables document citations: document blocks ask Converse
+	// for citations, and the provider's citation metadata joins the
+	// assistant message on model.Message.Citations. It is off by default
+	// because it changes request shape and is model-dependent.
+	Citations bool
 }
 
 // CacheControl configures explicit prompt caching. Entries live five
@@ -177,7 +182,7 @@ func (c *Client) Generate(ctx context.Context, request model.Request) (model.Res
 // variant. A request carrying an output schema maps to the json_schema
 // output format.
 func (c *Client) newConverseHTTPRequest(ctx context.Context, request model.Request, path string) (*http.Request, error) {
-	system, turns, err := toWireMessages(request.Messages)
+	system, turns, err := toWireMessages(request.Messages, c.cfg.Citations)
 	if err != nil {
 		return nil, err
 	}

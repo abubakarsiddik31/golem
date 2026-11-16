@@ -113,6 +113,7 @@ type streamAssembler struct {
 	// index of the block that continues thought text, -1 when the next
 	// thought part opens a new block.
 	thinking        []model.ThinkingBlock
+	citations       []model.Citation
 	currentThinking int
 }
 
@@ -136,6 +137,7 @@ func (a *streamAssembler) consume(data string, onDelta func(model.Delta) error) 
 		a.finished = true
 		a.finish = finishReason(chunk.Candidates[0].FinishReason)
 	}
+	a.citations = append(a.citations, geminiCitations(chunk.Candidates[0].GroundingMetadata)...)
 
 	var delta model.Delta
 	for _, part := range chunk.Candidates[0].Content.Parts {
@@ -200,6 +202,7 @@ func (a *streamAssembler) response() model.Response {
 			Content:   a.content.String(),
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: a.citations,
 		},
 		Usage:        a.usage,
 		FinishReason: a.finish,
