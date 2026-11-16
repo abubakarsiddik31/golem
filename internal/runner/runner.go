@@ -28,6 +28,20 @@ var ErrLoopLimit = errors.New("runner: model turn limit exceeded")
 // so the caller can classify it with evidence.
 var ErrContentFilter = errors.New("runner: model response stopped by content filter")
 
+// LoopError reports a tool call repeated beyond the configured bound. It
+// carries the call that would have exceeded it so the core can expose a
+// typed error with evidence.
+type LoopError struct {
+	ToolName  string
+	Args      json.RawMessage
+	Count     int
+	Threshold int
+}
+
+func (e *LoopError) Error() string {
+	return fmt.Sprintf("runner: tool call %q repeated %d times (limit %d)", e.ToolName, e.Count, e.Threshold)
+}
+
 // ToolError reports a tool execution failure or a model request for a tool
 // that was not declared. The core maps it to StageTool and callers can
 // reach the cause with errors.Is and errors.As. A tool rejection whose
@@ -140,6 +154,11 @@ type ToolConfig struct {
 	// in bytes; zero disables the cap. A tool's MaxOutputBytes overrides
 	// it. The reduced text is what the model sees and what persists.
 	OutputLimit int
+	// LoopThreshold bounds how many times one tool call — same name and
+	// canonically equal arguments — may be requested in a run. Zero
+	// disables the check; the call that would exceed the bound fails the
+	// run before it executes.
+	LoopThreshold int
 	// Prepare, when non-nil, filters or rewrites the advertised tool
 	// specs before every model request. Returned specs must name tools
 	// that were already declared this turn — it cannot add callable
@@ -465,6 +484,7 @@ func execute[Deps any](
 	var usage model.Usage
 	var lastFinish model.FinishReason
 	feedbacks := make(map[string]int)
+	repeats := make(map[string]int)
 
 	for turn := 0; ; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -536,7 +556,7 @@ func execute[Deps any](
 			return partialOutcome(messages, usage, counts, lastFinish), err
 		}
 
-		toolMessages, pending, err := runToolCalls(ctx, dispatch, deps, response.Message.ToolCalls, toolConfig, feedbacks, &counts, turn, emit)
+		toolMessages, pending, err := runToolCalls(ctx, dispatch, deps, response.Message.ToolCalls, toolConfig, feedbacks, repeats, &counts, turn, emit)
 		if err != nil {
 			// A canceled run keeps the batch's recorded results and
 			// synthesized closings as evidence; every other failure
@@ -628,7 +648,7 @@ type toolCallResult[Deps any] struct {
 // The returned messages carry results for the executed calls plus those
 // synthesized closings; pending lists every deferred call in emission
 // order, nil when the run was canceled.
-func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, []PendingCall, error) {
+func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps Deps, calls []model.ToolCall, config ToolConfig, feedbacks, repeats map[string]int, counts *runCounts, turn int, emit Observer) ([]model.Message, []PendingCall, error) {
 	results := make([]toolCallResult[Deps], len(calls))
 	for i, call := range calls {
 		declared, ok := findTool(tools, call.Name)
@@ -636,6 +656,20 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 			return nil, nil, &ToolError{ToolName: call.Name, CallID: call.ID, Err: fmt.Errorf("tool was not declared for this run")}
 		}
 		results[i] = toolCallResult[Deps]{call: call, declared: declared}
+	}
+	if config.LoopThreshold > 0 {
+		for _, item := range results {
+			fingerprint := toolCallFingerprint(item.call)
+			repeats[fingerprint]++
+			if repeats[fingerprint] > config.LoopThreshold {
+				return nil, nil, &LoopError{
+					ToolName:  item.call.Name,
+					Args:      append(json.RawMessage(nil), item.call.Args...),
+					Count:     repeats[fingerprint],
+					Threshold: config.LoopThreshold,
+				}
+			}
+		}
 	}
 	for start := 0; start < len(results); {
 		end := start + 1
@@ -734,6 +768,22 @@ func runToolCalls[Deps any](ctx context.Context, tools []tool.Tool[Deps], deps D
 		return messages, nil, canceledErr
 	}
 	return messages, pending, nil
+}
+
+// toolCallFingerprint identifies one call by name and canonical
+// arguments. encoding/json sorts map keys, so equivalent objects with
+// different key order compare equal; malformed arguments fall back to the
+// raw bytes rather than hiding a repeat.
+func toolCallFingerprint(call model.ToolCall) string {
+	var value any
+	if err := json.Unmarshal(call.Args, &value); err != nil {
+		return call.Name + "\x00raw:" + string(call.Args)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return call.Name + "\x00raw:" + string(call.Args)
+	}
+	return call.Name + "\x00" + string(canonical)
 }
 
 // groupCanceled reports whether any executed call in the group returned

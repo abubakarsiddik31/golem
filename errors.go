@@ -1,6 +1,7 @@
 package golem
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/abubakarsiddik31/golem/model"
@@ -37,6 +38,10 @@ const (
 	// error with WithContentFilterError. The *ContentFilterError is in
 	// the chain through RunError.Unwrap.
 	StageContentFilter Stage = "content_filter"
+	// StageLoopDetected means the run repeated one tool call beyond the
+	// bound configured with WithLoopDetection. The *LoopDetectedError is
+	// in the chain through RunError.Unwrap.
+	StageLoopDetected Stage = "loop_detected"
 )
 
 // RunError adds an inspectable execution stage while preserving the source
@@ -76,6 +81,29 @@ type ContentFilterError struct {
 
 func (e *ContentFilterError) Error() string {
 	return "golem: model response stopped by the provider's content filter"
+}
+
+// LoopDetectedError reports one tool call repeated beyond the bound set
+// with WithLoopDetection. It is returned before the offending call
+// executes, so the run stops without duplicating its side effects.
+//
+// Args holds the offending call's arguments as the model produced them,
+// Count is how many times that call appeared in the run including this
+// one, and Threshold is the configured bound. Calls compare by tool name
+// and canonical JSON, so object key order does not hide a repeat.
+type LoopDetectedError struct {
+	// ToolName is the repeated tool.
+	ToolName string
+	// Args is the offending call's raw arguments.
+	Args json.RawMessage
+	// Count is the number of appearances, including the failed one.
+	Count int
+	// Threshold is the configured maximum allowed.
+	Threshold int
+}
+
+func (e *LoopDetectedError) Error() string {
+	return fmt.Sprintf("golem: tool call %q repeated %d times (limit %d)", e.ToolName, e.Count, e.Threshold)
 }
 
 // PartialResult is the evidence of a failed run: the conversation through
