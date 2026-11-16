@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Planning tools.** `planning.Tools` gives an agent a task plan it
+  owns: `write_plan`, `read_plan`, `add_task`, `update_task_status`, and
+  `remove_task`. Every mutation returns the full checklist on the
+  tool-result channel, so editing the plan stays cache-safe. State lives
+  behind the two-method `planning.Store` port, with `planning.Memory` for
+  offline use and `Config.Key` scoping plans per tenant or conversation.
+  Bad model input returns `&tool.Failed`; store failures abort the run
+  (ADR 0044).
 - **Summarizing history compaction.** `golem.SummarizeHistory(summarize,
   keepRecent)` replaces turns older than the newest `keepRecent` with one
   user-role summary produced by an application-supplied `golem.SummaryFunc`,

@@ -43,3 +43,4 @@ example, and the README index agree.
 30. [Testing without a provider](testing.md) — deterministic fakes and what to assert.
 31. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
 32. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
+33. [Planning](planning.md) — a model-owned task plan behind a small store port.
