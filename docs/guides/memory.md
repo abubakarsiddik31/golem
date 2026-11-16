@@ -46,11 +46,32 @@ or a write over the file bound — returns `&tool.Failed`, so the model
 can correct the call. A store failure is an infrastructure error and
 aborts the run at the tool stage.
 
-This package is deliberately **tools-only**: it does not inject a
-notebook snapshot into the prompt. The model calls `list_memory`,
-`read_memory`, or `search_memory` when it needs context. A per-run
-prompt-context seam, with an explicit snapshot helper, is planned as a
-follow-up so applications that want automatic recall can opt in.
+By default the model uses the tools on demand. Automatic recall is
+opt-in: `memory.Snapshot` reads a bounded excerpt of `MEMORY.md` and the
+other file names, and the application returns it from
+`golem.WithPromptContext`, which places it after history and before the
+new prompt as a user-role turn. The snapshot frames stored text as data
+from earlier runs, not instructions; it is evaluated once per run and is
+kept in the result evidence. An empty notebook contributes nothing.
+
+### Automatic recall
+
+```go
+agent, _ := golem.New[user, string](client, decoder,
+	golem.WithPromptContext[user, string](func(ctx context.Context, runCtx golem.RunContext[user]) ([]model.Message, error) {
+		message, ok, err := memory.Snapshot(ctx, cfg, runCtx.Deps)
+		if err != nil || !ok {
+			return nil, err
+		}
+		return []model.Message{message}, nil
+	}),
+)
+```
+
+`Snapshot` is bounded by `MaxSnapshotChars` (default 8,000) and
+`MaxSnapshotLines` (default 200); a cut excerpt points the model at
+`read_memory`. The caller decides whether a store failure should fail
+the run or proceed without memory.
 
 ## Example
 
@@ -71,20 +92,27 @@ agent, err := golem.New[user, string](client, decoder,
 ## API surface
 
 - `memory.Tools[Deps](memory.Config[Deps]) ([]tool.Tool[Deps], error)`
-- `memory.Config[Deps]{Store, Namespace func(Deps) string, MaxFileBytes, MaxResults, MaxResultChars, MaxSearchFiles}`
+- `memory.Config[Deps]{Store, Namespace func(Deps) string, MaxFileBytes, MaxResults, MaxResultChars, MaxSearchFiles, MaxSnapshotChars, MaxSnapshotLines}`
 - `memory.Store` — `List`, `Read`, `Write`, `Delete`
 - `memory.Memory`, `memory.NewMemory()`
 - `memory.File{Path, Content}`
 - `memory.ErrNotFound`
+- `memory.Snapshot[Deps](ctx, cfg, deps) (model.Message, bool, error)`
 - `memory.MainFile`, `memory.Instructions`
+- `golem.WithPromptContext[Deps, Output]` — the per-run user-role seam
 - Constants: `DefaultMaxFileBytes`, `DefaultMaxResults`, `MaxResultsLimit`, `DefaultMaxResultChars`, `DefaultMaxSearchFiles`
 
 ## Gotchas
 
 - The notebook is model-written and persists across runs. Treat it as
   untrusted data, not instructions; memory can carry injected text from
-  an earlier prompt. Use `inject_memory`-style caution: read only what
-  the task needs, and pair memory with your own input/tool guards.
+  an earlier prompt. Read only what the task needs, and pair memory with
+  your own input/tool guards. A snapshot is user-role context, not a
+  system prompt; it lowers authority but is not a hard injection boundary.
+- Automatic recall is explicit: `WithPromptContext` runs once per run,
+  so a snapshot is added again on each run that returns it. Keep the
+  snapshot small and decide whether repeated recall is acceptable for
+  your conversation model.
 - Namespaces select records; they are not authorization. Authenticate
   the caller in application dependencies and scope the store's
   credentials.

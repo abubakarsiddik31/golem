@@ -334,6 +334,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
 | [Planning](docs/guides/planning.md) | The `planning` toolset: a model-owned task plan behind a store port |
 | [Memory](docs/guides/memory.md) | The `memory` toolset: a persistent Markdown notebook behind a store port |
+| [Prompt context](docs/guides/prompt-context.md) | Per-run user-role context from typed deps: memory snapshots and retrieval |
 | [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
 | [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
 | [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
@@ -375,7 +376,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
-| [`memory`](examples/memory/main.go) | A persistent namespaced notebook through the `memory.Store` port, offline |
+| [`memory`](examples/memory/main.go) | A persistent namespaced notebook and opt-in snapshot recall, offline |
 | [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
 | [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
 | [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
