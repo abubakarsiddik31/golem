@@ -46,33 +46,34 @@ func (f DecodeFunc[Output]) Decode(ctx context.Context, response model.Response)
 // Agent combines a model, instructions, tools, and a typed output boundary.
 // Deps is the dependency value tools receive on every run.
 type Agent[Deps any, Output any] struct {
-	model             model.Model
-	decoder           OutputDecoder[Output]
-	instructions      string
-	instructionsFunc  func(ctx context.Context, runCtx RunContext[Deps]) string
-	historyProcessor  HistoryProcessor
-	tools             []tool.Tool[Deps]
-	deferredTools     []tool.Tool[Deps]
-	toolSearchLimit   int
-	maxIterations     int
-	maxAttempts       int
-	retryBackoff      func(attempt int) time.Duration
-	outputRetries     int
-	toolRetries       int
-	toolTimeout       time.Duration
-	parallelToolCalls bool
-	toolChoice        string
-	outputSchema      json.RawMessage
-	outputToolName    string
-	outputToolSpec    model.ToolSpec
-	usageLimit        UsageLimit
-	tokenCounter      tokens.Counter
-	price             model.Price
-	runEvents         func(RunEvent)
-	inputGuards       []guard.InputGuard
-	toolGuards        []guard.ToolGuard
-	resultGuards      []guard.ResultGuard
-	outputGuards      []guard.OutputGuard
+	model              model.Model
+	decoder            OutputDecoder[Output]
+	instructions       string
+	instructionsFunc   func(ctx context.Context, runCtx RunContext[Deps]) string
+	historyProcessor   HistoryProcessor
+	tools              []tool.Tool[Deps]
+	deferredTools      []tool.Tool[Deps]
+	toolSearchLimit    int
+	maxIterations      int
+	maxAttempts        int
+	retryBackoff       func(attempt int) time.Duration
+	outputRetries      int
+	toolRetries        int
+	toolTimeout        time.Duration
+	parallelToolCalls  bool
+	toolChoice         string
+	contentFilterError bool
+	outputSchema       json.RawMessage
+	outputToolName     string
+	outputToolSpec     model.ToolSpec
+	usageLimit         UsageLimit
+	tokenCounter       tokens.Counter
+	price              model.Price
+	runEvents          func(RunEvent)
+	inputGuards        []guard.InputGuard
+	toolGuards         []guard.ToolGuard
+	resultGuards       []guard.ResultGuard
+	outputGuards       []guard.OutputGuard
 }
 
 // Option configures an Agent during construction.
@@ -308,6 +309,21 @@ func WithParallelToolCalls[Deps any, Output any]() Option[Deps, Output] {
 func WithToolChoice[Deps any, Output any](name string) Option[Deps, Output] {
 	return func(agent *Agent[Deps, Output]) {
 		agent.toolChoice = name
+	}
+}
+
+// WithContentFilterError makes a model response whose provider finish
+// reason is FinishContentFilter fail the run with a typed
+// *ContentFilterError at the new StageContentFilter stage, even when the
+// provider also returned refusal or partial text. Without this option a
+// content-filter response is ordinary output: its text is decoded and
+// the cause is reported on Result.FinishReason, preserving v1 behavior.
+// The filtered message stays inspectable on ContentFilterError.Message
+// and on RunError.Partial. This is opt-in because providers and
+// applications disagree on whether refusal text should reach the caller.
+func WithContentFilterError[Deps any, Output any]() Option[Deps, Output] {
+	return func(agent *Agent[Deps, Output]) {
+		agent.contentFilterError = true
 	}
 }
 
@@ -945,12 +961,13 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		search = &runner.SearchConfig{Deferred: names, Limit: a.toolSearchLimit}
 	}
 	toolConfig := runner.ToolConfig{
-		DefaultRetries: a.toolRetries,
-		DefaultTimeout: a.toolTimeout,
-		Parallel:       a.parallelToolCalls,
-		Search:         search,
-		ToolGuards:     a.toolGuards,
-		ResultGuards:   a.resultGuards,
+		DefaultRetries:      a.toolRetries,
+		DefaultTimeout:      a.toolTimeout,
+		Parallel:            a.parallelToolCalls,
+		Search:              search,
+		ToolGuards:          a.toolGuards,
+		ResultGuards:        a.resultGuards,
+		RejectContentFilter: a.contentFilterError,
 	}
 	retry := runner.RetryConfig{MaxAttempts: a.maxAttempts, Backoff: a.retryBackoff}
 	if retry.Backoff == nil && a.maxAttempts > 1 {
@@ -982,8 +999,13 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			addUsage(&usage, outcome.Usage)
 			modelCalls += outcome.ModelCalls
 			toolExecutions += outcome.ToolExecutions
-			return Result[Output]{}, classifyRunError(err, partialEvidence(identity, outcome.Messages, usage,
-				outcome.FinishReason, modelCalls, toolExecutions, runCost()))
+			partial := partialEvidence(identity, outcome.Messages, usage,
+				outcome.FinishReason, modelCalls, toolExecutions, runCost())
+			if errors.Is(err, runner.ErrContentFilter) {
+				return Result[Output]{}, &RunError{Stage: StageContentFilter,
+					Err: &ContentFilterError{Message: outcome.Response.Message}, Partial: partial}
+			}
+			return Result[Output]{}, classifyRunError(err, partial)
 		}
 		addUsage(&usage, outcome.Usage)
 		modelCalls += outcome.ModelCalls

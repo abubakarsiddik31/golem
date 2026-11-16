@@ -338,6 +338,7 @@ The feature guides provide complete references for each capability and mirror th
 | [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
 | [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
 | [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
+| [Content filter](docs/guides/content-filter.md) | Opt-in typed failure for provider safety stops |
 | [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
 | [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
 | [Tracing](docs/guides/tracing.md) | Spans through the `telemetry` port: an OpenTelemetry adapter without an SDK dependency |
@@ -361,6 +362,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
 | [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
 | [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
+| [`content-filter`](examples/content-filter/main.go) | Provider safety stops: default output vs typed failure, offline |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
 | [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |

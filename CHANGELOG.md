@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Opt-in content-filter failure.** `golem.WithContentFilterError()`
+  makes any response whose provider finish reason is
+  `FinishContentFilter` fail at the new `StageContentFilter` stage with
+  a typed `*golem.ContentFilterError`, even when refusal or partial text
+  is present. The filtered message stays inspectable on the error and on
+  `RunError.Partial`, and a filtered response never executes its tool
+  calls. The default remains v1 behavior: the response is ordinary
+  output and `Result.FinishReason` reports the cause (ADR 0047).
 - **Reasoning replay for OpenAI-compatible servers.** `openai.Config`
   gains `ReplayReasoning`: each assistant message's captured reasoning is
   sent back on later requests, as both `reasoning_content` and

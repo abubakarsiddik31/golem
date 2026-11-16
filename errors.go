@@ -32,6 +32,11 @@ const (
 	// refuses to expose. The *guard.Blocked is in the chain through
 	// RunError.Unwrap.
 	StagePolicy Stage = "policy"
+	// StageContentFilter means the provider's safety filter stopped the
+	// model response and the agent was configured to treat that as an
+	// error with WithContentFilterError. The *ContentFilterError is in
+	// the chain through RunError.Unwrap.
+	StageContentFilter Stage = "content_filter"
 )
 
 // RunError adds an inspectable execution stage while preserving the source
@@ -53,6 +58,24 @@ func (e *RunError) Error() string {
 // Unwrap exposes the originating model or decoder error.
 func (e *RunError) Unwrap() error {
 	return e.Err
+}
+
+// ContentFilterError reports a model response the provider's safety
+// filter stopped. It is returned only when the agent is configured with
+// WithContentFilterError; without that option the response is ordinary
+// output and its finish reason is reported on Result.FinishReason.
+//
+// Message is the filtered assistant response as the provider returned
+// it. Content may be empty or partial — providers disagree on whether
+// refusal text accompanies a content-filter stop — and it is preserved
+// as evidence rather than discarded.
+type ContentFilterError struct {
+	// Message is the filtered assistant response.
+	Message model.Message
+}
+
+func (e *ContentFilterError) Error() string {
+	return "golem: model response stopped by the provider's content filter"
 }
 
 // PartialResult is the evidence of a failed run: the conversation through
