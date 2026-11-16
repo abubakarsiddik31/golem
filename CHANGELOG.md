@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Tool output spill and summarization.** `golem.WithToolOutputSpill`
+  stores an oversized tool result through a `tool.SpillStore` and
+  registers `read_tool_result` so the model can page the payload back in
+  bounded slices; `golem.WithToolOutputSummary` condenses it with an
+  application function. Both fall back to `WithToolOutputLimit` on
+  failure, are mutually exclusive, and leave result parts untouched
+  (ADR 0054).
 - **MCP server mode.** `package mcpserver` exposes one Golem agent as a
   Model Context Protocol tool: `initialize`, `tools/list`, and
   `tools/call` over stdio or the stateless HTTP POST shape, with typed

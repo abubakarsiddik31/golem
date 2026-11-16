@@ -65,6 +65,12 @@ type Agent[Deps any, Output any] struct {
 	toolTimeout        time.Duration
 	toolOutputLimit    int
 	loopThreshold      int
+	spillStore         tool.SpillStore
+	spillThreshold     int
+	spillSet           bool
+	summaryFn          ToolOutputSummaryFunc
+	summaryThreshold   int
+	summarySet         bool
 	parallelToolCalls  bool
 	toolChoice         string
 	contentFilterError bool
@@ -680,6 +686,28 @@ func New[Deps any, Output any](
 	if agent.loopThreshold < 0 {
 		return nil, fmt.Errorf("golem: loop threshold must not be negative, got %d", agent.loopThreshold)
 	}
+	if agent.spillSet && agent.summarySet {
+		return nil, fmt.Errorf("golem: tool output spill and summary modes are mutually exclusive")
+	}
+	if agent.spillSet && agent.spillStore == nil {
+		return nil, fmt.Errorf("golem: tool output spill requires a store")
+	}
+	if agent.summarySet && agent.summaryFn == nil {
+		return nil, fmt.Errorf("golem: tool output summary requires a function")
+	}
+	if agent.spillStore != nil {
+		if agent.spillThreshold < 1 {
+			return nil, fmt.Errorf("golem: tool output spill threshold must be at least 1, got %d", agent.spillThreshold)
+		}
+		readTool, err := agent.spillReadTool()
+		if err != nil {
+			return nil, err
+		}
+		agent.tools = append(agent.tools, readTool)
+	}
+	if agent.summaryFn != nil && agent.summaryThreshold < 1 {
+		return nil, fmt.Errorf("golem: tool output summary threshold must be at least 1, got %d", agent.summaryThreshold)
+	}
 	if len(agent.outputSchema) > 0 && !json.Valid(agent.outputSchema) {
 		return nil, fmt.Errorf("golem: output schema is not valid JSON")
 	}
@@ -1026,7 +1054,7 @@ func (a *Agent[Deps, Output]) observerFor(opts runOptions) func(RunEvent) {
 func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Deps], messages []model.Message, onDelta func(model.Delta) error, identity runner.RunIdentity, emit func(RunEvent)) (Result[Output], error) {
 	var specs []model.ToolSpec
 	for _, t := range a.tools {
-		if a.toolChoice != "" && t.Name != a.toolChoice {
+		if a.toolChoice != "" && t.Name != a.toolChoice && t.Name != SpillReadToolName {
 			continue
 		}
 		specs = append(specs, model.ToolSpec{
@@ -1055,6 +1083,14 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 			return a.prepareTools(ctx, runCtx, specs)
 		}
 	}
+	var spill *runner.SpillConfig
+	if a.spillStore != nil {
+		spill = &runner.SpillConfig{Threshold: a.spillThreshold, Put: a.spillStore.Put}
+	}
+	var summary *runner.SummaryConfig
+	if a.summaryFn != nil {
+		summary = &runner.SummaryConfig{Threshold: a.summaryThreshold, Summarize: a.summaryFn}
+	}
 	toolConfig := runner.ToolConfig{
 		DefaultRetries:      a.toolRetries,
 		DefaultTimeout:      a.toolTimeout,
@@ -1064,6 +1100,8 @@ func (a *Agent[Deps, Output]) runLoop(ctx context.Context, runCtx RunContext[Dep
 		ResultGuards:        a.resultGuards,
 		OutputLimit:         a.toolOutputLimit,
 		LoopThreshold:       a.loopThreshold,
+		Spill:               spill,
+		Summary:             summary,
 		Prepare:             prepare,
 		RejectContentFilter: a.contentFilterError,
 	}
