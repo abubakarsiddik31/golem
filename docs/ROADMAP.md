@@ -150,9 +150,9 @@ The series is closed and the freeze is written: ADR 0041 records the
 compatibility promise — SemVer, additive-only below v2, deprecations
 documented and removed only at v2, `apidiff` between the last v1 tag
 and every release — and the v1 criteria are met: documentation
-complete (38 guides), no known provider gaps, MCP shipped, and the
+complete (39 guides), no known provider gaps, MCP shipped, and the
 public surface reviewed through the parity series itself. v1.0.0
-shipped on 2026-10-25; v1.1.0 is the first additive minor.
+shipped on 2026-10-25; v1.1.0 and v1.2.0 are its additive minors.
 
 ## Shipped in v1.1.0
 
@@ -171,7 +171,16 @@ shipped on 2026-10-25; v1.1.0 is the first additive minor.
   mode, telemetry content modes, the threat model, and OpenAI reasoning
   replay.
 
-## After v1.1 — additive minors
+## Shipped in v1.2.0
+
+- **Tool output limits.** `golem.WithToolOutputLimit` and
+  `tool.Tool.MaxOutputBytes` (ADR 0050).
+- **Loop detection.** `golem.WithLoopDetection` and typed
+  `*golem.LoopDetectedError` (ADR 0051).
+- **Provider citations.** `model.Message.Citations` plus opt-in
+  Anthropic document citations (ADR 0052).
+
+## After v1.2 — additive minors
 
 - **Stream retry beyond the first fragment**, only if usage demands a
   replay-safe design; today streamed turns are single-attempt by
