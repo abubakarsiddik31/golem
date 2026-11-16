@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Interactive CLI assistant example.** `examples/cli-assistant` streams a
+  terminal chat loop with conversation history, bounded `shell` and
+  `fileread` tools, run-event tool notices, output/loop limits, Ctrl+C
+  handling, and provider selection between OpenAI, a local
+  OpenAI-compatible endpoint, or an offline streaming fake (closes #58).
 - **Memory metadata and artifact scanning.**
   `memory.MetadataStore` (implemented by `Memory`) records
   application-supplied provenance atomically with content via
