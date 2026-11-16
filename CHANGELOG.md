@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Per-step tool preparation.** `golem.WithPrepareTools` installs a
+  `golem.PrepareToolsFunc[Deps]` that filters or rewrites the tool specs
+  advertised before every model request, after deferred-tool discovery
+  and before the pre-send usage check. Prepared specs must name tools
+  already advertised this turn, keep unique names, carry valid schemas,
+  and preserve an active output tool; violations fail the run before the
+  request is sent (ADR 0045).
 - **Planning tools.** `planning.Tools` gives an agent a task plan it
   owns: `write_plan`, `read_plan`, `add_task`, `update_task_status`, and
   `remove_task`. Every mutation returns the full checklist on the
