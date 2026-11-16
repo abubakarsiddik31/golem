@@ -41,7 +41,7 @@ server.
 
 ## Example
 
-[`examples/web-search`](../../examples/web-search/main.go) runs offline
+`examples/web-search` runs offline
 against a fake backend and a scripted model:
 
 ```go
@@ -73,4 +73,4 @@ agent, err := golem.New[struct{}, string](client, decoder,
 - `web_search` returns URLs; it does not fetch pages. Pair it with
   `webfetch`, whose address guard refuses private and link-local
   targets.
-- The deciding design record is [ADR 0046](../adr/0046-web-search-tool.md).
+- The deciding design record is `docs/adr/0046-web-search-tool.md`.
