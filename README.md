@@ -381,6 +381,7 @@ Runnable programs live in [`examples/`](examples/); provider-backed examples rea
 | [`content-filter`](examples/content-filter/main.go) | Provider safety stops: default output vs typed failure, offline |
 | [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
 | [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
+| [`cli-assistant`](examples/cli-assistant/main.go) | Interactive streaming terminal agent with shell/file tools and an offline fallback |
 | [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
 | [`memory`](examples/memory/main.go) | A persistent namespaced notebook and opt-in snapshot recall, offline |
 | [`memory-files`](examples/memory-files/main.go) | File-backed memory with compare-and-swap writes, offline |
