@@ -145,9 +145,13 @@ for _, citation := range last.Citations {
 }
 ```
 
-Only the Anthropic Messages API adapter implements citations today.
-Bedrock and the other adapters leave `Citations` empty; the durable
-message contract is provider-neutral so they can add it additively.
+Anthropic and Bedrock expose document citations behind their
+`Config.Citations` flags. Gemini grounding metadata and OpenAI-compatible
+`url_citation` annotations are parsed when an endpoint returns them;
+Golem does not enable the provider-side search tool that produces those
+annotations, so the application or proxy must do so. Plain and streamed
+responses fill the same `model.Citation` fields. The durable contract is
+provider-neutral, so another adapter can add a source type additively.
 Citation metadata comes from the provider and may quote document text;
 treat it as untrusted data.
 
@@ -264,14 +268,15 @@ focusedClient, _ := openai.New(openai.Config{
 - `anthropic.CacheControl{TTL}` — automatic prompt caching; `anthropic.CacheOneHour`
 - `gemini.New(gemini.Config{APIKey, BaseURL, Model, Temperature, TopP, MaxTokens, HTTPClient})`
 - `azure.New(azure.Config{APIKey, Endpoint, Deployment, APIVersion, Temperature, TopP, MaxTokens, HTTPClient})`
-- `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, HTTPClient})`
+- `bedrock.New(bedrock.Config{Credentials, Region, Model, MaxTokens, Temperature, TopP, BaseURL, Citations, HTTPClient})`
 - `providers.Ptr(v)` builds the optional `*float64` sampling fields.
 - `model.FinishReason` — `FinishStop | FinishLength | FinishToolCall |
   FinishContentFilter | FinishOther`; on `model.Response`,
   `golem.Result`, and `golem.PartialResult` (decision in ADR 0020).
 - `model.Citation` and `model.Message.Citations` — provider-reported
-  source references; Anthropic enables them with `Config.Citations`
-  (decision in ADR 0052).
+  source references; Anthropic and Bedrock enable document citations
+  with `Config.Citations`, Gemini grounding and OpenAI annotations parse
+  when returned (ADR 0052, ADR 0055).
 - `openai.Embedder` / `azure.Embedder` / `gemini.Embedder` — text
   embeddings beside generation; see the [Embeddings](embeddings.md)
   API surface (decision in ADR 0021).

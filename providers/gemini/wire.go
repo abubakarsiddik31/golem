@@ -122,8 +122,36 @@ type generateContentResponse struct {
 }
 
 type wireCandidate struct {
-	Content      wireContent `json:"content"`
-	FinishReason string      `json:"finishReason"`
+	Content           wireContent            `json:"content"`
+	FinishReason      string                 `json:"finishReason"`
+	GroundingMetadata *wireGroundingMetadata `json:"groundingMetadata,omitempty"`
+}
+
+// wireGroundingMetadata carries Google Search grounding sources and the
+// answer segments they support.
+type wireGroundingMetadata struct {
+	GroundingChunks   []wireGroundingChunk   `json:"groundingChunks"`
+	GroundingSupports []wireGroundingSupport `json:"groundingSupports"`
+}
+
+type wireGroundingChunk struct {
+	Web *wireGroundingWeb `json:"web"`
+}
+
+type wireGroundingWeb struct {
+	URI   string `json:"uri"`
+	Title string `json:"title"`
+}
+
+type wireGroundingSupport struct {
+	Segment               *wireGroundingSegment `json:"segment"`
+	GroundingChunkIndices []int                 `json:"groundingChunkIndices"`
+}
+
+type wireGroundingSegment struct {
+	StartIndex int    `json:"startIndex"`
+	EndIndex   int    `json:"endIndex"`
+	Text       string `json:"text"`
 }
 
 // finishReason translates the GenerateContent finishReason vocabulary
@@ -326,6 +354,7 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 	var texts []string
 	var calls []model.ToolCall
 	var thinking []model.ThinkingBlock
+	citations := geminiCitations(wire.Candidates[0].GroundingMetadata)
 	callSeq := 0
 	for _, part := range wire.Candidates[0].Content.Parts {
 		switch {
@@ -349,6 +378,7 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: citations,
 		},
 		Usage: model.Usage{
 			InputTokens:     wire.Usage.PromptTokens,
@@ -358,6 +388,44 @@ func assembleResponse(wire *generateContentResponse) (model.Response, error) {
 		},
 		FinishReason: finishReason(wire.Candidates[0].FinishReason),
 	}, nil
+}
+
+func geminiCitations(metadata *wireGroundingMetadata) []model.Citation {
+	if metadata == nil {
+		return nil
+	}
+	chunks := metadata.GroundingChunks
+	citation := func(index int, segment *wireGroundingSegment) (model.Citation, bool) {
+		if index < 0 || index >= len(chunks) || chunks[index].Web == nil {
+			return model.Citation{}, false
+		}
+		web := chunks[index].Web
+		item := model.Citation{Type: "grounding", Title: web.Title, URL: web.URI}
+		if segment != nil {
+			item.Text = segment.Text
+			item.StartCharIndex = segment.StartIndex
+			item.EndCharIndex = segment.EndIndex
+		}
+		return item, true
+	}
+	if len(metadata.GroundingSupports) == 0 {
+		out := make([]model.Citation, 0, len(chunks))
+		for i := range chunks {
+			if item, ok := citation(i, nil); ok {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+	out := make([]model.Citation, 0, len(metadata.GroundingSupports))
+	for _, support := range metadata.GroundingSupports {
+		for _, index := range support.GroundingChunkIndices {
+			if item, ok := citation(index, support.Segment); ok {
+				out = append(out, item)
+			}
+		}
+	}
+	return out
 }
 
 // toolResponseParts renders one tool outcome: a functionResponse part

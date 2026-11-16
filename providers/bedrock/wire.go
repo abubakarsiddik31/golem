@@ -53,6 +53,37 @@ type wireBlock struct {
 	// Document carries an inline document block; see wireDocument for the
 	// formats Converse accepts.
 	Document *wireDocument `json:"document,omitempty"`
+	// CitationsContent carries a response block with cited answer text
+	// and the provider's citation metadata.
+	CitationsContent *wireCitationsContent `json:"citationsContent,omitempty"`
+}
+
+// wireCitationsContent is one assistant citations block.
+type wireCitationsContent struct {
+	Content   []wireBlock    `json:"content"`
+	Citations []wireCitation `json:"citations"`
+}
+
+type wireCitation struct {
+	Location      *wireCitationLocation `json:"location"`
+	SourceContent []wireSourceContent   `json:"sourceContent"`
+}
+
+type wireCitationLocation struct {
+	Type          string             `json:"type"`
+	DocumentChar  *wireCitationRange `json:"documentChar"`
+	DocumentPage  *wireCitationRange `json:"documentPage"`
+	DocumentChunk *wireCitationRange `json:"documentChunk"`
+}
+
+type wireCitationRange struct {
+	DocumentIndex int `json:"documentIndex"`
+	Start         int `json:"start"`
+	End           int `json:"end"`
+}
+
+type wireSourceContent struct {
+	Text string `json:"text"`
 }
 
 // wireImage is an inline image block. Converse accepts base64 bytes only,
@@ -72,9 +103,15 @@ type wireImageSrc struct {
 // bytes with an explicit format extension, and the block requires a
 // name, which the adapter derives neutrally per AWS guidance.
 type wireDocument struct {
-	Name   string          `json:"name"`
-	Format string          `json:"format"`
-	Source wireDocumentSrc `json:"source"`
+	Name      string                 `json:"name"`
+	Format    string                 `json:"format"`
+	Source    wireDocumentSrc        `json:"source"`
+	Citations *wireDocumentCitations `json:"citations,omitempty"`
+}
+
+// wireDocumentCitations asks Converse for document citations.
+type wireDocumentCitations struct {
+	Enabled bool `json:"enabled"`
 }
 
 // wireDocumentSrc carries the document payload. Bytes is base64-encoded.
@@ -216,7 +253,7 @@ type converseResponse struct {
 // toWireMessages converts normalized messages into Converse turns. It
 // fails before anything is sent when a message carries content Converse
 // cannot express, such as an image referenced by URL.
-func toWireMessages(messages []model.Message) (system []wireSystem, turns []wireMessage, err error) {
+func toWireMessages(messages []model.Message, citations bool) (system []wireSystem, turns []wireMessage, err error) {
 	for _, message := range messages {
 		var role string
 		var blocks []wireBlock
@@ -229,13 +266,13 @@ func toWireMessages(messages []model.Message) (system []wireSystem, turns []wire
 			blocks = assistantBlocks(message)
 		case model.RoleTool:
 			role = "user"
-			blocks, err = toolResultBlocks(message)
+			blocks, err = toolResultBlocks(message, citations)
 			if err != nil {
 				return nil, nil, err
 			}
 		default:
 			role = "user"
-			blocks, err = userBlocks(message)
+			blocks, err = userBlocks(message, citations)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -284,7 +321,7 @@ func assistantBlocks(message model.Message) []wireBlock {
 // txt, and md formats — and no audio or video at all. Any other form —
 // a URL, or an unknown media type — fails with ErrUnsupportedContent
 // instead of being silently dropped.
-func userBlocks(message model.Message) ([]wireBlock, error) {
+func userBlocks(message model.Message, citations bool) ([]wireBlock, error) {
 	var blocks []wireBlock
 	if message.Content != "" {
 		blocks = append(blocks, wireBlock{Text: message.Content})
@@ -311,11 +348,15 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 			if !ok {
 				return nil, fmt.Errorf("%w: document media type %q; Converse accepts application/pdf, text/plain, text/markdown, text/html, text/csv, and the Office formats", ErrUnsupportedContent, part.MediaType)
 			}
-			blocks = append(blocks, wireBlock{Document: &wireDocument{
+			document := &wireDocument{
 				Name:   fmt.Sprintf("document-%d", i+1),
 				Format: format,
 				Source: wireDocumentSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
-			}})
+			}
+			if citations {
+				document.Citations = &wireDocumentCitations{Enabled: true}
+			}
+			blocks = append(blocks, wireBlock{Document: document})
 		default:
 			return nil, fmt.Errorf("%w: %s parts; Converse accepts image and document parts only", ErrUnsupportedContent, part.Kind)
 		}
@@ -332,13 +373,13 @@ func userBlocks(message model.Message) ([]wireBlock, error) {
 // bytes only, the same accepted formats. Other part kinds fail before any
 // request. A definitive failure sets status "error" so the provider
 // surfaces the outcome as failed.
-func toolResultBlocks(message model.Message) ([]wireBlock, error) {
+func toolResultBlocks(message model.Message, citations bool) ([]wireBlock, error) {
 	content := make([]wireBlock, 0, 1+len(message.Parts))
 	if message.Content != "" {
 		content = append(content, wireBlock{Text: message.Content})
 	}
 	for i, part := range message.Parts {
-		block, err := partBlock(i, part)
+		block, err := partBlock(i, part, citations)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +402,7 @@ func toolResultBlocks(message model.Message) ([]wireBlock, error) {
 // partBlock renders one tool-result part under Converse's inline-only
 // rules: base64 image bytes in the png, jpeg, gif, and webp formats, or
 // an inline document in one of the accepted formats.
-func partBlock(i int, part model.Part) (wireBlock, error) {
+func partBlock(i int, part model.Part, citations bool) (wireBlock, error) {
 	switch part.Kind {
 	case model.PartImage:
 		if part.URL != "" {
@@ -383,11 +424,15 @@ func partBlock(i int, part model.Part) (wireBlock, error) {
 		if !ok {
 			return wireBlock{}, fmt.Errorf("%w: document media type %q; Converse accepts application/pdf, text/plain, text/markdown, text/html, text/csv, and the Office formats", ErrUnsupportedContent, part.MediaType)
 		}
-		return wireBlock{Document: &wireDocument{
+		document := &wireDocument{
 			Name:   fmt.Sprintf("document-%d", i+1),
 			Format: format,
 			Source: wireDocumentSrc{Bytes: base64.StdEncoding.EncodeToString(part.Data)},
-		}}, nil
+		}
+		if citations {
+			document.Citations = &wireDocumentCitations{Enabled: true}
+		}
+		return wireBlock{Document: document}, nil
 	default:
 		return wireBlock{}, fmt.Errorf("%w: %s parts; Converse accepts image and document parts in a tool result only", ErrUnsupportedContent, part.Kind)
 	}
@@ -449,10 +494,18 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 	var texts []string
 	var calls []model.ToolCall
 	var thinking []model.ThinkingBlock
+	var citations []model.Citation
 	for _, block := range wire.Output.Message.Content {
 		switch {
 		case block.Text != "":
 			texts = append(texts, block.Text)
+		case block.CitationsContent != nil:
+			for _, content := range block.CitationsContent.Content {
+				if content.Text != "" {
+					texts = append(texts, content.Text)
+				}
+			}
+			citations = append(citations, bedrockCitations(block.CitationsContent.Citations)...)
 		case block.ReasoningContent != nil:
 			if reasoning := block.ReasoningContent; reasoning.RedactedContent != "" {
 				thinking = append(thinking, model.ThinkingRedacted(reasoning.RedactedContent))
@@ -475,6 +528,7 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 			Content:   strings.Join(texts, "\n"),
 			ToolCalls: calls,
 			Thinking:  thinking,
+			Citations: citations,
 		},
 		Usage: model.Usage{
 			InputTokens:      wire.Usage.InputTokens,
@@ -484,6 +538,44 @@ func fromWireResponse(payload []byte) (model.Response, error) {
 		},
 		FinishReason: finishReason(wire.StopReason),
 	}, nil
+}
+
+func bedrockCitations(citations []wireCitation) []model.Citation {
+	out := make([]model.Citation, 0, len(citations))
+	for _, citation := range citations {
+		var texts []string
+		for _, source := range citation.SourceContent {
+			if source.Text != "" {
+				texts = append(texts, source.Text)
+			}
+		}
+		item := model.Citation{
+			Type: citationType(citation.Location),
+			Text: strings.Join(texts, "\n"),
+		}
+		if location := citation.Location; location != nil {
+			for _, locationRange := range []*wireCitationRange{location.DocumentChar, location.DocumentPage, location.DocumentChunk} {
+				if locationRange == nil {
+					continue
+				}
+				item.StartCharIndex = locationRange.Start
+				item.EndCharIndex = locationRange.End
+				if location.Type == "document_page" {
+					item.PageNumber = locationRange.Start
+				}
+				break
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func citationType(location *wireCitationLocation) string {
+	if location == nil {
+		return ""
+	}
+	return location.Type
 }
 
 // finishReason translates the Converse API stopReason vocabulary onto the

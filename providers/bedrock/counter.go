@@ -75,7 +75,7 @@ type countResponse struct {
 // failures return *APIError, network-level failures return
 // *TransportError, and unexpected response shapes return *DecodeError.
 func (c *Counter) CountTokens(ctx context.Context, input tokens.CountInput) (int, error) {
-	system, turns, err := toWireMessages(input.Messages)
+	system, turns, err := toWireMessages(input.Messages, c.cfg.Citations)
 	if err != nil {
 		return 0, err
 	}

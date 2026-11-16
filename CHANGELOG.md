@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Citation breadth.** Bedrock Converse document citations join
+  `model.Message.Citations` behind `bedrock.Config.Citations`; Gemini
+  grounding metadata and OpenAI-compatible `url_citation` annotations
+  parse when an endpoint returns them, in plain and streamed responses.
+  Golem still leaves enabling provider-side search to the application
+  (ADR 0055).
 - **Tool output spill and summarization.** `golem.WithToolOutputSpill`
   stores an oversized tool result through a `tool.SpillStore` and
   registers `read_tool_result` so the model can page the payload back in
