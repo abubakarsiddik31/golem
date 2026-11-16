@@ -36,7 +36,7 @@ executing the call. Streaming and plain runs share the check.
 
 ## Example
 
-[`examples/content-filter`](../../examples/content-filter/main.go) runs
+`examples/content-filter` runs
 offline against a scripted model and shows both policies:
 
 ```go
@@ -71,4 +71,4 @@ errors.As(err, &filterErr) // filterErr.Message.Content
   or wrap the model.
 - A content filter is a provider policy, not a security boundary of your
   application. Keep your own input and output guards for threats you own.
-- The deciding design record is [ADR 0047](../adr/0047-content-filter-error.md).
+- The deciding design record is `docs/adr/0047-content-filter-error.md`.
