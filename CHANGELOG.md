@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Memory metadata and artifact scanning.**
+  `memory.MetadataStore` (implemented by `Memory`) records
+  application-supplied provenance atomically with content via
+  `Config.WriteMetadata`; tools never show it. `Config.Scanner` accepts
+  the built-in `memory.NewScanner`, which flags injection phrasing,
+  role overrides, credential exfiltration, HTML comments, and invisible
+  Unicode, refusing flagged writes and withholding flagged reads,
+  snippets, and snapshots (ADR 0058).
 - **File-backed memory and compare-and-swap.** `memory.FileStore` keeps
   each namespace as a Markdown tree under a root, writes atomically,
   skips escaping symlinks, and versions content with SHA-256.

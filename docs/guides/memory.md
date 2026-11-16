@@ -46,6 +46,50 @@ listings and rejects reads or writes that resolve outside its root. Its
 lock is per instance: concurrent processes sharing one directory still
 need application-level serialization.
 
+### Write metadata
+
+`memory.MetadataStore` is an optional extension of `VersionedStore`:
+`WriteVersionedWithMetadata` records an application-supplied metadata map
+in the same atomic step as the content. `memory.Memory` implements it;
+`FileStore` does not, because a sidecar could not change atomically with
+the Markdown.
+
+```go
+tools, _ := memory.Tools(memory.Config[user]{
+    Store: memory.NewMemory(),
+    WriteMetadata: func(u user) map[string]string {
+        return map[string]string{"updated_by": "agent", "user_id": u.ID}
+    },
+})
+```
+
+Metadata reaches the application through
+`MetadataStore.ReadMetadata`; it is never shown to the model, and a later write without
+`WriteMetadata` clears it. `Tools` rejects a store that does not
+implement `MetadataStore` when `WriteMetadata` is set.
+
+### Artifact scanning
+
+`Config.Scanner` accepts a `memory.ArtifactScanner`; `memory.NewScanner`
+is the built-in dependency-free implementation. It flags common
+prompt-injection phrasing, chat-template role overrides,
+credential-exfiltration commands, hidden HTML comments, and invisible
+Unicode controls. Findings name threats without quoting the matched text.
+
+```go
+memory.Tools(memory.Config[user]{
+    Store:   memory.NewMemory(),
+    Scanner: memory.NewScanner(),
+})
+```
+
+A flagged write is refused with `tool.Failed` and stores nothing. A
+flagged read is withheld, a flagged search result shows a notice instead
+of its snippet, and a flagged `MEMORY.md` is withheld from a snapshot
+while the file list stays visible. Pattern matching is one layer, not a
+security boundary; combine it with namespace isolation and your own
+guards.
+
 Paths and namespaces are validated before they reach the store:
 relative, `/`-separated segments of letters, digits, `.`, `_`, and `-`,
 with no `.` or `..` segments. The default file bound is 64 KiB, search
@@ -107,6 +151,9 @@ agent, err := golem.New[user, string](client, decoder,
 - `memory.Config[Deps]{Store, Namespace func(Deps) string, MaxFileBytes, MaxResults, MaxResultChars, MaxSearchFiles, MaxSnapshotChars, MaxSnapshotLines}`
 - `memory.Store` — `List`, `Read`, `Write`, `Delete`
 - `memory.VersionedStore` — optional `WriteVersioned`/`DeleteVersioned` compare-and-swap
+- `memory.MetadataStore` — optional metadata-atomic write; `Config.WriteMetadata`
+- `memory.ArtifactScanner`, `memory.Scanner`, `memory.NewScanner()`, `memory.Finding`
+- `memory.Config.Scanner`
 - `memory.Memory`, `memory.NewMemory()`
 - `memory.FileStore`, `memory.NewFileStore(root)`
 - `memory.File{Path, Content, Version}`
