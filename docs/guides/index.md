@@ -44,3 +44,4 @@ example, and the README index agree.
 31. [Deferred tools](deferred-tools.md) — pausing a run for approvals or external results, and resuming.
 32. [Tool search](tool-search.md) — deferred tool loading: keeping a large catalog out of every request.
 33. [Planning](planning.md) — a model-owned task plan behind a small store port.
+34. [Web search](web-search.md) — the `websearch` common tool: a backend port and a keyless DuckDuckGo default.
