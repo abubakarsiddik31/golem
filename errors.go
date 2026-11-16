@@ -83,18 +83,62 @@ func (e *ContentFilterError) Error() string {
 	return "golem: model response stopped by the provider's content filter"
 }
 
-// LoopDetectedError reports one tool call repeated beyond the bound set
-// with WithLoopDetection. It is returned before the offending call
-// executes, so the run stops without duplicating its side effects.
+// LoopPattern identifies the repetition a loop policy detected.
+type LoopPattern string
+
+const (
+	// LoopRepeatedCall is the same tool call requested too many times.
+	LoopRepeatedCall LoopPattern = "repeated_call"
+	// LoopRepeatedResult is the same call returning the same result.
+	LoopRepeatedResult LoopPattern = "repeated_result"
+	// LoopAlternatingCalls is an A-B-A-B call pattern.
+	LoopAlternatingCalls LoopPattern = "alternating_calls"
+	// LoopRepeatedText is the same final text returned repeatedly.
+	LoopRepeatedText LoopPattern = "repeated_text"
+)
+
+// LoopAction selects what a detected loop does: stop the run, or nudge
+// the model and continue.
+type LoopAction int
+
+const (
+	// LoopStop ends the run with a *LoopDetectedError.
+	LoopStop LoopAction = iota
+	// LoopNudge feeds a course-correction back to the model and
+	// continues, bounded by the run's iteration and usage limits.
+	LoopNudge
+)
+
+// LoopPolicy configures repeated-call, repeated-result, alternating-call,
+// and repeated-text detection. Zero thresholds disable a check; Window
+// bounds how many recent calls the call-based checks inspect (zero uses
+// 10). Action selects stop or nudge.
+type LoopPolicy struct {
+	Window           int
+	RepeatedCall     int
+	RepeatedResult   int
+	AlternatingCalls int
+	RepeatedText     int
+	Action           LoopAction
+}
+
+// LoopDetectedError reports a loop a policy detected. For a stopping
+// action it ends the run; the fields describe the repetition.
 //
-// Args holds the offending call's arguments as the model produced them,
-// Count is how many times that call appeared in the run including this
-// one, and Threshold is the configured bound. Calls compare by tool name
-// and canonical JSON, so object key order does not hide a repeat.
+// Args holds the offending call's arguments for call-based patterns,
+// Count is how many appearances were counted, and Threshold is the
+// configured bound. Calls compare by tool name and canonical JSON, so
+// object key order does not hide a repeat.
 type LoopDetectedError struct {
-	// ToolName is the repeated tool.
+	// Pattern is the detected repetition.
+	Pattern LoopPattern
+	// ToolNames are the tools involved, one or two for call patterns
+	// and empty for repeated text.
+	ToolNames []string
+	// ToolName is the first involved tool, kept for compatibility with
+	// the repeated-call shorthand.
 	ToolName string
-	// Args is the offending call's raw arguments.
+	// Args is the offending call's raw arguments for call patterns.
 	Args json.RawMessage
 	// Count is the number of appearances, including the failed one.
 	Count int
@@ -103,7 +147,10 @@ type LoopDetectedError struct {
 }
 
 func (e *LoopDetectedError) Error() string {
-	return fmt.Sprintf("golem: tool call %q repeated %d times (limit %d)", e.ToolName, e.Count, e.Threshold)
+	if e.ToolName != "" {
+		return fmt.Sprintf("golem: %s loop on tool %q (%d, limit %d)", e.Pattern, e.ToolName, e.Count, e.Threshold)
+	}
+	return fmt.Sprintf("golem: %s loop (%d, limit %d)", e.Pattern, e.Count, e.Threshold)
 }
 
 // PartialResult is the evidence of a failed run: the conversation through

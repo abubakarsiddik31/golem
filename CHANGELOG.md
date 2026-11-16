@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Loop detection breadth.** `golem.WithLoopPolicy` adds repeated-result,
+  alternating-call, and repeated-text checks with a configurable window,
+  and a `LoopNudge` action that feeds a course-correction back to the
+  model instead of stopping. `WithLoopDetection` remains the
+  repeated-call shorthand. Pre-execution nudge closes the skipped calls
+  with failed results; stop failures keep `StageLoopDetected` and typed
+  evidence (ADR 0056).
 - **Citation breadth.** Bedrock Converse document citations join
   `model.Message.Citations` behind `bedrock.Config.Citations`; Gemini
   grounding metadata and OpenAI-compatible `url_citation` annotations
