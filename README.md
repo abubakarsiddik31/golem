@@ -13,70 +13,53 @@
   <a href="https://abubakarsiddik31.github.io/golem/"><img src="https://img.shields.io/badge/docs-website-00ADD8.svg" alt="Documentation"></a>
   <a href="go.mod"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-brightgreen.svg" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/badge/release-v1.2.0-orange.svg" alt="Release v1.2.0"></a>
+  <a href="https://github.com/abubakarsiddik31/golem/releases"><img src="https://img.shields.io/github/v/release/abubakarsiddik31/golem?color=orange" alt="Latest release"></a>
 </p>
 
 <p align="center">
   <a href="https://abubakarsiddik31.github.io/golem/"><strong>Read the Documentation »</strong></a>
-  <br><br>
-  <a href="#why-golem">Why Golem?</a> •
-  <a href="#how-golem-compares">How Golem Compares</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#supported-providers">Supported Providers</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#batteries-included-tools">Common Tools & MCP</a> •
-  <a href="#testing-without-a-provider">Testing</a> •
-  <a href="#documentation">Guides Index</a> •
-  <a href="#examples">Examples</a> •
-  <a href="#community--contributing">Contributing</a>
 </p>
 
 ---
 
 ## Why Golem?
 
-Python frameworks like Pydantic AI made agent prototyping accessible with typed schemas and clean ergonomics. However, deploying AI agents to mission-critical production systems demands the strengths of Go: high-throughput concurrency, predictable memory usage, fast execution, small deployment binaries, and compile-time correctness.
+Python frameworks like Pydantic AI made agent prototyping easy. Production systems need Go's concurrency, predictable memory, and small binaries. Golem brings typed agents to Go:
 
-Golem bridges that gap by offering idiomatic, enterprise-ready agent abstractions designed specifically for Go engineers:
-
-- 🛡️ **Compile-Time Type Safety & Generics**: Agents are declared as `Agent[Deps, Output]`. Tools access strongly-typed dependencies (databases, auth contexts, HTTP clients) via `RunContext[Deps]`. No `map[string]any` spaghetti or unexpected runtime reflection errors.
-- 📦 **Zero External Dependencies**: Built exclusively on Go's standard library. Instant compilation, tiny container images, and a clean security profile free of supply-chain vulnerabilities.
-- 🌐 **Provider Agnostic**: Native adapters for **OpenAI**, **Anthropic** (with prompt caching and thinking signatures), **Google Gemini**, **AWS Bedrock** (Converse API with SigV4), **Azure OpenAI**, and local offline models with **Ollama** and **LM Studio**.
-- 🔌 **Native Model Context Protocol (MCP)**: Full-featured client supporting `stdio` and streaming HTTP, plus server mode that exposes a Golem agent as an MCP tool.
-- 🔄 **Production Resilience & Self-Correction**: In-loop model self-correction (`ModelRetry`), automated multi-model fallbacks, exponential backoff, per-tool deadlines, and clean in-tool cancellation (`tool.Canceled`).
-- 📊 **Auditable & Observable Evidence**: Every run produces normalized messages, durable additive JSON, live streamable run events, reasoning/thinking token capture, and `RunError.Partial`—preserving all intermediate tool results even when a run fails or gets cancelled.
-- ⏸️ **Human-in-the-Loop & Deferred Execution**: Pause agent runs cleanly when tools require human sign-off or external async triggers, and resume deterministically with full preserved state.
-- 🛠️ **Batteries-Included Tooling**: Layout-aware PDF extraction (`pdfextract`), multi-format document extraction (`docextract`: Word, Excel, PowerPoint, Markdown, CSV), SSR web reader (`webfetch`), workspace file accessor (`fileread`), shell command execution (`shell`), Agent Skills progressive loading (`skills`), model-owned task plans (`planning`), and a persistent namespaced notebook (`memory`).
-- 💰 **Budget & Cost Guards**: Pre-send token estimation, token-budgeted history truncation, client-side untrusted history sanitization (`SanitizeHistory`), and user-defined price tables to calculate and cap dollar costs per run.
+- **Type-safe:** `Agent[Deps, Output]` and `RunContext[Deps]` give tools typed dependencies and typed results. No `map[string]any`.
+- **Zero dependencies:** standard library only, so builds are fast and the supply-chain surface is small.
+- **Any model:** OpenAI, Anthropic, Gemini, Bedrock, Azure, Groq, DeepSeek, Ollama, and LM Studio.
+- **Self-correcting:** the model can retry bad tool calls or output (`ModelRetry`), with fallback models, backoff, and per-tool timeouts.
+- **Auditable:** every run returns messages, token usage, cost, and live events. A failed run keeps its partial evidence (`RunError.Partial`).
+- **Human-in-the-loop:** pause a run for approval or an external result, then resume it.
+- **Built-in tools:** MCP client and server, PDF, Office, web, file, and shell tools, plus skills, planning, and memory.
+- **Cost-bounded:** cap tokens, requests, tool calls, or dollars per run.
 
 ---
 
 ## How Golem Compares
 
-A feature-by-feature look at Golem against the other actively maintained Go agent frameworks: [`langchaingo`](https://github.com/tmc/langchaingo) (community port of LangChain's abstractions), [`cloudwego/eino`](https://github.com/cloudwego/eino) (ByteDance's graph-based LLM application framework), and [Firebase `genkit` (Go SDK)](https://github.com/firebase/genkit).
+Against the other actively maintained Go agent frameworks: [langchaingo](https://github.com/tmc/langchaingo), [Eino](https://github.com/cloudwego/eino), and [Genkit (Go)](https://github.com/firebase/genkit).
 
-| Capability | **Golem** | langchaingo | Eino | Genkit (Go) |
+| | **Golem** | langchaingo | Eino | Genkit |
 | --- | :---: | :---: | :---: | :---: |
-| External runtime dependencies | **Zero** (stdlib only) | Many (per-provider SDKs, vector store clients) | Several (OpenTelemetry, protobuf, provider SDKs) | Several (OpenTelemetry, gRPC, provider SDKs) |
-| Typed tool & dependency injection (`Agent[Deps, Output]`, `RunContext[Deps]`) | :white_check_mark: compile-time generics | :x: tools built around `map[string]any` and reflection | Partial — components are generically typed, but agent composition is graph/`any`-based | :x: tool args/results are typed per-call but there's no typed dependency-injection container |
-| Native MCP client (no extra module) | :white_check_mark: in the core module (`mcp` package) | :x: third-party, work-in-progress adapter only | :x: requires the separate `eino-ext` module (wraps `mark3labs/mcp-go`) | :x: no first-party MCP client |
-| Structured output with schema enforcement | :white_check_mark: `DecodeJSON[T]` + JSON Schema validation | Partial — prompt-engineered JSON parsing, no compile-time output type | :white_check_mark: via typed components | :white_check_mark: via typed `Generate` calls |
-| In-loop self-correction on bad tool/output (`ModelRetry`) | :white_check_mark: built into the run loop | :x: not built in | Partial — achievable by hand-wiring a graph branch | :x: not built in |
-| Automatic multi-model fallback | :white_check_mark: `WithFallback` | :x: | :x: not a core primitive | :x: |
-| Human-in-the-loop / deferred execution with resumable state | :white_check_mark: `tool.Deferred`, durable resume | :x: | :white_check_mark: ADK interrupt/resume (`GetInterruptState[T]`) | Experimental (`genkit/exp`, session-store based) |
-| Token budget guards & pre-send cost estimation | :white_check_mark: `tokens.Counter`, `Result.Cost` | :x: | :x: | :x: |
-| Deterministic offline testing (no HTTP mocks) | :white_check_mark: `testmodel` | :x: typically mocked at the HTTP layer | :x: | :x: |
-| Batteries-included document/web tools (PDF, Office docs, web fetch, shell, OCR) | :white_check_mark: in-repo, pure Go | Partial — community-contributed, varying quality/maintenance | :x: left to `eino-ext` or user code | :x: left to user code |
-| Streaming run events (attempts, tool calls, corrections) | :white_check_mark: `WithRunEvents` | Partial — token streaming only | :white_check_mark: via callbacks | Partial — tracing spans, not a structured event stream |
-| Primary design model | Linear, explicit agent run loop | LangChain-style chains/agents ported to Go | Graph/workflow orchestration (DAG-style composition) | Flow-based functions with OpenTelemetry tracing |
-| Maturity / stability posture | **v1.2.0** — SemVer, additive-only below v2, apidiff-gated (ADR 0041) | Community-maintained, API has shifted across versions | Actively developed by CloudWeGo/ByteDance, frequent releases | Agent API explicitly marked experimental |
-| License | MIT | MIT | Apache-2.0 | Apache-2.0 |
+| Dependencies | **None** (stdlib) | Many | Several | Several |
+| Typed tool dependencies | ✅ | ❌ | Partial | ❌ |
+| Built-in MCP client | ✅ | ❌ | ❌ (`eino-ext`) | ❌ |
+| Self-correction (`ModelRetry`) | ✅ | ❌ | Partial | ❌ |
+| Model fallback | ✅ | ❌ | ❌ | ❌ |
+| Pause and resume for humans | ✅ | ❌ | ✅ | Experimental |
+| Token and cost limits | ✅ | ❌ | ❌ | ❌ |
+| Offline test model | ✅ | ❌ | ❌ | ❌ |
+| PDF, Office, web, shell tools | ✅ | Partial | ❌ | ❌ |
+| Design | Linear loop | Chains | Graphs | Flows |
 
-**Where Golem wins:** it is the only one of the four with zero non-stdlib dependencies, compile-time-typed tool dependency injection, a native MCP client in the core module, and production guardrails (self-correction, fallback, cost/token budgets, deferred human-in-the-loop execution) shipped together as one coherent runtime instead of assembled from separate packages.
+- **Choose Golem** for a dependency-free, typed, production-guarded agent loop.
+- **Choose Eino** for branching or parallel multi-agent graphs and a larger component ecosystem.
+- **Choose langchaingo** for the widest provider and vector-store coverage.
+- **Choose Genkit** for Google tooling (Developer UI, tracing, evaluation) and tight Gemini integration.
 
-**Where the others pull ahead:** Eino's graph/workflow composition model is more expressive for branching, parallel, multi-agent pipelines than Golem's linear run loop, and it has a larger ecosystem of community components (`eino-ext`). langchaingo has broader provider and vector-store coverage through its LangChain-derived ecosystem. Genkit benefits from first-party Google tooling (Developer UI, tracing/evaluation integrations) and tight Gemini integration.
-
-*Comparisons reflect each project's public documentation and source as of October 2026; frameworks move fast, so verify against the upstream repositories before depending on a specific behavior.*
+*Based on each project's public docs and source as of October 2026. Verify against upstream before depending on a specific behavior.*
 
 ---
 
@@ -161,80 +144,10 @@ func main() {
 }
 ```
 
-### 2. Typed Tools with Dependency Injection
+### 2. Next steps
 
-Golem tools are strongly typed and receive dependencies via `RunContext[Deps]`. No global state, no untyped maps:
-
-```go
-type Database struct {
-	Users map[int]string
-}
-
-// Declare a tool typed to Database dependencies
-getUser := tool.MustNew(tool.Tool[Database]{
-	Name:        "get_user",
-	Description: "Look up a user name by their ID.",
-	Schema: json.RawMessage(`{
-		"type": "object",
-		"properties": {"id": {"type": "integer"}},
-		"required": ["id"]
-	}`),
-	Exec: func(ctx context.Context, db Database, args json.RawMessage) (tool.Result, error) {
-		var input struct {
-			ID int `json:"id"`
-		}
-		if err := json.Unmarshal(args, &input); err != nil {
-			return tool.Result{}, err
-		}
-		name, ok := db.Users[input.ID]
-		if !ok {
-			return tool.Text("User not found"), nil
-		}
-		return tool.Text(name), nil
-	},
-})
-
-// Create an agent parameterized with Database dependencies
-agent, err := golem.New[Database, string](client,
-	golem.DecodeFunc[string](func(_ context.Context, r model.Response) (string, error) {
-		return r.Message.Content, nil
-	}),
-	golem.WithTools[Database, string](getUser),
-)
-
-// Run passing the typed dependency instance
-db := Database{Users: map[int]string{42: "Alice"}}
-result, err := agent.Run(ctx, golem.RunContext[Database]{Deps: db}, "Who is user 42?")
-```
-
-### 3. Structured Output & Schema Validation
-
-Guarantee your agent returns strongly-typed Go structs with `golem.DecodeJSON[T]()` and strict schema enforcement:
-
-```go
-type WeatherReport struct {
-	City        string  `json:"city"`
-	Temperature float64 `json:"temperature_celsius"`
-	Condition   string  `json:"condition"`
-}
-
-agent, err := golem.New[struct{}, WeatherReport](client,
-	golem.DecodeJSON[WeatherReport](),
-	golem.WithOutputSchema[struct{}, WeatherReport](json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"city": {"type": "string"},
-			"temperature_celsius": {"type": "number"},
-			"condition": {"type": "string"}
-		},
-		"required": ["city", "temperature_celsius", "condition"],
-		"additionalProperties": false
-	}`)),
-)
-
-result, err := agent.Run(ctx, golem.RunContext[struct{}]{}, "Forecast for Lagos, Nigeria.")
-fmt.Printf("%s: %.1f°C (%s)\n", result.Output.City, result.Output.Temperature, result.Output.Condition)
-```
+- **Typed tools with dependency injection:** tools receive your database, auth context, or HTTP client through `RunContext[Deps]`. See [Tools and dependencies](docs/guides/tools-and-dependencies.md) and the [`tools`](examples/tools/main.go) example.
+- **Structured output:** get typed Go structs back with `golem.DecodeJSON[T]()` and schema enforcement. See [Structured output](docs/guides/structured-output.md) and the [`structured-output`](examples/structured-output/main.go) example.
 
 ---
 
@@ -253,25 +166,6 @@ Golem ships with standard-library-only adapters for all major frontier and open-
 | **DeepSeek** | `providers/openai` | :white_check_mark: | :white_check_mark: (`reasoning_content` + `<think>`) | — | — | — |
 | **Groq** | `providers/groq` | :white_check_mark: | :white_check_mark: | — | — | — |
 | **OpenAI-Compatible** | `providers/openai` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | — |
-
----
-
-## Batteries-Included Tools
-
-Golem includes pre-built common tools written entirely in pure Go:
-
-| Package | Capability | Features |
-| --- | --- | --- |
-| **`mcp` / `mcpserver`** | Model Context Protocol | Connects to MCP tool servers over `stdio` or streaming HTTP (SSE), and exposes one Golem agent as an MCP tool over stdio or stateless HTTP. |
-| **`pdfextract`** | Layout-Aware PDF Extraction | High-performance PDF parser preserving reading order, layout, tables, and embedded images. Scanned pages OCR through a vision model, Mistral OCR, or the local offline Indra CLI, with explicit per-page routing and provenance. |
-| **`docextract`** | Multi-Format Document Extraction | Extracts text and structure from Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), CSV, and Markdown. |
-| **`webfetch`** | Web Extraction | Fetches URLs and returns clean, agent-readable text without browser overhead. |
-| **`websearch`** | Web Search | Ranked titles, URLs, and snippets through a backend port; DuckDuckGo needs no API key. |
-| **`fileread`** | File Reader | Safe workspace file reading with path boundaries and clean formatting. |
-| **`shell`** | Command Execution | Isolated command execution with timeout handling and combined stdout/stderr output. |
-| **`skills`** | Agent Skills Loader | Discovers and loads standard `SKILL.md` skill folders on demand for progressive prompt enrichment. |
-| **`planning`** | Task Plan Tools | Gives the model a task list it owns and updates — write, add, move, and remove steps — behind a small store port. |
-| **`memory`** | Persistent Notebook | Gives the model a namespaced Markdown notebook — list, read, write, search, and delete — behind a small store port. |
 
 ---
 
@@ -313,117 +207,30 @@ func TestAgent(t *testing.T) {
 
 ## Documentation
 
-The feature guides provide complete references for each capability and mirror the published documentation site at [abubakarsiddik31.github.io/golem](https://abubakarsiddik31.github.io/golem/).
+Each capability has a guide in [`docs/guides/`](docs/guides/), also published at [abubakarsiddik31.github.io/golem](https://abubakarsiddik31.github.io/golem/). Design records live in [`docs/adr/`](docs/adr/).
 
-| Guide | Covers |
-| --- | --- |
-| [Getting started](docs/guides/getting-started.md) | The smallest agent, result shape, error stages |
-| [Providers](docs/guides/providers.md) | OpenAI-compatible and Anthropic adapters, error classification |
-| [Embeddings](docs/guides/embeddings.md) | The `embedding.Embedder` port: queries, documents, usage |
-| [Retrieval](docs/guides/retrieval.md) | The `retrieval.Index` port: cosine top-k over embedded documents, and the agent's `search_documents` tool |
-| [Token counting](docs/guides/token-counting.md) | The `tokens.Counter` port: budgets, pre-send limits |
-| [Cost](docs/guides/cost.md) | User-supplied pricing: `Result.Cost` and cost bounds |
-| [Tools and dependencies](docs/guides/tools-and-dependencies.md) | Typed tools, dependencies, and controlled parallel execution |
-| [Web fetch](docs/guides/web-fetch.md) | The `webfetch` common tool: URLs as agent-readable text |
-| [Web search](docs/guides/web-search.md) | The `websearch` common tool: keyless DuckDuckGo by default, any backend behind the port |
-| [File read](docs/guides/file-read.md) | The `fileread` common tool: workspace files as agent-readable text |
-| [Command execution](docs/guides/command-execution.md) | The `shell` common tool: one command, combined output |
-| [Guardrails](docs/guides/guardrails.md) | Guards at the run's boundaries: block, replace, or retry prompts, tool calls, results, and output |
-| [PDF extract](docs/guides/pdf-extract.md) | The `pdfextract` common tool: PDF documents as structured Markdown with tables and images |
-| [Document extract](docs/guides/doc-extract.md) | The `docextract` common tool: Word, Excel, PowerPoint, Markdown, CSV, and multi-format documents |
-| [Agent skills](docs/guides/skills.md) | The `skills` common tool: standard SKILL.md folders loaded on demand |
-| [Planning](docs/guides/planning.md) | The `planning` toolset: a model-owned task plan behind a store port |
-| [Memory](docs/guides/memory.md) | The `memory` toolset: a persistent Markdown notebook behind a store port |
-| [Prompt context](docs/guides/prompt-context.md) | Per-run user-role context from typed deps: memory snapshots and retrieval |
-| [MCP client](docs/guides/mcp-client.md) | Bridging Model Context Protocol servers into agent tools |
-| [MCP server](docs/guides/mcp-server.md) | Exposing one Golem agent as an MCP tool over stdio or stateless HTTP |
-| [Agent delegation](docs/guides/agent-delegation.md) | One agent exposed as another agent's tool |
-| [Orchestration](docs/guides/orchestration.md) | Multi-agent workflows in plain Go: fan-out, pipeline, router |
-| [Tool timeouts](docs/guides/tool-timeouts.md) | Context-aware deadlines for individual tool calls |
-| [Conversations and history](docs/guides/conversations-and-history.md) | Multi-turn runs, durable message JSON, history trimming |
-| [Compaction](docs/guides/compaction.md) | Bounding history: trimming, token budgets, and summarization |
-| [Sessions](docs/guides/sessions.md) | The `session.Store` port and `WithSession`: conversations that persist between runs, failures included |
-| [Multimodal input](docs/guides/multimodal-input.md) | Images, documents, audio, and video in prompts, per-provider mapping |
-| [Structured output](docs/guides/structured-output.md) | Output schemas, tool-mode output, `DecodeJSON` |
-| [Self-correction](docs/guides/self-correction.md) | Output and tool rejection budgets (`ModelRetry`) |
-| [Retries](docs/guides/retries.md) | Transient model failures, backoff, fallback models |
-| [Content filter](docs/guides/content-filter.md) | Opt-in typed failure for provider safety stops |
-| [Loop detection](docs/guides/loop-detection.md) | Bounding repeated identical tool calls in one run |
-| [Streaming](docs/guides/streaming.md) | `RunStream`, the streaming capability port, SSE adapters |
-| [Run events](docs/guides/run-events.md) | Observing attempts, tool calls, and corrections as they happen |
-| [Tracing](docs/guides/tracing.md) | Spans through the `telemetry` port: an OpenTelemetry adapter without an SDK dependency |
-| [Thinking](docs/guides/thinking.md) | Reasoning models: requesting thinking, keeping signatures, replay |
-| [Usage limits](docs/guides/usage-limits.md) | Bounding tokens, requests, and tool calls |
-| [Testing without a provider](docs/guides/testing.md) | Deterministic fakes, contract assertions |
-| [Deferred tools](docs/guides/deferred-tools.md) | Approvals and external results: pausing a run and resuming it |
-| [Tool search](docs/guides/tool-search.md) | Deferred tool loading: model-driven discovery over a large catalog |
-
-Design records live in [docs/adr/](docs/adr/); each guide links the ADR that decided its behavior.
+- **Start here:** [Getting started](docs/guides/getting-started.md) · [Providers](docs/guides/providers.md) · [Testing without a provider](docs/guides/testing.md)
+- **Tools:** [Tools and dependencies](docs/guides/tools-and-dependencies.md) · [Tool timeouts](docs/guides/tool-timeouts.md) · [Tool search](docs/guides/tool-search.md) · [Deferred tools](docs/guides/deferred-tools.md) · [Agent delegation](docs/guides/agent-delegation.md) · [Orchestration](docs/guides/orchestration.md)
+- **Common tools:** [Web fetch](docs/guides/web-fetch.md) · [Web search](docs/guides/web-search.md) · [File read](docs/guides/file-read.md) · [Command execution](docs/guides/command-execution.md) · [PDF extract](docs/guides/pdf-extract.md) · [Document extract](docs/guides/doc-extract.md) · [Agent skills](docs/guides/skills.md) · [Planning](docs/guides/planning.md) · [Memory](docs/guides/memory.md)
+- **MCP:** [MCP client](docs/guides/mcp-client.md) · [MCP server](docs/guides/mcp-server.md)
+- **Output and reliability:** [Structured output](docs/guides/structured-output.md) · [Self-correction](docs/guides/self-correction.md) · [Retries](docs/guides/retries.md) · [Guardrails](docs/guides/guardrails.md) · [Content filter](docs/guides/content-filter.md) · [Loop detection](docs/guides/loop-detection.md) · [Usage limits](docs/guides/usage-limits.md)
+- **Conversations and context:** [Conversations and history](docs/guides/conversations-and-history.md) · [Compaction](docs/guides/compaction.md) · [Sessions](docs/guides/sessions.md) · [Prompt context](docs/guides/prompt-context.md) · [Multimodal input](docs/guides/multimodal-input.md) · [Thinking](docs/guides/thinking.md)
+- **Retrieval, tokens, and cost:** [Embeddings](docs/guides/embeddings.md) · [Retrieval](docs/guides/retrieval.md) · [Token counting](docs/guides/token-counting.md) · [Cost](docs/guides/cost.md)
+- **Observability:** [Streaming](docs/guides/streaming.md) · [Run events](docs/guides/run-events.md) · [Tracing](docs/guides/tracing.md)
 
 ---
 
 ## Examples
 
-Runnable programs live in [`examples/`](examples/); provider-backed examples read their API key from the environment and exit cleanly with instructions when unset.
+Runnable programs live in [`examples/`](examples/), one per capability. Provider-backed examples read their API key from the environment and exit with instructions when it is unset; the rest run offline.
 
-| Example | Shows |
-| --- | --- |
-| [`minimal`](examples/minimal/main.go) | Smallest agent against an OpenAI-compatible API |
-| [`web-search`](examples/web-search/main.go) | The `web_search` tool against a fake backend, offline |
-| [`citations`](examples/citations/main.go) | Anthropic document citations on the final message |
-| [`prompt-template`](examples/prompt-template/main.go) | Instructions rendered through `text/template` over typed deps, offline |
-| [`tools`](examples/tools/main.go) | Typed tool with a run dependency |
-| [`tool-preparation`](examples/tool-preparation/main.go) | Per-step tool filtering from typed deps, offline |
-| [`tool-output-limit`](examples/tool-output-limit/main.go) | Bounding an oversized tool result before it enters history, offline |
-| [`tool-output-spill`](examples/tool-output-spill/main.go) | Spilling a large result and reading it back through `read_tool_result`, offline |
-| [`loop-detection`](examples/loop-detection/main.go) | Stopping a repeated identical tool call before it executes, offline |
-| [`structured-output`](examples/structured-output/main.go) | Output schema + JSON decoding |
-| [`content-filter`](examples/content-filter/main.go) | Provider safety stops: default output vs typed failure, offline |
-| [`structured-output-tool`](examples/structured-output-tool/main.go) | Tool-mode structured output |
-| [`conversation`](examples/conversation/main.go) | Interactive multi-turn chat with history |
-| [`cli-assistant`](examples/cli-assistant/main.go) | Interactive streaming terminal agent with shell/file tools and an offline fallback |
-| [`session`](examples/session/main.go) | Conversations persisted through the `session.Store` port, offline |
-| [`memory`](examples/memory/main.go) | A persistent namespaced notebook and opt-in snapshot recall, offline |
-| [`memory-files`](examples/memory-files/main.go) | File-backed memory with compare-and-swap writes, offline |
-| [`streaming`](examples/streaming/main.go) | `RunStream` printing fragments as they arrive |
-| [`run-events`](examples/run-events/main.go) | `WithRunEvents` printing the event sequence of a run |
-| [`tracing`](examples/tracing/main.go) | Spans from run events through the `telemetry` port, offline |
-| [`mcp-client`](examples/mcp-client/main.go) | MCP server bridged into agent tools over stdio |
-| [`mcp-auth`](examples/mcp-auth/main.go) | MCP bearer-token credentials and 401/403 challenge handling, offline |
-| [`mcp-server`](examples/mcp-server/main.go) | Exposing a scripted agent as an MCP tool over the HTTP handler, offline |
-| [`mcp-elicitation`](examples/mcp-elicitation/main.go) | MCP elicitation through multi round-trip requests, offline |
-| [`mcp-http`](examples/mcp-http/main.go) | MCP server bridged over streamable HTTP |
-| [`skills`](examples/skills/main.go) | The `skills` common tool loading a standard SKILL.md folder |
-| [`web-fetch`](examples/web-fetch/main.go) | The `webfetch` common tool fetching a local test page |
-| [`file-read`](examples/file-read/main.go) | The `fileread` common tool reading a workspace file |
-| [`command-execution`](examples/command-execution/main.go) | The `shell` common tool running one local command |
-| [`guardrails`](examples/guardrails/main.go) | Guards redacting a prompt, blocking injected tool output, and blocking a PII answer, offline |
-| [`pdf-extract`](examples/pdf-extract/main.go) | The `pdfextract` common tool extracting tables and reading order, offline |
-| [`doc-extract`](examples/doc-extract/main.go) | The `docextract` common tool extracting Word, Excel, and Markdown, offline |
-| [`ocr-scanned-pdf`](examples/ocr-scanned-pdf/main.go) | The `pdfextract` local Indra OCR engine on a scanned page, offline |
-| [`delegation`](examples/delegation/main.go) | A specialist agent delegated to as a tool |
-| [`orchestration`](examples/orchestration/main.go) | Multi-agent fan-out and pipeline in plain Go, offline |
-| [`tool-results`](examples/tool-results/main.go) | Tools returning parts and definitive failures, offline |
-| [`self-correction`](examples/self-correction/main.go) | Tool rejecting correctable arguments |
-| [`fallback`](examples/fallback/main.go) | Primary model with a fallback and a request bound |
-| [`token-counting`](examples/token-counting/main.go) | Pre-send limits and budget-bounded history over the `tokens.Counter` port |
-| [`cost`](examples/cost/main.go) | User-supplied pricing: `Result.Cost` and cost-bounded runs, offline |
-| [`embeddings`](examples/embeddings/main.go) | Semantic search over the `embedding.Embedder` port |
-| [`retrieval`](examples/retrieval/main.go) | A knowledge base indexed and searched by an agent, offline |
-| [`multimodal-input`](examples/multimodal-input/main.go) | Prompts with images and document attachments |
-| [`thinking`](examples/thinking/main.go) | Adaptive thinking with reasoning blocks and signatures |
-| [`run-cancellation`](examples/run-cancellation/main.go) | A tool ending the run deliberately with `tool.Canceled`, resuming evidence, offline |
-| [`run-ids`](examples/run-ids/main.go) | Run and conversation identity across chained and forked runs, offline |
-| [`deferred-tools`](examples/deferred-tools/main.go) | Pausing runs for approvals or external results, and resuming, offline |
-| [`partial-evidence`](examples/partial-evidence/main.go) | A failed run's `RunError.Partial` evidence resumed with history, offline |
-| [`history-repair`](examples/history-repair/main.go) | Normalizing a damaged conversation with a report, offline |
-| [`history-sanitization`](examples/history-sanitization/main.go) | Sanitizing a client-submitted history at the trust boundary, offline |
-| [`anthropic`](examples/anthropic/main.go) | Anthropic Messages API adapter |
-| [`gemini`](examples/gemini/main.go) | Google Gemini GenerateContent adapter |
-| [`azure`](examples/azure/main.go) | Azure OpenAI deployment adapter |
-| [`bedrock`](examples/bedrock/main.go) | AWS Bedrock Converse adapter with SigV4 |
-| [`local-models`](examples/local-models/main.go) | Ollama or LM Studio through the OpenAI-compatible adapter |
-| [`testing-without-a-provider`](examples/testing-without-a-provider/main.go) | Scripted fake model, offline and deterministic |
+- **Start here:** [`minimal`](examples/minimal/main.go) · [`tools`](examples/tools/main.go) · [`structured-output`](examples/structured-output/main.go) · [`structured-output-tool`](examples/structured-output-tool/main.go) · [`conversation`](examples/conversation/main.go) · [`cli-assistant`](examples/cli-assistant/main.go) · [`testing-without-a-provider`](examples/testing-without-a-provider/main.go)
+- **Providers:** [`anthropic`](examples/anthropic/main.go) · [`gemini`](examples/gemini/main.go) · [`azure`](examples/azure/main.go) · [`bedrock`](examples/bedrock/main.go) · [`groq`](examples/groq/main.go) · [`deepseek`](examples/deepseek/main.go) · [`local-models`](examples/local-models/main.go) · [`fallback`](examples/fallback/main.go)
+- **Tools and MCP:** [`tool-results`](examples/tool-results/main.go) · [`tool-preparation`](examples/tool-preparation/main.go) · [`tool-output-limit`](examples/tool-output-limit/main.go) · [`tool-output-spill`](examples/tool-output-spill/main.go) · [`tool-search`](examples/tool-search/main.go) · [`deferred-tools`](examples/deferred-tools/main.go) · [`self-correction`](examples/self-correction/main.go) · [`loop-detection`](examples/loop-detection/main.go) · [`mcp-client`](examples/mcp-client/main.go) · [`mcp-http`](examples/mcp-http/main.go) · [`mcp-auth`](examples/mcp-auth/main.go) · [`mcp-server`](examples/mcp-server/main.go) · [`mcp-elicitation`](examples/mcp-elicitation/main.go) · [`skills`](examples/skills/main.go) · [`planning`](examples/planning/main.go) · [`memory`](examples/memory/main.go) · [`memory-files`](examples/memory-files/main.go)
+- **Common tools:** [`web-search`](examples/web-search/main.go) · [`web-fetch`](examples/web-fetch/main.go) · [`file-read`](examples/file-read/main.go) · [`command-execution`](examples/command-execution/main.go) · [`pdf-extract`](examples/pdf-extract/main.go) · [`doc-extract`](examples/doc-extract/main.go) · [`ocr-scanned-pdf`](examples/ocr-scanned-pdf/main.go)
+- **Agents and workflows:** [`delegation`](examples/delegation/main.go) · [`orchestration`](examples/orchestration/main.go)
+- **Context, history, and cost:** [`session`](examples/session/main.go) · [`compaction`](examples/compaction/main.go) · [`history-repair`](examples/history-repair/main.go) · [`history-sanitization`](examples/history-sanitization/main.go) · [`partial-evidence`](examples/partial-evidence/main.go) · [`run-cancellation`](examples/run-cancellation/main.go) · [`run-ids`](examples/run-ids/main.go) · [`token-counting`](examples/token-counting/main.go) · [`cost`](examples/cost/main.go) · [`embeddings`](examples/embeddings/main.go) · [`retrieval`](examples/retrieval/main.go) · [`multimodal-input`](examples/multimodal-input/main.go) · [`thinking`](examples/thinking/main.go) · [`prompt-template`](examples/prompt-template/main.go) · [`citations`](examples/citations/main.go)
+- **Safety and observability:** [`guardrails`](examples/guardrails/main.go) · [`content-filter`](examples/content-filter/main.go) · [`streaming`](examples/streaming/main.go) · [`run-events`](examples/run-events/main.go) · [`tracing`](examples/tracing/main.go)
 
 To run any example:
 
@@ -450,17 +257,29 @@ go run ./examples/partial-evidence
 golem/        Agent configuration and typed run API
 model/        Provider-neutral model request/response contract
 tool/         Tool declarations and execution contracts
+guard/        Guards at the run's boundaries (prompts, tool calls, results, output)
+session/      Store port for conversations that persist between runs
+tokens/       Token counting port for budgets and pre-send limits
+embedding/    Embedder port: queries, documents, usage
+retrieval/    Index port: cosine top-k search and the search_documents tool
+telemetry/    Tracing port with an SDK-free OpenTelemetry adapter
 mcp/          Model Context Protocol client (stdio & streaming HTTP)
+mcpserver/    Expose one Golem agent as an MCP tool (stdio or stateless HTTP)
 pdfextract/   Common tool: layout-aware PDF parser (tables, images, text)
 docextract/   Common tool: Word, Excel, PowerPoint, CSV, and Markdown extractor
 webfetch/     Common tool: fetch a URL as agent-readable text
+websearch/    Common tool: ranked web search behind a backend port
 fileread/     Common tool: read a file as agent-readable text
 shell/        Common tool: run one command, return combined output
 skills/       Common tool: standard SKILL.md folder progressive loader
+planning/     Toolset: model-owned task plan behind a store port
+memory/       Toolset: persistent namespaced Markdown notebook behind a store port
 providers/    Stdlib-only adapters implementing model.Model
 testmodel/    Deterministic in-memory model doubles for unit testing
 internal/     Execution runner loop and private mechanics
 examples/     Runnable programs per capability
+assets/       Brand assets
+scripts/      Coverage, API-compatibility, benchmark, and smoke-test scripts
 docs/guides/  Feature guides (source of truth for behavior)
 docs/adr/     Decisions that shape public contracts
 ```
@@ -469,16 +288,9 @@ docs/adr/     Decisions that shape public contracts
 
 ## Status & Roadmap
 
-Golem is currently at **v1.2.0**.
+Golem is stable: see the [latest release](https://github.com/abubakarsiddik31/golem/releases) and the [changelog](CHANGELOG.md).
 
-The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. As of **v1.0.0** the public API follows SemVer with additive-only changes below v2, checked by API diff on every release (ADR 0041).
-
-- **Resilient Execution:** Self-correction loops (`ModelRetry`), fallback models, exponential backoff, per-tool timeouts, in-tool cancellation (`tool.Canceled`), and partial evidence preservation (`RunError.Partial`).
-- **Comprehensive Multimodal:** Text, images, PDF documents, audio, and video inputs mapped natively across all model adapters.
-- **Observability & Durability:** Normalized conversation messages, durable additive JSON serialization, reasoning/thinking token capture with provider signatures, and streamable run events.
-- **Production Guardrails:** Pre-send token estimation, token-budgeted history truncation, client-side untrusted history sanitization (`SanitizeHistory`), history repair (`NormalizeHistory`), and user-configurable cost/token bounding.
-- **Rich Tool Ecosystem:** First-class Model Context Protocol (MCP) client over stdio and HTTP, layout-aware PDF extraction, multi-format doc parsing, sandboxed shell execution, SSR web fetch, progressive Agent Skills loading, and model-owned task plans.
-- **Zero Dependencies:** Built exclusively on the Go standard library.
+The core execution contract is frozen and verified with continuous race-detector CI, memory fuzzing, and deterministic offline tests. Since v1.0.0 the public API follows SemVer with additive-only changes below v2, checked by API diff on every release (ADR 0041).
 
 For architecture rationale, read [the foundation brief](docs/foundation.md). For upcoming milestones, read the [development roadmap](docs/ROADMAP.md). For measured costs and how to run the benchmarks, read [the benchmark baseline](docs/benchmarks.md).
 
@@ -503,8 +315,9 @@ The feature guides publish as the official documentation site; preview it locall
 Golem is an open-source project and actively welcomes community contributions!
 
 - [Good First Issues](https://github.com/abubakarsiddik31/golem/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — approachable issues scoped for newcomers
-- [Roadmap to v1.0.0](docs/ROADMAP.md) — roadmap progress, open items, and design decisions
-- [GitHub Discussions](https://github.com/abubakarsiddik31/golem/discussions) — ask questions, share architectures, and propose RFCs
+- [Roadmap](docs/ROADMAP.md) — direction, open items, and design decisions
+- [GitHub Discussions](https://github.com/abubakarsiddik31/golem/discussions) — ask usage questions, share architectures, and propose RFCs
+- [Issues](https://github.com/abubakarsiddik31/golem/issues) — bug reports and concrete feature requests, not general questions
 - [Contributing Guide](CONTRIBUTING.md) — instructions for setting up, running checks, and submitting changes
 - [Security Policy](SECURITY.md) — guidelines for privately reporting vulnerabilities
 - [Code of Conduct](CODE_OF_CONDUCT.md) — standards for participation
